@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/songquanpeng/one-api/common/config"
+	"github.com/songquanpeng/one-api/common/ctxkey"
 	"github.com/songquanpeng/one-api/common/logger"
 	"github.com/songquanpeng/one-api/relay"
 	"github.com/songquanpeng/one-api/relay/adaptor"
@@ -34,7 +35,15 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 	meta.IsStream = textRequest.Stream
 
 	// map model name
-	meta.OriginModelName = textRequest.Model
+	// Use OriginModelName from context (original request model), not from textRequest.Model
+	// because on retry, textRequest.Model may already be the mapped model from previous attempt
+	originModel := c.GetString(ctxkey.OriginalModel)
+	if originModel != "" {
+		meta.OriginModelName = originModel
+		textRequest.Model = originModel // Also restore textRequest.Model for mapping to work
+	} else {
+		meta.OriginModelName = textRequest.Model
+	}
 	textRequest.Model, _ = getMappedModelName(textRequest.Model, meta.ModelMapping)
 	meta.ActualModelName = textRequest.Model
 	// set system prompt if not empty

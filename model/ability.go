@@ -2,6 +2,8 @@ package model
 
 import (
 	"context"
+	"errors"
+	"math/rand"
 	"sort"
 	"strings"
 
@@ -20,7 +22,7 @@ type Ability struct {
 }
 
 func GetRandomSatisfiedChannel(group string, model string, ignoreFirstPriority bool) (*Channel, error) {
-	ability := Ability{}
+	ability := &Ability{}
 	groupCol := "`group`"
 	trueVal := "1"
 	if common.UsingPostgreSQL {
@@ -109,4 +111,56 @@ func GetGroupModels(ctx context.Context, group string) ([]string, error) {
 	}
 	sort.Strings(models)
 	return models, err
+}
+
+// GetRandomSatisfiedChannelExcluding finds a random channel for the given group and model,
+// excluding channels whose IDs are in failedIds, preferring highest priority.
+func GetRandomSatisfiedChannelExcluding(group string, model string, failedIds map[int]bool) (*Channel, error) {
+	groupCol := "`group`"
+	trueVal := "1"
+	if common.UsingPostgreSQL {
+		groupCol = `"group"`
+		trueVal = "true"
+	}
+
+	// Get all available priorities for this group+model, descending
+	var priorities []int64
+	err := DB.Model(&Ability{}).
+		Where(groupCol+" = ? and model = ? and enabled = "+trueVal, group, model).
+		Select("DISTINCT priority").
+		Order("priority DESC").
+		Pluck("priority", &priorities).Error
+	if err != nil || len(priorities) == 0 {
+		return nil, errors.New("channel not found")
+	}
+
+	// Try each priority level from highest to lowest
+	for _, priority := range priorities {
+		var abilities []Ability
+		err := DB.Where(groupCol+" = ? and model = ? and enabled = "+trueVal+" and priority = ?", group, model, priority).
+			Find(&abilities).Error
+		if err != nil {
+			return nil, err
+		}
+
+		// Filter out failed channels
+		var filtered []Ability
+		for _, a := range abilities {
+			if !failedIds[a.ChannelId] {
+				filtered = append(filtered, a)
+			}
+		}
+
+		if len(filtered) > 0 {
+			// Pick random from available channels at this priority
+			randIdx := rand.Intn(len(filtered))
+			selected := filtered[randIdx]
+			channel := Channel{}
+			err = DB.First(&channel, "id = ?", selected.ChannelId).Error
+			return &channel, err
+		}
+		// All channels at this priority failed, try next lower priority
+	}
+
+	return nil, errors.New("no unfailed channel available")
 }

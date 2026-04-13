@@ -56,7 +56,7 @@ func Relay(c *gin.Context) {
 		monitor.Emit(channelId, true)
 		return
 	}
-	lastFailedChannelId := channelId
+	failedChannelIds := map[int]bool{channelId: true}
 	channelName := c.GetString(ctxkey.ChannelName)
 	group := c.GetString(ctxkey.Group)
 	originalModel := c.GetString(ctxkey.OriginalModel)
@@ -68,15 +68,21 @@ func Relay(c *gin.Context) {
 		retryTimes = 0
 	}
 	for i := retryTimes; i > 0; i-- {
-		channel, err := dbmodel.CacheGetRandomSatisfiedChannel(group, originalModel, i != retryTimes)
+		var channel *dbmodel.Channel
+		var err error
+		// Use database query to find a random channel excluding failed ones
+		// CacheGetRandomSatisfiedChannel always returns the same channel due to rand seed,
+		// so we query DB directly with ORDER BY RANDOM() and exclude failed IDs
+		channel, err = dbmodel.GetRandomSatisfiedChannelExcluding(group, originalModel, failedChannelIds)
 		if err != nil {
-			logger.Errorf(ctx, "CacheGetRandomSatisfiedChannel failed: %+v", err)
+			logger.Errorf(ctx, "GetRandomSatisfiedChannelExcluding failed: %+v", err)
 			break
 		}
-		logger.Infof(ctx, "using channel #%d to retry (remain times %d)", channel.Id, i)
-		if channel.Id == lastFailedChannelId {
-			continue
+		if channel == nil {
+			logger.Warnf(ctx, "no available channel found (all exhausted), giving up")
+			break
 		}
+		logger.Infof(ctx, "using channel #%d to retry (remain times %d), failed set: %v", channel.Id, i, failedChannelIds)
 		middleware.SetupContextForSelectedChannel(c, channel, originalModel)
 		requestBody, err := common.GetRequestBody(c)
 		c.Request.Body = io.NopCloser(bytes.NewBuffer(requestBody))
@@ -85,7 +91,7 @@ func Relay(c *gin.Context) {
 			return
 		}
 		channelId := c.GetInt(ctxkey.ChannelId)
-		lastFailedChannelId = channelId
+		failedChannelIds[channelId] = true
 		channelName := c.GetString(ctxkey.ChannelName)
 		go processChannelRelayError(ctx, userId, channelId, channelName, *bizErr)
 	}

@@ -1,0 +1,23 @@
+FROM ubuntu:22.04
+
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
+
+RUN useradd -m -s /bin/bash oneapi
+
+WORKDIR /home/oneapi
+
+RUN mkdir -p /home/oneapi/tiktoken_cache
+
+COPY --chown=oneapi:oneapi tiktoken_cache/ /home/oneapi/tiktoken_cache/
+
+COPY --chown=oneapi:oneapi one-api-new /usr/local/bin/one-api
+
+USER oneapi
+
+ENV GIN_MODE=release
+ENV TZ=Asia/Shanghai
+ENV TIKTOKEN_CACHE_DIR=/home/oneapi/tiktoken_cache
+
+EXPOSE 3000
+
+CMD ["one-api", "--log-dir", "/home/oneapi/logs", "--port", "3000"]

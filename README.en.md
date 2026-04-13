@@ -3,12 +3,12 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/songquanpeng/one-api"><img src="https://raw.githubusercontent.com/songquanpeng/one-api/main/web/default/public/logo.png" width="150" height="150" alt="one-api logo"></a>
+  <a href="https://github.com/Dytchem/one-api"><img src="https://raw.githubusercontent.com/songquanpeng/one-api/main/web/default/public/logo.png" width="150" height="150" alt="one-api logo"></a>
 </p>
 
 <div align="center">
 
-# One API
+# One API (Fork)
 
 _✨ Access all LLM through the standard OpenAI API format, easy to deploy & use ✨_
 
@@ -53,6 +53,57 @@ _✨ Access all LLM through the standard OpenAI API format, easy to deploy & use
 > **Warning**: This README is translated by ChatGPT. Please feel free to submit a PR if you find any translation errors.
 
 > **Note**: The latest image pulled from Docker may be an `alpha` release. Specify the version manually if you require stability.
+
+## About This Fork
+
+> This is a fork of [songquanpeng/one-api](https://github.com/songquanpeng/one-api), with all original features preserved.
+
+### 🔧 Key Modifications
+
+This fork improves the **Fallback Mechanism** with the following changes:
+
+#### 1. Fixed Model Mapping Loss on Retry
+**Problem**: When a request falls back to another channel, the already-mapped model name from the previous attempt was reused, preventing subsequent channels from applying their own `model_mapping`.
+
+**Fix** (`relay/controller/text.go`):
+- Restores the original model name from `ctxkey.OriginalModel` on retry
+- Ensures each channel applies its own `model_mapping`
+
+#### 2. Rewrote Fallback Loop Logic
+**Problem**: Original code only skipped the "last failed" channel, and `CacheGetRandomSatisfiedChannel`'s fixed random seed always returned the same channel at the same priority level.
+
+**Fix** (`controller/relay.go`):
+- Maintains `failedChannelIds` set to exclude all known failed channels
+- New `GetRandomSatisfiedChannelExcluding` queries DB directly for cross-priority fallback
+
+#### 3. Cross-Priority Fallback Support
+**Problem**: If all channels at a priority level failed, the system couldn't fall back to lower priority channels.
+
+**Fix** (`model/ability.go`):
+- `GetRandomSatisfiedChannelExcluding` tries from highest priority down
+- Random selection within each priority level, no repeats
+- Only falls to next priority when all at current level fail
+
+### 🤖 Development Assistance
+
+All code modifications, testing, and verification in this project were assisted by [OpenClaw](https://github.com/openclaw/openclaw) AI Agent, including requirements analysis, code changes, Docker image building, and database simulation testing.
+
+### 📄 License
+
+This project inherits the MIT License from the original project.
+
+<details>
+<summary><b>📋 Change Summary</b></summary>
+
+| File | Change |
+|------|--------|
+| `relay/controller/text.go` | Restore original model on retry |
+| `controller/relay.go` | Rewrote fallback loop with failedChannelIds set |
+| `model/ability.go` | Added `GetRandomSatisfiedChannelExcluding` function |
+</details>
+
+---
+
 
 ## Features
 1. Support for multiple large models:
