@@ -52,16 +52,22 @@ type ChannelConfig struct {
 	VertexAIADC       string `json:"vertex_ai_adc,omitempty"`
 }
 
-func GetAllChannels(startIdx int, num int, scope string) ([]*Channel, error) {
+func GetAllChannels(startIdx int, num int, scope string, order string, sort string) ([]*Channel, error) {
 	var channels []*Channel
 	var err error
+	orderClause := "id desc"
+	if order != "" && sort != "" {
+		orderClause = order + " " + sort
+	} else if sort == "asc" {
+		orderClause = "id asc"
+	}
 	switch scope {
 	case "all":
-		err = DB.Order("id desc").Find(&channels).Error
+		err = DB.Order(orderClause).Find(&channels).Error
 	case "disabled":
-		err = DB.Order("id desc").Where("status = ? or status = ?", ChannelStatusAutoDisabled, ChannelStatusManuallyDisabled).Find(&channels).Error
+		err = DB.Order(orderClause).Where("status = ? or status = ?", ChannelStatusAutoDisabled, ChannelStatusManuallyDisabled).Find(&channels).Error
 	default:
-		err = DB.Order("id desc").Limit(num).Offset(startIdx).Omit("key").Find(&channels).Error
+		err = DB.Order(orderClause).Limit(num).Offset(startIdx).Omit("key").Find(&channels).Error
 	}
 	return channels, err
 }

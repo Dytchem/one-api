@@ -15,7 +15,15 @@ func GetAllChannels(c *gin.Context) {
 	if p < 0 {
 		p = 0
 	}
-	channels, err := model.GetAllChannels(p*config.ItemsPerPage, config.ItemsPerPage, "limited")
+	order := c.Query("order")
+	sort := c.Query("sort")
+	size := config.ItemsPerPage
+	if s := c.Query("size"); s != "" {
+		if parsedSize, err := strconv.Atoi(s); err == nil && parsedSize > 0 {
+			size = parsedSize
+		}
+	}
+	channels, err := model.GetAllChannels(p*size, size, "limited", order, sort)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,

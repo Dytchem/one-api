@@ -227,7 +227,7 @@ func testChannels(ctx context.Context, notify bool, scope string) error {
 	}
 	testAllChannelsRunning = true
 	testAllChannelsLock.Unlock()
-	channels, err := model.GetAllChannels(0, 0, scope)
+	channels, err := model.GetAllChannels(0, 0, scope, "", "")
 	if err != nil {
 		return err
 	}
