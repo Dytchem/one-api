@@ -51,15 +51,19 @@ func Relay(c *gin.Context) {
 	}
 	channelId := c.GetInt(ctxkey.ChannelId)
 	userId := c.GetInt(ctxkey.Id)
+	channelName := c.GetString(ctxkey.ChannelName)
+	originalModel := c.GetString(ctxkey.OriginalModel)
 	bizErr := relayHelper(c, relayMode)
 	if bizErr == nil {
 		monitor.Emit(channelId, true)
+		// 记录成功的请求日志
+		// 首次请求成功，不记录尝试日志（消费日志已足够）
 		return
 	}
+	// 记录首次请求失败的日志
+	dbmodel.RecordChannelAttemptLog(ctx, userId, channelId, channelName, originalModel, false, bizErr.Error.Message)
 	failedChannelIds := map[int]bool{channelId: true}
-	channelName := c.GetString(ctxkey.ChannelName)
 	group := c.GetString(ctxkey.Group)
-	originalModel := c.GetString(ctxkey.OriginalModel)
 	go processChannelRelayError(ctx, userId, channelId, channelName, *bizErr)
 	requestId := c.GetString(helper.RequestIdKey)
 	retryTimes := config.RetryTimes
@@ -88,12 +92,15 @@ func Relay(c *gin.Context) {
 		c.Request.Body = io.NopCloser(bytes.NewBuffer(requestBody))
 		bizErr = relayHelper(c, relayMode)
 		if bizErr == nil {
+			// 重试成功，不记录尝试日志（消费日志已足够）
 			return
 		}
-		channelId := c.GetInt(ctxkey.ChannelId)
-		failedChannelIds[channelId] = true
-		channelName := c.GetString(ctxkey.ChannelName)
-		go processChannelRelayError(ctx, userId, channelId, channelName, *bizErr)
+		retryChannelId := c.GetInt(ctxkey.ChannelId)
+		retryChannelName := c.GetString(ctxkey.ChannelName)
+		// 记录重试失败的日志
+		dbmodel.RecordChannelAttemptLog(ctx, userId, retryChannelId, retryChannelName, originalModel, false, bizErr.Error.Message)
+		failedChannelIds[retryChannelId] = true
+		go processChannelRelayError(ctx, userId, retryChannelId, retryChannelName, *bizErr)
 	}
 	if bizErr != nil {
 		if bizErr.StatusCode == http.StatusTooManyRequests {

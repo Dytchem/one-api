@@ -87,6 +87,22 @@ func RecordConsumeLog(ctx context.Context, log *Log) {
 	recordLogHelper(ctx, log)
 }
 
+// RecordChannelAttemptLog 记录渠道尝试日志（包括成功和失败的 fallback）
+func RecordChannelAttemptLog(ctx context.Context, userId int, channelId int, channelName string, modelName string, success bool, errorMessage string) {
+	log := &Log{
+		UserId:    userId,
+		Username:  GetUsernameById(userId),
+		CreatedAt: helper.GetTimestamp(),
+		Type:      LogTypeSystem,
+		Content:   fmt.Sprintf("渠道尝试 - 渠道: %s (#%d), 模型: %s, 状态: %s, 错误: %s",
+			channelName, channelId, modelName,
+			map[bool]string{true: "成功", false: "失败"}[success],
+			errorMessage),
+		Quota: 0,
+	}
+	recordLogHelper(ctx, log)
+}
+
 func RecordTestLog(ctx context.Context, log *Log) {
 	log.CreatedAt = helper.GetTimestamp()
 	log.Type = LogTypeTest
