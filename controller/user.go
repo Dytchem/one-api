@@ -190,8 +190,15 @@ func GetAllUsers(c *gin.Context) {
 		p = 0
 	}
 
+	size := config.ItemsPerPage
+	if s := c.Query("size"); s != "" {
+		if parsedSize, err := strconv.Atoi(s); err == nil && parsedSize > 0 {
+			size = parsedSize
+		}
+	}
+
 	order := c.DefaultQuery("order", "")
-	users, err := model.GetAllUsers(p*config.ItemsPerPage, config.ItemsPerPage, order)
+	users, err := model.GetAllUsers(p*size, size, order)
 
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{

@@ -66,8 +66,9 @@ const RedemptionsTable = () => {
   const [searchKeyword, setSearchKeyword] = useState('');
   const [searching, setSearching] = useState(false);
 
-  const loadRedemptions = async (startIdx) => {
-    const res = await API.get(`/api/redemption/?p=${startIdx}`);
+  const loadRedemptions = async (startIdx, size) => {
+    const sizeParam = size !== undefined ? size : itemsPerPage;
+    const res = await API.get(`/api/redemption/?p=${startIdx}&size=${sizeParam}`);
     const { success, message, data } = res.data;
     if (success) {
       if (startIdx === 0) {
@@ -87,7 +88,7 @@ const RedemptionsTable = () => {
     setItemsPerPage(value);
     localStorage.setItem('itemsPerPage', value.toString());
     setActivePage(1);
-    loadRedemptions(0);
+    loadRedemptions(0, value);
   };
 
   const onPaginationChange = (e, { activePage }) => {

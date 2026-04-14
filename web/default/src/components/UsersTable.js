@@ -45,8 +45,10 @@ const UsersTable = () => {
   const [searching, setSearching] = useState(false);
   const [orderBy, setOrderBy] = useState('');
 
-  const loadUsers = async (startIdx) => {
-    const res = await API.get(`/api/user/?p=${startIdx}&order=${orderBy}`);
+  const loadUsers = async (startIdx, order, size) => {
+    const orderParam = order !== undefined ? order : orderBy;
+    const sizeParam = size !== undefined ? size : itemsPerPage;
+    const res = await API.get(`/api/user/?p=${startIdx}&order=${orderParam}&size=${sizeParam}`);
     const { success, message, data } = res.data;
     if (success) {
       if (startIdx === 0) {
@@ -66,7 +68,7 @@ const UsersTable = () => {
     setItemsPerPage(value);
     localStorage.setItem('itemsPerPage', value.toString());
     setActivePage(1);
-    setActivePage(1);
+    loadUsers(0, undefined, value);
   };
 
   const onPaginationChange = (e, { activePage }) => {

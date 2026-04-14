@@ -16,7 +16,13 @@ func GetAllRedemptions(c *gin.Context) {
 	if p < 0 {
 		p = 0
 	}
-	redemptions, err := model.GetAllRedemptions(p*config.ItemsPerPage, config.ItemsPerPage)
+	size := config.ItemsPerPage
+	if s := c.Query("size"); s != "" {
+		if parsedSize, err := strconv.Atoi(s); err == nil && parsedSize > 0 {
+			size = parsedSize
+		}
+	}
+	redemptions, err := model.GetAllRedemptions(p*size, size)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,

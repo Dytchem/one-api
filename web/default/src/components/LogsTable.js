@@ -221,14 +221,15 @@ const LogsTable = () => {
     return logType !== 5;
   };
 
-  const loadLogs = async (startIdx) => {
+  const loadLogs = async (startIdx, size) => {
     let url = '';
     let localStartTimestamp = Date.parse(start_timestamp) / 1000;
     let localEndTimestamp = Date.parse(end_timestamp) / 1000;
+    const sizeParam = size !== undefined ? size : itemsPerPage;
     if (isAdminUser) {
-      url = `/api/log/?p=${startIdx}&type=${logType}&username=${username}&token_name=${token_name}&model_name=${model_name}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}&channel=${channel}`;
+      url = `/api/log/?p=${startIdx}&size=${sizeParam}&type=${logType}&username=${username}&token_name=${token_name}&model_name=${model_name}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}&channel=${channel}`;
     } else {
-      url = `/api/log/self/?p=${startIdx}&type=${logType}&token_name=${token_name}&model_name=${model_name}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}`;
+      url = `/api/log/self/?p=${startIdx}&size=${sizeParam}&type=${logType}&token_name=${token_name}&model_name=${model_name}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}`;
     }
     const res = await API.get(url);
     const { success, message, data } = res.data;
@@ -289,7 +290,7 @@ const LogsTable = () => {
     setItemsPerPage(value);
     localStorage.setItem('itemsPerPage', value.toString());
     setActivePage(1);
-    loadLogs(0);
+    loadLogs(0, value);
   };
 
   const handleKeywordChange = async (e, { value }) => {
