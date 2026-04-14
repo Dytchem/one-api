@@ -13,7 +13,7 @@ import {
   timestamp2string,
 } from '../helpers';
 
-import {CHANNEL_OPTIONS, ITEMS_PER_PAGE} from '../constants';
+import {CHANNEL_OPTIONS, ITEMS_PER_PAGE_OPTIONS} from '../constants';
 import {renderGroup, renderNumber} from '../helpers/render';
 
 function renderTimestamp(timestamp) {
@@ -82,11 +82,15 @@ const ChannelsTable = () => {
   const [channels, setChannels] = useState([]);
   const [loading, setLoading] = useState(true);
   const [activePage, setActivePage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(() => parseInt(localStorage.getItem('itemsPerPage') || '10'));
   const [searchKeyword, setSearchKeyword] = useState('');
   const [searching, setSearching] = useState(false);
   const [updatingBalance, setUpdatingBalance] = useState(false);
   const [showPrompt, setShowPrompt] = useState(shouldShowPrompt(promptID));
   const [showDetail, setShowDetail] = useState(isShowDetail());
+  const [sortField, setSortField] = useState('id');
+  const [sortOrder, setSortOrder] = useState('desc');
+  const [orderBy, setOrderBy] = useState('');
 
   const processChannelData = (channel) => {
     if (channel.models === '') {
@@ -109,8 +113,11 @@ const ChannelsTable = () => {
     return channel;
   };
 
-  const loadChannels = async (startIdx) => {
-    const res = await API.get(`/api/channel/?p=${startIdx}`);
+  const loadChannels = async (startIdx, order, sort, size) => {
+    const orderParam = order !== undefined ? order : sortField;
+    const sortParam = sort !== undefined ? sort : sortOrder;
+    const sizeParam = size !== undefined ? size : itemsPerPage;
+    const res = await API.get(`/api/channel/?p=${startIdx}&order=${orderParam}&sort=${sortParam}&size=${sizeParam}`);
     const { success, message, data } = res.data;
     if (success) {
       let localChannels = data.map(processChannelData);
@@ -119,7 +126,7 @@ const ChannelsTable = () => {
       } else {
         let newChannels = [...channels];
         newChannels.splice(
-          startIdx * ITEMS_PER_PAGE,
+          startIdx * itemsPerPage,
           data.length,
           ...localChannels
         );
@@ -131,9 +138,15 @@ const ChannelsTable = () => {
     setLoading(false);
   };
 
+  const handleItemsPerPageChange = (e, { value }) => {
+    setItemsPerPage(value);
+    localStorage.setItem('itemsPerPage', value.toString());
+    setActivePage(1);
+    loadChannels(0, undefined, undefined, value);
+  };
   const onPaginationChange = (e, { activePage }) => {
     (async () => {
-      if (activePage === Math.ceil(channels.length / ITEMS_PER_PAGE) + 1) {
+      if (activePage === Math.ceil(channels.length / itemsPerPage) + 1) {
         // In this case we have to load more data and then append them.
         await loadChannels(activePage - 1);
       }
@@ -198,7 +211,7 @@ const ChannelsTable = () => {
       showSuccess(t('channel.messages.operation_success'));
       let channel = res.data.data;
       let newChannels = [...channels];
-      let realIdx = (activePage - 1) * ITEMS_PER_PAGE + idx;
+      let realIdx = (activePage - 1) * itemsPerPage + idx;
       if (action === 'delete') {
         newChannels[realIdx].deleted = true;
       } else {
@@ -292,6 +305,7 @@ const ChannelsTable = () => {
       // if keyword is blank, load files instead.
       await loadChannels(0);
       setActivePage(1);
+    setActivePage(1);
       return;
     }
     setSearching(true);
@@ -301,6 +315,7 @@ const ChannelsTable = () => {
       let localChannels = data.map(processChannelData);
       setChannels(localChannels);
       setActivePage(1);
+    setActivePage(1);
     } else {
       showError(message);
     }
@@ -309,7 +324,7 @@ const ChannelsTable = () => {
 
   const switchTestModel = async (idx, model) => {
     let newChannels = [...channels];
-    let realIdx = (activePage - 1) * ITEMS_PER_PAGE + idx;
+    let realIdx = (activePage - 1) * itemsPerPage + idx;
     newChannels[realIdx].test_model = model;
     setChannels(newChannels);
   };
@@ -319,7 +334,7 @@ const ChannelsTable = () => {
     const { success, message, time, model } = res.data;
     if (success) {
       let newChannels = [...channels];
-      let realIdx = (activePage - 1) * ITEMS_PER_PAGE + idx;
+      let realIdx = (activePage - 1) * itemsPerPage + idx;
       newChannels[realIdx].response_time = time * 1000;
       newChannels[realIdx].test_time = Date.now() / 1000;
       setChannels(newChannels);
@@ -330,7 +345,7 @@ const ChannelsTable = () => {
       showError(message);
     }
     let newChannels = [...channels];
-    let realIdx = (activePage - 1) * ITEMS_PER_PAGE + idx;
+    let realIdx = (activePage - 1) * itemsPerPage + idx;
     newChannels[realIdx].response_time = time * 1000;
     newChannels[realIdx].test_time = Date.now() / 1000;
     setChannels(newChannels);
@@ -364,7 +379,7 @@ const ChannelsTable = () => {
     const { success, message, balance } = res.data;
     if (success) {
       let newChannels = [...channels];
-      let realIdx = (activePage - 1) * ITEMS_PER_PAGE + idx;
+      let realIdx = (activePage - 1) * itemsPerPage + idx;
       newChannels[realIdx].balance = balance;
       newChannels[realIdx].balance_updated_time = Date.now() / 1000;
       setChannels(newChannels);
@@ -390,24 +405,17 @@ const ChannelsTable = () => {
     setSearchKeyword(value.trim());
   };
 
-  const sortChannel = (key) => {
-    if (channels.length === 0) return;
-    setLoading(true);
-    let sortedChannels = [...channels];
-    sortedChannels.sort((a, b) => {
-      if (!isNaN(a[key])) {
-        // If the value is numeric, subtract to sort
-        return a[key] - b[key];
-      } else {
-        // If the value is not numeric, sort as strings
-        return ('' + a[key]).localeCompare(b[key]);
-      }
-    });
-    if (sortedChannels[0].id === channels[0].id) {
-      sortedChannels.reverse();
+  const sortChannel = async (key) => {
+    // Determine sort order: if clicking same field, toggle; otherwise default to desc
+    let newOrder = 'desc';
+    if (sortField === key) {
+      newOrder = sortOrder === 'desc' ? 'asc' : 'desc';
     }
-    setChannels(sortedChannels);
-    setLoading(false);
+    setSortField(key);
+    setSortOrder(newOrder);
+    setActivePage(1);
+    // Reload data from server with new sort order
+    await loadChannels(0, key, newOrder);
   };
 
   return (
@@ -515,8 +523,8 @@ const ChannelsTable = () => {
         <Table.Body>
           {channels
             .slice(
-              (activePage - 1) * ITEMS_PER_PAGE,
-              activePage * ITEMS_PER_PAGE
+              (activePage - 1) * itemsPerPage,
+              activePage * itemsPerPage
             )
             .map((channel, idx) => {
               if (channel.deleted) return <></>;
@@ -705,6 +713,15 @@ const ChannelsTable = () => {
                   {t('channel.buttons.confirm_delete_disabled')}
                 </Button>
               </Popup>
+              <Dropdown
+                floated="left"
+                selection
+                options={ITEMS_PER_PAGE_OPTIONS}
+                value={itemsPerPage}
+                onChange={handleItemsPerPageChange}
+                placeholder={t('common.page_size') || '每页显示'}
+                style={{ marginRight: '10px' }}
+              />
               <Pagination
                 floated='right'
                 activePage={activePage}
@@ -712,8 +729,8 @@ const ChannelsTable = () => {
                 size='tiny'
                 siblingRange={1}
                 totalPages={
-                  Math.ceil(channels.length / ITEMS_PER_PAGE) +
-                  (channels.length % ITEMS_PER_PAGE === 0 ? 1 : 0)
+                  Math.ceil(channels.length / itemsPerPage) +
+                  (channels.length % itemsPerPage === 0 ? 1 : 0)
                 }
               />
               <Button size='tiny' onClick={refresh} loading={loading}>
