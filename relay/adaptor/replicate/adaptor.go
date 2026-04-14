@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"slices"
 	"strings"
 	"time"
 
@@ -23,6 +22,17 @@ type Adaptor struct {
 }
 
 // ConvertImageRequest implements adaptor.Adaptor.
+
+// 辅助函数：替代 slices.Contains
+func containsString(slice []string, item string) bool {
+	for _, s := range slice {
+		if s == item {
+			return true
+		}
+	}
+	return false
+}
+
 func (*Adaptor) ConvertImageRequest(request *model.ImageRequest) (any, error) {
 	return DrawImageRequest{
 		Input: ImageInput{
@@ -96,7 +106,7 @@ func (a *Adaptor) Init(meta *meta.Meta) {
 }
 
 func (a *Adaptor) GetRequestURL(meta *meta.Meta) (string, error) {
-	if !slices.Contains(ModelList, meta.OriginModelName) {
+	if !containsString(ModelList, meta.OriginModelName) {
 		return "", errors.Errorf("model %s not supported", meta.OriginModelName)
 	}
 
