@@ -88,8 +88,9 @@ const TokensTable = () => {
   const [targetTokenIdx, setTargetTokenIdx] = useState(0);
   const [orderBy, setOrderBy] = useState('');
 
-  const loadTokens = async (startIdx) => {
-    const res = await API.get(`/api/token/?p=${startIdx}&order=${orderBy}`);
+  const loadTokens = async (startIdx, order) => {
+    const orderParam = order !== undefined ? order : orderBy;
+    const res = await API.get(`/api/token/?p=${startIdx}&order=${orderParam}`);
     const { success, message, data } = res.data;
     if (success) {
       if (startIdx === 0) {
@@ -299,6 +300,7 @@ const TokensTable = () => {
   const handleOrderByChange = (e, { value }) => {
     setOrderBy(value);
     setActivePage(1);
+    loadTokens(0, value);
   };
 
   return (
