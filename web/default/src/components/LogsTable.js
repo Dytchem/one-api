@@ -1,14 +1,15 @@
 import React, { useEffect, useState } from 'react';
-import {
-  Button,
-  Form,
-  Header,
-  Label,
-  Pagination,
-  Segment,
-  Select,
-  Table,
-  Popup,
+import { 
+  Button, 
+  Dropdown,
+  Form, 
+  Header, 
+  Label, 
+  Pagination, 
+  Segment, 
+  Select, 
+  Table, 
+  Popup, 
 } from 'semantic-ui-react';
 import {
   API,
@@ -21,7 +22,7 @@ import {
 } from '../helpers';
 import { useTranslation } from 'react-i18next';
 
-import { ITEMS_PER_PAGE } from '../constants';
+import { ITEMS_PER_PAGE_OPTIONS } from '../constants';
 import { renderColorLabel, renderQuota } from '../helpers/render';
 import { Link } from 'react-router-dom';
 
@@ -135,6 +136,8 @@ const LogsTable = () => {
   const [showStat, setShowStat] = useState(false);
   const [loading, setLoading] = useState(true);
   const [activePage, setActivePage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(() => parseInt(localStorage.getItem('itemsPerPage') || '10'));
+  const [orderBy, setOrderBy] = useState('');
   const [searchKeyword, setSearchKeyword] = useState('');
   const [searching, setSearching] = useState(false);
   const [logType, setLogType] = useState(0);
@@ -234,7 +237,7 @@ const LogsTable = () => {
         setLogs(data);
       } else {
         let newLogs = [...logs];
-        newLogs.splice(startIdx * ITEMS_PER_PAGE, data.length, ...data);
+        newLogs.splice(startIdx * itemsPerPage, data.length, ...data);
         setLogs(newLogs);
       }
     } else {
@@ -245,7 +248,7 @@ const LogsTable = () => {
 
   const onPaginationChange = (e, { activePage }) => {
     (async () => {
-      if (activePage === Math.ceil(logs.length / ITEMS_PER_PAGE) + 1) {
+      if (activePage === Math.ceil(logs.length / itemsPerPage) + 1) {
         // In this case we have to load more data and then append them.
         await loadLogs(activePage - 1);
       }
@@ -280,6 +283,13 @@ const LogsTable = () => {
       showError(message);
     }
     setSearching(false);
+  };
+
+  const handleItemsPerPageChange = (e, { value }) => {
+    setItemsPerPage(value);
+    localStorage.setItem('itemsPerPage', value.toString());
+    setActivePage(1);
+    loadLogs(0);
   };
 
   const handleKeywordChange = async (e, { value }) => {
@@ -507,8 +517,8 @@ const LogsTable = () => {
         <Table.Body>
           {logs
             .slice(
-              (activePage - 1) * ITEMS_PER_PAGE,
-              activePage * ITEMS_PER_PAGE
+              (activePage - 1) * itemsPerPage,
+              activePage * itemsPerPage
             )
             .map((log, idx) => {
               if (log.deleted) return <></>;
@@ -591,6 +601,14 @@ const LogsTable = () => {
               <Button size='small' onClick={refresh} loading={loading}>
                 {t('log.buttons.refresh')}
               </Button>
+              <Dropdown
+                selection
+                options={ITEMS_PER_PAGE_OPTIONS}
+                value={itemsPerPage}
+                onChange={handleItemsPerPageChange}
+                placeholder='10'
+                style={{ marginRight: '10px' }}
+              />
               <Pagination
                 floated='right'
                 activePage={activePage}
@@ -598,8 +616,8 @@ const LogsTable = () => {
                 size='small'
                 siblingRange={1}
                 totalPages={
-                  Math.ceil(logs.length / ITEMS_PER_PAGE) +
-                  (logs.length % ITEMS_PER_PAGE === 0 ? 1 : 0)
+                  Math.ceil(logs.length / itemsPerPage) +
+                  (logs.length % itemsPerPage === 0 ? 1 : 0)
                 }
               />
             </Table.HeaderCell>

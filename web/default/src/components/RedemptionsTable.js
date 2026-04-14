@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Button,
+  Dropdown,
   Form,
   Label,
   Popup,
@@ -19,7 +20,7 @@ import {
   timestamp2string,
 } from '../helpers';
 
-import { ITEMS_PER_PAGE } from '../constants';
+import { ITEMS_PER_PAGE_OPTIONS } from '../constants';
 import { renderQuota } from '../helpers/render';
 
 function renderTimestamp(timestamp) {
@@ -60,6 +61,8 @@ const RedemptionsTable = () => {
   const [redemptions, setRedemptions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [activePage, setActivePage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(() => parseInt(localStorage.getItem('itemsPerPage') || '10'));
+  const [orderBy, setOrderBy] = useState('');
   const [searchKeyword, setSearchKeyword] = useState('');
   const [searching, setSearching] = useState(false);
 
@@ -80,9 +83,16 @@ const RedemptionsTable = () => {
     setLoading(false);
   };
 
+  const handleItemsPerPageChange = (e, { value }) => {
+    setItemsPerPage(value);
+    localStorage.setItem('itemsPerPage', value.toString());
+    setActivePage(1);
+    loadRedemptions(0);
+  };
+
   const onPaginationChange = (e, { activePage }) => {
     (async () => {
-      if (activePage === Math.ceil(redemptions.length / ITEMS_PER_PAGE) + 1) {
+      if (activePage === Math.ceil(redemptions.length / itemsPerPage) + 1) {
         // In this case we have to load more data and then append them.
         await loadRedemptions(activePage - 1);
       }
@@ -119,7 +129,7 @@ const RedemptionsTable = () => {
       showSuccess(t('token.messages.operation_success'));
       let redemption = res.data.data;
       let newRedemptions = [...redemptions];
-      let realIdx = (activePage - 1) * ITEMS_PER_PAGE + idx;
+      let realIdx = (activePage - 1) * itemsPerPage + idx;
       if (action === 'delete') {
         newRedemptions[realIdx].deleted = true;
       } else {
@@ -254,8 +264,8 @@ const RedemptionsTable = () => {
         <Table.Body>
           {redemptions
             .slice(
-              (activePage - 1) * ITEMS_PER_PAGE,
-              activePage * ITEMS_PER_PAGE
+              (activePage - 1) * itemsPerPage,
+              activePage * itemsPerPage
             )
             .map((redemption, idx) => {
               if (redemption.deleted) return <></>;
@@ -353,6 +363,14 @@ const RedemptionsTable = () => {
               <Button size='small' onClick={refresh} loading={loading}>
                 {t('redemption.buttons.refresh')}
               </Button>
+              <Dropdown
+                selection
+                options={ITEMS_PER_PAGE_OPTIONS}
+                value={itemsPerPage}
+                onChange={handleItemsPerPageChange}
+                placeholder='10'
+                style={{ marginRight: '10px' }}
+              />
               <Pagination
                 floated='right'
                 activePage={activePage}
@@ -360,8 +378,8 @@ const RedemptionsTable = () => {
                 size='small'
                 siblingRange={1}
                 totalPages={
-                  Math.ceil(redemptions.length / ITEMS_PER_PAGE) +
-                  (redemptions.length % ITEMS_PER_PAGE === 0 ? 1 : 0)
+                  Math.ceil(redemptions.length / itemsPerPage) +
+                  (redemptions.length % itemsPerPage === 0 ? 1 : 0)
                 }
               />
             </Table.HeaderCell>

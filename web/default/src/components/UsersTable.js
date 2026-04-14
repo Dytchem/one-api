@@ -12,7 +12,7 @@ import { Link } from 'react-router-dom';
 import { API, showError, showSuccess } from '../helpers';
 import { useTranslation } from 'react-i18next';
 
-import { ITEMS_PER_PAGE } from '../constants';
+import { ITEMS_PER_PAGE_OPTIONS } from '../constants';
 import {
   renderGroup,
   renderNumber,
@@ -40,6 +40,7 @@ const UsersTable = () => {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [activePage, setActivePage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(() => parseInt(localStorage.getItem('itemsPerPage') || '10'));
   const [searchKeyword, setSearchKeyword] = useState('');
   const [searching, setSearching] = useState(false);
   const [orderBy, setOrderBy] = useState('');
@@ -61,9 +62,16 @@ const UsersTable = () => {
     setLoading(false);
   };
 
+  const handleItemsPerPageChange = (e, { value }) => {
+    setItemsPerPage(value);
+    localStorage.setItem('itemsPerPage', value.toString());
+    setActivePage(1);
+    setActivePage(1);
+  };
+
   const onPaginationChange = (e, { activePage }) => {
     (async () => {
-      if (activePage === Math.ceil(users.length / ITEMS_PER_PAGE) + 1) {
+      if (activePage === Math.ceil(users.length / itemsPerPage) + 1) {
         // In this case we have to load more data and then append them.
         await loadUsers(activePage - 1, orderBy);
       }
@@ -90,7 +98,7 @@ const UsersTable = () => {
         showSuccess(t('user.messages.operation_success'));
         let user = res.data.data;
         let newUsers = [...users];
-        let realIdx = (activePage - 1) * ITEMS_PER_PAGE + idx;
+        let realIdx = (activePage - 1) * itemsPerPage + idx;
         if (action === 'delete') {
           newUsers[realIdx].deleted = true;
         } else {
@@ -244,8 +252,8 @@ const UsersTable = () => {
         <Table.Body>
           {users
             .slice(
-              (activePage - 1) * ITEMS_PER_PAGE,
-              activePage * ITEMS_PER_PAGE
+              (activePage - 1) * itemsPerPage,
+              activePage * itemsPerPage
             )
             .map((user, idx) => {
               if (user.deleted) return <></>;
@@ -395,6 +403,14 @@ const UsersTable = () => {
                 onChange={handleOrderByChange}
                 style={{ marginLeft: '10px' }}
               />
+              <Dropdown
+                selection
+                options={ITEMS_PER_PAGE_OPTIONS}
+                value={itemsPerPage}
+                onChange={handleItemsPerPageChange}
+                style={{ minWidth: '80px', marginRight: '5px' }}
+              />
+              <span style={{ marginRight: '15px', fontSize: '12px', color: '#666' }}>条/页</span>
               <Pagination
                 floated='right'
                 activePage={activePage}
@@ -402,8 +418,8 @@ const UsersTable = () => {
                 size='small'
                 siblingRange={1}
                 totalPages={
-                  Math.ceil(users.length / ITEMS_PER_PAGE) +
-                  (users.length % ITEMS_PER_PAGE === 0 ? 1 : 0)
+                  Math.ceil(users.length / itemsPerPage) +
+                  (users.length % itemsPerPage === 0 ? 1 : 0)
                 }
               />
             </Table.HeaderCell>
