@@ -21,7 +21,13 @@ func GetAllTokens(c *gin.Context) {
 	}
 
 	order := c.Query("order")
-	tokens, err := model.GetAllUserTokens(userId, p*config.ItemsPerPage, config.ItemsPerPage, order)
+	size := config.ItemsPerPage
+	if s := c.Query("size"); s != "" {
+		if parsedSize, err := strconv.Atoi(s); err == nil && parsedSize > 0 {
+			size = parsedSize
+		}
+	}
+	tokens, err := model.GetAllUserTokens(userId, p*size, size, order)
 
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
