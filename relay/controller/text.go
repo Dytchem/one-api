@@ -109,7 +109,7 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 				logger.Infof(ctx, "stream probe successful with %d bytes buffered", probeBuffer.Len())
 
 				// Now set headers and replay buffered data to client
-				openai.SetEventStreamHeaders(c)
+				common.SetEventStreamHeaders(c)
 				reader := bytes.NewReader(probeBuffer.Bytes())
 				streamScanner := bufio.NewScanner(reader)
 				streamScanner.Split(bufio.ScanLines)
