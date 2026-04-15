@@ -45,6 +45,8 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           no-cache: true
+          provenance: false
+          sbom: false
 
       - name: Clean up old versions
         uses: actions/delete-package-versions@v5
