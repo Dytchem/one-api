@@ -63,9 +63,47 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 
 	adaptor := relay.GetAdaptor(meta.APIType)
 	if adaptor == nil {
-		return openai.ErrorWrapper(fmt.Errorf("invalid api type: %d", meta.APIType), "invalid_api_type", http.StatusBadRequest)
+		return openai.ErrorWrapper(fmt.Errorf("invalid api type: %d", meta.APIType), "invalid_api_type", http.StatusInternalServerError)
 	}
 	adaptor.Init(meta)
+
+	// For stream requests, first do a probe request to verify channel is working
+	if meta.IsStream {
+		// Create a non-stream probe request
+		probeRequest := &model.GeneralOpenAIRequest{}
+		// Deep copy textRequest to probeRequest
+		probeBytes, _ := json.Marshal(textRequest)
+		json.Unmarshal(probeBytes, probeRequest)
+		probeRequest.Stream = false
+
+		// Get probe request body
+		probeRequestBody, err := getRequestBody(c, meta, probeRequest, adaptor)
+		if err != nil {
+			logger.Warnf(ctx, "probe request body failed: %s, proceeding with stream anyway", err.Error())
+			// If probe fails, continue with normal flow
+		} else {
+			// Do probe request
+			probeResp, probeErr := adaptor.DoRequest(c, meta, probeRequestBody)
+			if probeErr != nil {
+				logger.Warnf(ctx, "probe request failed: %s, proceeding with stream anyway", probeErr.Error())
+				// If probe fails, continue with normal flow
+			} else if probeResp != nil && probeResp.StatusCode/100 == 2 {
+				// Probe succeeded, check if it's valid
+				probeUsage, probeRespErr := adaptor.DoResponse(c, probeResp, meta)
+				if probeRespErr == nil && probeUsage != nil && probeUsage.CompletionTokens > 0 {
+					// Probe successful! Channel is working.
+					// Now do the real stream request
+					logger.Infof(ctx, "stream probe successful, proceeding with stream response")
+				} else {
+					logger.Warnf(ctx, "stream probe returned empty response (completion_tokens=0), triggering fallback")
+					billing.ReturnPreConsumedQuota(ctx, preConsumedQuota, meta.TokenId)
+					return openai.ErrorWrapper(fmt.Errorf("empty response from channel during probe"), "empty_response", http.StatusBadGateway)
+				}
+			} else {
+				logger.Warnf(ctx, "probe request returned error status: %d, proceeding with stream anyway", probeResp.StatusCode)
+			}
+		}
+	}
 
 	// get request body
 	requestBody, err := getRequestBody(c, meta, textRequest, adaptor)
