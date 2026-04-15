@@ -8,12 +8,11 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/songquanpeng/one-api/common/render"
-
 	"github.com/gin-gonic/gin"
 	"github.com/songquanpeng/one-api/common"
 	"github.com/songquanpeng/one-api/common/conv"
 	"github.com/songquanpeng/one-api/common/logger"
+	"github.com/songquanpeng/one-api/common/render"
 	"github.com/songquanpeng/one-api/relay/model"
 	"github.com/songquanpeng/one-api/relay/relaymode"
 )
@@ -24,18 +23,82 @@ const (
 	dataPrefixLength = len(dataPrefix)
 )
 
+// StreamHandlerWithBuffer is a variant of StreamHandler that buffers data instead of sending to client
+// Returns buffered chunks and usage
+func StreamHandlerWithBuffer(c *gin.Context, resp *http.Response, relayMode int) (*model.ErrorWithStatusCode, []byte, *model.Usage) {
+	var buf bytes.Buffer
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Split(bufio.ScanLines)
+	var usage *model.Usage
+
+	for scanner.Scan() {
+		data := scanner.Text()
+		if len(data) < dataPrefixLength {
+			continue
+		}
+
+		// Check for [DONE] message
+		dataWithoutPrefix := data[dataPrefixLength:]
+		if dataWithoutPrefix == done {
+			buf.WriteString(data)
+			buf.WriteString("\n")
+			continue
+		}
+
+		// Only handle data: prefix
+		if data[:dataPrefixLength] != dataPrefix {
+			continue
+		}
+
+		switch relayMode {
+		case relaymode.ChatCompletions:
+			var streamResponse ChatCompletionsStreamResponse
+			err := json.Unmarshal([]byte(dataWithoutPrefix), &streamResponse)
+			if err != nil {
+				logger.SysError("error unmarshalling stream response: " + err.Error())
+				continue
+			}
+			if len(streamResponse.Choices) == 0 && streamResponse.Usage == nil {
+				continue
+			}
+			// Store in buffer
+			buf.WriteString(data)
+			buf.WriteString("\n")
+
+			if streamResponse.Usage != nil {
+				usage = streamResponse.Usage
+			}
+		case relaymode.Completions:
+			var streamResponse CompletionsStreamResponse
+			err := json.Unmarshal([]byte(dataWithoutPrefix), &streamResponse)
+			if err != nil {
+				logger.SysError("error unmarshalling stream response: " + err.Error())
+				continue
+			}
+			buf.WriteString(data)
+			buf.WriteString("\n")
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		logger.SysError("error reading stream: " + err.Error())
+	}
+	resp.Body.Close()
+
+	return nil, buf.Bytes(), usage
+}
+
 func StreamHandler(c *gin.Context, resp *http.Response, relayMode int) (*model.ErrorWithStatusCode, string, *model.Usage) {
 	responseText := ""
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Split(bufio.ScanLines)
 	var usage *model.Usage
-
 	common.SetEventStreamHeaders(c)
-
 	doneRendered := false
 	for scanner.Scan() {
 		data := scanner.Text()
-		if len(data) < dataPrefixLength { // ignore blank line or wrong format
+		if len(data) < dataPrefixLength {
+			// ignore blank line or wrong format
 			continue
 		}
 		if data[:dataPrefixLength] != dataPrefix && data[:dataPrefixLength] != done {
@@ -79,20 +142,16 @@ func StreamHandler(c *gin.Context, resp *http.Response, relayMode int) (*model.E
 			}
 		}
 	}
-
 	if err := scanner.Err(); err != nil {
 		logger.SysError("error reading stream: " + err.Error())
 	}
-
 	if !doneRendered {
 		render.Done(c)
 	}
-
 	err := resp.Body.Close()
 	if err != nil {
 		return ErrorWrapper(err, "close_response_body_failed", http.StatusInternalServerError), "", nil
 	}
-
 	return nil, responseText, usage
 }
 
@@ -112,13 +171,12 @@ func Handler(c *gin.Context, resp *http.Response, promptTokens int, modelName st
 	}
 	if textResponse.Error.Type != "" {
 		return &model.ErrorWithStatusCode{
-			Error:      textResponse.Error,
+			Error:     textResponse.Error,
 			StatusCode: resp.StatusCode,
 		}, nil
 	}
 	// Reset response body
 	resp.Body = io.NopCloser(bytes.NewBuffer(responseBody))
-
 	// We shouldn't set the header before we parse the response body, because the parse part may fail.
 	// And then we will have to send an error response, but in this case, the header has already been set.
 	// So the HTTPClient will be confused by the response.
@@ -135,7 +193,6 @@ func Handler(c *gin.Context, resp *http.Response, promptTokens int, modelName st
 	if err != nil {
 		return ErrorWrapper(err, "close_response_body_failed", http.StatusInternalServerError), nil
 	}
-
 	if textResponse.Usage.TotalTokens == 0 || (textResponse.Usage.PromptTokens == 0 && textResponse.Usage.CompletionTokens == 0) {
 		completionTokens := 0
 		for _, choice := range textResponse.Choices {

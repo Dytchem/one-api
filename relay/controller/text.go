@@ -35,24 +35,19 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 	meta.IsStream = textRequest.Stream
 
 	// map model name
-	// Use OriginModelName from context (original request model), not from textRequest.Model
-	// because on retry, textRequest.Model may already be the mapped model from previous attempt
 	originModel := c.GetString(ctxkey.OriginalModel)
 	if originModel != "" {
 		meta.OriginModelName = originModel
-		textRequest.Model = originModel // Also restore textRequest.Model for mapping to work
+		textRequest.Model = originModel
 	} else {
 		meta.OriginModelName = textRequest.Model
 	}
 	textRequest.Model, _ = getMappedModelName(textRequest.Model, meta.ModelMapping)
 	meta.ActualModelName = textRequest.Model
-	// set system prompt if not empty
 	systemPromptReset := setSystemPrompt(ctx, textRequest, meta.ForcedSystemPrompt)
-	// get model ratio & group ratio
 	modelRatio := billingratio.GetModelRatio(textRequest.Model, meta.ChannelType)
 	groupRatio := billingratio.GetGroupRatio(meta.Group)
 	ratio := modelRatio * groupRatio
-	// pre-consume quota
 	promptTokens := getPromptTokens(textRequest, meta.Mode)
 	meta.PromptTokens = promptTokens
 	preConsumedQuota, bizErr := preConsumeQuota(ctx, textRequest, promptTokens, ratio, meta)
@@ -67,11 +62,10 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 	}
 	adaptor.Init(meta)
 
-	// For stream requests, first do a probe request to verify channel is working
+	// For stream requests: probe first with buffering
 	if meta.IsStream {
-		// Create a non-stream probe request
+		// Create a non-stream clone for probing
 		probeRequest := &model.GeneralOpenAIRequest{}
-		// Deep copy textRequest to probeRequest
 		probeBytes, _ := json.Marshal(textRequest)
 		json.Unmarshal(probeBytes, probeRequest)
 		probeRequest.Stream = false
@@ -79,39 +73,80 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 		// Get probe request body
 		probeRequestBody, err := getRequestBody(c, meta, probeRequest, adaptor)
 		if err != nil {
-			logger.Warnf(ctx, "probe request body failed: %s, proceeding with stream anyway", err.Error())
-			// If probe fails, continue with normal flow
+			logger.Warnf(ctx, "probe request body failed: %s", err.Error())
 		} else {
 			// Do probe request
 			probeResp, probeErr := adaptor.DoRequest(c, meta, probeRequestBody)
 			if probeErr != nil {
-				logger.Warnf(ctx, "probe request failed: %s, proceeding with stream anyway", probeErr.Error())
-				// If probe fails, continue with normal flow
+				logger.Warnf(ctx, "probe request failed: %s", probeErr.Error())
 			} else if probeResp != nil && probeResp.StatusCode/100 == 2 {
-				// Probe succeeded, check if it's valid
+				// Probe succeeded - validate has content
 				probeUsage, probeRespErr := adaptor.DoResponse(c, probeResp, meta)
 				if probeRespErr == nil && probeUsage != nil && probeUsage.CompletionTokens > 0 {
-					// Probe successful! Channel is working.
-					// Now do the real stream request
-					logger.Infof(ctx, "stream probe successful, proceeding with stream response")
+					// Probe successful with valid response
+					logger.Infof(ctx, "stream probe successful, buffering and streaming")
+					// Buffer the probe response body for replay
+					var buffer bytes.Buffer
+					io.Copy(&buffer, probeResp.Body)
+					probeResp.Body.Close()
+
+					// Now replay buffered data to client as stream
+					reader := bytes.NewReader(buffer.Bytes())
+					scanner := bufio.NewScanner(reader)
+					scanner.Split(bufio.ScanLines)
+					for scanner.Scan() {
+						data := scanner.Text()
+						if len(data) < dataPrefixLength {
+							continue
+						}
+						dataWithoutPrefix := data[dataPrefixLength:]
+						if dataWithoutPrefix == done || data[:dataPrefixLength] != dataPrefix {
+							render.StringData(c, data)
+							continue
+						}
+						switch relayMode {
+						case relaymode.ChatCompletions:
+							var streamResponse ChatCompletionsStreamResponse
+							if json.Unmarshal([]byte(dataWithoutPrefix), &streamResponse) == nil {
+								render.StringData(c, data)
+								for _, choice := range streamResponse.Choices {
+									responseText += conv.AsString(choice.Delta.Content)
+								}
+							} else {
+								render.StringData(c, data)
+							}
+						case relaymode.Completions:
+							var streamResponse CompletionsStreamResponse
+							if json.Unmarshal([]byte(dataWithoutPrefix), &streamResponse) == nil {
+								render.StringData(c, data)
+								for _, choice := range streamResponse.Choices {
+									responseText += choice.Text
+								}
+							} else {
+								render.StringData(c, data)
+							}
+						}
+					}
 				} else {
-					logger.Warnf(ctx, "stream probe returned empty response (completion_tokens=0), triggering fallback")
-					billing.ReturnPreConsumedQuota(ctx, preConsumedQuota, meta.TokenId)
-					return openai.ErrorWrapper(fmt.Errorf("empty response from channel during probe"), "empty_response", http.StatusBadGateway)
+					probeResp.Body.Close()
+					if probeUsage != nil && probeUsage.CompletionTokens == 0 {
+						billing.ReturnPreConsumedQuota(ctx, preConsumedQuota, meta.TokenId)
+						return openai.ErrorWrapper(fmt.Errorf("empty response from channel during probe"), "empty_response", http.StatusBadGateway)
+					}
+					logger.Warnf(ctx, "probe incomplete, falling back")
 				}
 			} else {
-				logger.Warnf(ctx, "probe request returned error status: %d, proceeding with stream anyway", probeResp.StatusCode)
+				logger.Warnf(ctx, "probe request failed status: %d", probeResp.StatusCode)
 			}
 		}
 	}
 
-	// get request body
+	// Normal request body for actual streaming
 	requestBody, err := getRequestBody(c, meta, textRequest, adaptor)
 	if err != nil {
 		return openai.ErrorWrapper(err, "convert_request_failed", http.StatusInternalServerError)
 	}
 
-	// do request
 	resp, err := adaptor.DoRequest(c, meta, requestBody)
 	if err != nil {
 		logger.Errorf(ctx, "DoRequest failed: %s", err.Error())
@@ -122,48 +157,18 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 		return RelayErrorHandler(resp)
 	}
 
-	// do response
-	usage, respErr := adaptor.DoResponse(c, resp, meta)
+	// Stream the buffered + real response
+	_, respErr := openai.StreamHandler(c, resp, meta.Mode)
 	if respErr != nil {
 		logger.Errorf(ctx, "respErr is not nil: %+v", respErr)
 		billing.ReturnPreConsumedQuota(ctx, preConsumedQuota, meta.TokenId)
 		return respErr
 	}
-	// check for empty response - trigger fallback if completion tokens are 0 and no content was generated
-	// We check TotalTokens == PromptTokens because when CompletionTokens=0, TotalTokens equals PromptTokens
-	if usage != nil && usage.CompletionTokens == 0 {
-		logger.Warnf(ctx, "empty response detected (completion_tokens=0), triggering fallback")
+	// check for empty response
+	if respErr == nil && usage != nil && usage.CompletionTokens == 0 {
 		billing.ReturnPreConsumedQuota(ctx, preConsumedQuota, meta.TokenId)
 		return openai.ErrorWrapper(fmt.Errorf("empty response from channel"), "empty_response", http.StatusBadGateway)
 	}
-	// post-consume quota
 	go postConsumeQuota(ctx, usage, meta, textRequest, ratio, preConsumedQuota, modelRatio, groupRatio, systemPromptReset)
 	return nil
-}
-
-func getRequestBody(c *gin.Context, meta *meta.Meta, textRequest *model.GeneralOpenAIRequest, adaptor adaptor.Adaptor) (io.Reader, error) {
-	if !config.EnforceIncludeUsage &&
-		meta.APIType == apitype.OpenAI &&
-		meta.OriginModelName == meta.ActualModelName &&
-		meta.ChannelType != channeltype.Baichuan &&
-		meta.ForcedSystemPrompt == "" {
-		// no need to convert request for openai
-		return c.Request.Body, nil
-	}
-
-	// get request body
-	var requestBody io.Reader
-	convertedRequest, err := adaptor.ConvertRequest(c, meta.Mode, textRequest)
-	if err != nil {
-		logger.Debugf(c.Request.Context(), "converted request failed: %s\n", err.Error())
-		return nil, err
-	}
-	jsonData, err := json.Marshal(convertedRequest)
-	if err != nil {
-		logger.Debugf(c.Request.Context(), "converted request json_marshal_failed: %s\n", err.Error())
-		return nil, err
-	}
-	logger.Debugf(c.Request.Context(), "converted request: \n%s", string(jsonData))
-	requestBody = bytes.NewBuffer(jsonData)
-	return requestBody, nil
 }
