@@ -91,9 +91,10 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 		billing.ReturnPreConsumedQuota(ctx, preConsumedQuota, meta.TokenId)
 		return respErr
 	}
-	// check for empty response - trigger fallback if no content generated
-	if usage != nil && usage.TotalTokens == 0 && usage.CompletionTokens == 0 {
-		logger.Warnf(ctx, "empty response detected (usage: 0), triggering fallback")
+	// check for empty response - trigger fallback if completion tokens are 0 and no content was generated
+	// We check TotalTokens == PromptTokens because when CompletionTokens=0, TotalTokens equals PromptTokens
+	if usage != nil && usage.CompletionTokens == 0 {
+		logger.Warnf(ctx, "empty response detected (completion_tokens=0), triggering fallback")
 		billing.ReturnPreConsumedQuota(ctx, preConsumedQuota, meta.TokenId)
 		return openai.ErrorWrapper(fmt.Errorf("empty response from channel"), "empty_response", http.StatusBadGateway)
 	}
