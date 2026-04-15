@@ -10,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/songquanpeng/one-api/common"
 	"github.com/songquanpeng/one-api/common/config"
 	"github.com/songquanpeng/one-api/common/ctxkey"
 	"github.com/songquanpeng/one-api/common/logger"
@@ -107,7 +108,7 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 				logger.Infof(ctx, "stream probe successful with %d bytes buffered", probeBuffer.Len())
 
 				// Now replay buffered data to client
-				render.SetEventStreamHeaders(c)
+				common.SetEventStreamHeaders(c)
 				reader := bytes.NewReader(probeBuffer.Bytes())
 				streamScanner := bufio.NewScanner(reader)
 				streamScanner.Split(bufio.ScanLines)
