@@ -29,10 +29,14 @@ type Redemption struct {
 	Count        int    `json:"count" gorm:"-:all"` // only for api request
 }
 
-func GetAllRedemptions(startIdx int, num int) ([]*Redemption, error) {
+func GetAllRedemptions(startIdx int, num int, order ...string) ([]*Redemption, error) {
 	var redemptions []*Redemption
 	var err error
-	err = DB.Order("id desc").Limit(num).Offset(startIdx).Find(&redemptions).Error
+	orderClause := "id desc"
+	if len(order) > 0 && order[0] != "" {
+		orderClause = order[0] + " desc"
+	}
+	err = DB.Order(orderClause).Limit(num).Offset(startIdx).Find(&redemptions).Error
 	return redemptions, err
 }
 

@@ -88,8 +88,8 @@ const ChannelsTable = () => {
   const [updatingBalance, setUpdatingBalance] = useState(false);
   const [showPrompt, setShowPrompt] = useState(shouldShowPrompt(promptID));
   const [showDetail, setShowDetail] = useState(isShowDetail());
-  const [sortField, setSortField] = useState('id');
-  const [sortOrder, setSortOrder] = useState('desc');
+  const [sortField, setSortField] = useState(() => localStorage.getItem('channelSortField') || 'id');
+  const [sortOrder, setSortOrder] = useState(() => localStorage.getItem('channelSortOrder') || 'desc');
   const [orderBy, setOrderBy] = useState('');
 
   const processChannelData = (channel) => {
@@ -413,6 +413,8 @@ const ChannelsTable = () => {
     }
     setSortField(key);
     setSortOrder(newOrder);
+    localStorage.setItem('channelSortField', key);
+    localStorage.setItem('channelSortOrder', newOrder);
     setActivePage(1);
     // Reload data from server with new sort order
     await loadChannels(0, key, newOrder);

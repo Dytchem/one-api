@@ -22,7 +22,8 @@ func GetAllRedemptions(c *gin.Context) {
 			size = parsedSize
 		}
 	}
-	redemptions, err := model.GetAllRedemptions(p*size, size)
+	order := c.DefaultQuery("order", "id")
+	redemptions, err := model.GetAllRedemptions(p*size, size, order)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,

@@ -43,7 +43,7 @@ const UsersTable = () => {
   const [itemsPerPage, setItemsPerPage] = useState(() => parseInt(localStorage.getItem('itemsPerPage') || '10'));
   const [searchKeyword, setSearchKeyword] = useState('');
   const [searching, setSearching] = useState(false);
-  const [orderBy, setOrderBy] = useState('');
+  const [orderBy, setOrderBy] = useState(() => localStorage.getItem('userOrderBy') || '');
 
   const loadUsers = async (startIdx, order, size) => {
     const orderParam = order !== undefined ? order : orderBy;
@@ -179,7 +179,9 @@ const UsersTable = () => {
 
   const handleOrderByChange = (e, { value }) => {
     setOrderBy(value);
+    localStorage.setItem('userOrderBy', value);
     setActivePage(1);
+    loadUsers(0, value);
   };
 
   return (

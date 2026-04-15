@@ -62,13 +62,14 @@ const RedemptionsTable = () => {
   const [loading, setLoading] = useState(true);
   const [activePage, setActivePage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(() => parseInt(localStorage.getItem('itemsPerPage') || '10'));
-  const [orderBy, setOrderBy] = useState('');
+  const [orderBy, setOrderBy] = useState(() => localStorage.getItem('redemptionOrderBy') || 'id');
   const [searchKeyword, setSearchKeyword] = useState('');
   const [searching, setSearching] = useState(false);
 
-  const loadRedemptions = async (startIdx, size) => {
+  const loadRedemptions = async (startIdx, size, order) => {
     const sizeParam = size !== undefined ? size : itemsPerPage;
-    const res = await API.get(`/api/redemption/?p=${startIdx}&size=${sizeParam}`);
+    const orderParam = order !== undefined ? order : orderBy;
+    const res = await API.get(`/api/redemption/?p=${startIdx}&size=${sizeParam}&order=${orderParam}`);
     const { success, message, data } = res.data;
     if (success) {
       if (startIdx === 0) {
@@ -167,24 +168,11 @@ const RedemptionsTable = () => {
     setSearchKeyword(value.trim());
   };
 
-  const sortRedemption = (key) => {
-    if (redemptions.length === 0) return;
-    setLoading(true);
-    let sortedRedemptions = [...redemptions];
-    sortedRedemptions.sort((a, b) => {
-      if (!isNaN(a[key])) {
-        // If the value is numeric, subtract to sort
-        return a[key] - b[key];
-      } else {
-        // If the value is not numeric, sort as strings
-        return ('' + a[key]).localeCompare(b[key]);
-      }
-    });
-    if (sortedRedemptions[0].id === redemptions[0].id) {
-      sortedRedemptions.reverse();
-    }
-    setRedemptions(sortedRedemptions);
-    setLoading(false);
+  const handleOrderByChange = (e, { value }) => {
+    setOrderBy(value);
+    localStorage.setItem('redemptionOrderBy', value);
+    setActivePage(1);
+    loadRedemptions(0, undefined, value);
   };
 
   const refresh = async () => {
@@ -213,7 +201,7 @@ const RedemptionsTable = () => {
             <Table.HeaderCell
               style={{ cursor: 'pointer' }}
               onClick={() => {
-                sortRedemption('id');
+                handleOrderByChange(null, { value: 'id' });
               }}
             >
               {t('redemption.table.id')}
@@ -221,7 +209,7 @@ const RedemptionsTable = () => {
             <Table.HeaderCell
               style={{ cursor: 'pointer' }}
               onClick={() => {
-                sortRedemption('name');
+                handleOrderByChange(null, { value: 'name' });
               }}
             >
               {t('redemption.table.name')}
@@ -229,7 +217,7 @@ const RedemptionsTable = () => {
             <Table.HeaderCell
               style={{ cursor: 'pointer' }}
               onClick={() => {
-                sortRedemption('status');
+                handleOrderByChange(null, { value: 'status' });
               }}
             >
               {t('redemption.table.status')}
@@ -237,7 +225,7 @@ const RedemptionsTable = () => {
             <Table.HeaderCell
               style={{ cursor: 'pointer' }}
               onClick={() => {
-                sortRedemption('quota');
+                handleOrderByChange(null, { value: 'quota' });
               }}
             >
               {t('redemption.table.quota')}
@@ -245,7 +233,7 @@ const RedemptionsTable = () => {
             <Table.HeaderCell
               style={{ cursor: 'pointer' }}
               onClick={() => {
-                sortRedemption('created_time');
+                handleOrderByChange(null, { value: 'created_time' });
               }}
             >
               {t('redemption.table.created_time')}
@@ -253,7 +241,7 @@ const RedemptionsTable = () => {
             <Table.HeaderCell
               style={{ cursor: 'pointer' }}
               onClick={() => {
-                sortRedemption('redeemed_time');
+                handleOrderByChange(null, { value: 'redeemed_time' });
               }}
             >
               {t('redemption.table.redeemed_time')}

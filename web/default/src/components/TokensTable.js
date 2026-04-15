@@ -86,7 +86,7 @@ const TokensTable = () => {
   const [searching, setSearching] = useState(false);
   const [showTopUpModal, setShowTopUpModal] = useState(false);
   const [targetTokenIdx, setTargetTokenIdx] = useState(0);
-  const [orderBy, setOrderBy] = useState('');
+  const [orderBy, setOrderBy] = useState(() => localStorage.getItem('tokenOrderBy') || '');
 
   const loadTokens = async (startIdx, order) => {
     const orderParam = order !== undefined ? order : orderBy;
@@ -299,6 +299,7 @@ const TokensTable = () => {
 
   const handleOrderByChange = (e, { value }) => {
     setOrderBy(value);
+    localStorage.setItem('tokenOrderBy', value);
     setActivePage(1);
     loadTokens(0, value);
   };
