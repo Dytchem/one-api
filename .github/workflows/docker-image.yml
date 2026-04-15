@@ -45,3 +45,12 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           no-cache: true
+
+      - name: Clean up old versions
+        uses: actions/delete-package-versions@v5
+        with:
+          package-name: one-api
+          package-type: container
+          min-versions-to-keep: 2
+          delete-only-untagged-versions: false
+          token: ${{ secrets.GITHUB_TOKEN }}
