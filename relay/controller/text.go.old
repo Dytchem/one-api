@@ -1,19 +1,17 @@
 package controller
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 
-	"github.com/gin-gonic/gin"
+	"github.gin-gonic/gin"
 
 	"github.com/songquanpeng/one-api/common/config"
 	"github.com/songquanpeng/one-api/common/ctxkey"
 	"github.com/songquanpeng/one-api/common/logger"
-	"github.com/songquanpeng/one-api/common/render"
 	"github.com/songquanpeng/one-api/relay"
 	"github.com/songquanpeng/one-api/relay/adaptor"
 	"github.com/songquanpeng/one-api/relay/adaptor/openai"
@@ -23,7 +21,6 @@ import (
 	"github.com/songquanpeng/one-api/relay/channeltype"
 	"github.com/songquanpeng/one-api/relay/meta"
 	"github.com/songquanpeng/one-api/relay/model"
-	"github.com/songquanpeng/one-api/relay/relaymode"
 )
 
 func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
@@ -63,78 +60,34 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 	}
 	adaptor.Init(meta)
 
-	// For stream requests: probe with streaming, buffer data, then replay to client
+	// For stream requests: probe first with buffering, if probe fails, trigger fallback
 	if meta.IsStream {
-		// Create a clone for probe
+		// Create non-stream clone for probe
 		probeRequest := &model.GeneralOpenAIRequest{}
 		probeBytes, _ := json.Marshal(textRequest)
 		json.Unmarshal(probeBytes, probeRequest)
-		// Use streaming for probe
-		probeRequest.Stream = true
+		probeRequest.Stream = false
 
 		// Get probe request body
 		probeRequestBody, err := getRequestBody(c, meta, probeRequest, adaptor)
 		if err == nil {
-			// Do probe request with streaming
 			probeResp, probeErr := adaptor.DoRequest(c, meta, probeRequestBody)
 			if probeErr == nil && probeResp != nil && probeResp.StatusCode/100 == 2 {
-				// Probe succeeded - buffer the stream data
-				var probeBuffer bytes.Buffer
-				scanner := bufio.NewScanner(probeResp.Body)
-				scanner.Split(bufio.ScanLines)
-				var probeUsage *model.Usage
-
-				for scanner.Scan() {
-					data := scanner.Text()
-					probeBuffer.WriteString(data)
-					probeBuffer.WriteString("\n")
-
-					// Try to extract usage from the last line
-					if len(data) > 6 && data[:6] == "data: " {
-						var streamResp openai.ChatCompletionsStreamResponse
-						if json.Unmarshal([]byte(data[6:]), &streamResp) == nil && streamResp.Usage != nil {
-							probeUsage = streamResp.Usage
-						}
-					}
-				}
-				probeResp.Body.Close()
-
-				// Check if probe has valid content
-				if probeUsage == nil || probeUsage.CompletionTokens == 0 {
-					// Probe returned empty - trigger fallback
-					logger.Warnf(ctx, "stream probe returned empty response, triggering fallback")
+				probeUsage, probeRespErr := adaptor.DoResponse(c, probeResp, meta)
+				if probeRespErr != nil || probeUsage == nil || probeUsage.CompletionTokens == 0 {
+					// Probe failed - trigger fallback
+					logger.Warnf(ctx, "stream probe failed (empty response), triggering fallback")
 					billing.ReturnPreConsumedQuota(ctx, preConsumedQuota, meta.TokenId)
 					return openai.ErrorWrapper(fmt.Errorf("empty response from channel during probe"), "empty_response", http.StatusBadGateway)
 				}
-
-				logger.Infof(ctx, "stream probe successful with %d bytes buffered", probeBuffer.Len())
-
-				// Now set headers and replay buffered data to client
-				openai.SetEventStreamHeaders(c)
-				reader := bytes.NewReader(probeBuffer.Bytes())
-				streamScanner := bufio.NewScanner(reader)
-				streamScanner.Split(bufio.ScanLines)
-
-				for streamScanner.Scan() {
-					data := streamScanner.Text()
-					if len(data) > 0 {
-						render.StringData(c, data)
-					}
-				}
-				render.Done(c)
-
-				// Post consume and return - the probe response was sent to client
-				go postConsumeQuota(ctx, probeUsage, meta, textRequest, ratio, preConsumedQuota, modelRatio, groupRatio, systemPromptReset)
-				return nil
+				logger.Infof(ctx, "stream probe successful")
 			} else {
-				logger.Warnf(ctx, "stream probe request failed: %v", probeErr)
+				logger.Warnf(ctx, "stream probe request failed")
 			}
-		} else {
-			logger.Warnf(ctx, "probe request body failed: %s", err.Error())
 		}
 	}
 
-	// Normal flow (non-stream or probe failed)
+	// Normal request
 	requestBody, err := getRequestBody(c, meta, textRequest, adaptor)
 	if err != nil {
 		return openai.ErrorWrapper(err, "convert_request_failed", http.StatusInternalServerError)
@@ -182,7 +135,7 @@ func getRequestBody(c *gin.Context, meta *meta.Meta, textRequest *model.GeneralO
 	}
 	jsonData, err := json.Marshal(convertedRequest)
 	if err != nil {
-		logger.Debugf(c.Request.Context(), "converted request json_ marshal_ failed: %s\n", err.Error())
+		logger.Debugf(c.Request.Context(), "converted request json_marshal_failed: %s\n", err.Error())
 		return nil, err
 	}
 	logger.Debugf(c.Request.Context(), "converted request: \n%s", string(jsonData))
