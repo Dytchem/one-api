@@ -68,7 +68,6 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 		probeRequest := &model.GeneralOpenAIRequest{}
 		probeBytes, _ := json.Marshal(textRequest)
 		json.Unmarshal(probeBytes, probeRequest)
-		// Use streaming for probe
 		probeRequest.Stream = true
 
 		// Get probe request body
@@ -88,7 +87,7 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 					probeBuffer.WriteString(data)
 					probeBuffer.WriteString("\n")
 
-					// Try to extract usage from the last line
+					// Try to extract usage
 					if len(data) > 6 && data[:6] == "data: " {
 						var streamResp openai.ChatCompletionsStreamResponse
 						if json.Unmarshal([]byte(data[6:]), &streamResp) == nil && streamResp.Usage != nil {
@@ -100,7 +99,6 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 
 				// Check if probe has valid content
 				if probeUsage == nil || probeUsage.CompletionTokens == 0 {
-					// Probe returned empty - trigger fallback
 					logger.Warnf(ctx, "stream probe returned empty response, triggering fallback")
 					billing.ReturnPreConsumedQuota(ctx, preConsumedQuota, meta.TokenId)
 					return openai.ErrorWrapper(fmt.Errorf("empty response from channel during probe"), "empty_response", http.StatusBadGateway)
@@ -108,8 +106,8 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 
 				logger.Infof(ctx, "stream probe successful with %d bytes buffered", probeBuffer.Len())
 
-				// Now set headers and replay buffered data to client
-				openai.SetEventStreamHeaders(c)
+				// Now replay buffered data to client
+				render.SetEventStreamHeaders(c)
 				reader := bytes.NewReader(probeBuffer.Bytes())
 				streamScanner := bufio.NewScanner(reader)
 				streamScanner.Split(bufio.ScanLines)
@@ -122,7 +120,6 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 				}
 				render.Done(c)
 
-				// Post consume and return - the probe response was sent to client
 				go postConsumeQuota(ctx, probeUsage, meta, textRequest, ratio, preConsumedQuota, modelRatio, groupRatio, systemPromptReset)
 				return nil
 			} else {
@@ -133,7 +130,7 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 		}
 	}
 
-	// Normal flow (non-stream or probe failed)
+	// Normal flow
 	requestBody, err := getRequestBody(c, meta, textRequest, adaptor)
 	if err != nil {
 		return openai.ErrorWrapper(err, "convert_request_failed", http.StatusInternalServerError)
