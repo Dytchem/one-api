@@ -12,6 +12,19 @@ on:
         required: false
         default: 'false'
         type: boolean
+  push:
+    branches:
+      - main
+    paths:
+      - '**.go'
+      - 'go.mod'
+      - 'go.sum'
+      - 'VERSION'
+      - 'Dockerfile*'
+      - 'web/**'
+      - '.github/workflows/docker-image.yml'
+  release:
+    types: [published]
 
 jobs:
   push_to_registries:
@@ -49,8 +62,10 @@ jobs:
           flavor:
             prefix: v, suffix: '', onprefix: true
           tags: |
-            type=raw,value=main,enable={{is_default_branch}}
-            type=raw,value=${{ inputs.version }},enable=${{ inputs.version != '' }}
+            type=raw,value=main
+            type=ref,event=branch
+            type=semver,pattern={{version}},enable=${{ startsWith(inputs.version, 'v') }}
+            type=sha,prefix=,format=short,enable=${{ inputs.version == '' }}
 
       - name: Build and push
         uses: docker/build-push-action@v6
