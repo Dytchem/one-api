@@ -1,10 +1,17 @@
 name: Publish Docker image
 
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
+    inputs:
+      version:
+        description: '版本号 (如 v0.6.11-dyt-1)'
+        required: false
+        default: ''
+      tag_only:
+        description: '仅构建指定 tag 版本'
+        required: false
+        default: 'false'
+        type: boolean
 
 jobs:
   push_to_registries:
@@ -16,6 +23,10 @@ jobs:
     steps:
       - name: Check out the repo
         uses: actions/checkout@v4
+
+      - name: Set version from input
+        if: inputs.version != ''
+        run: echo "${{ inputs.version }}" > VERSION
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -35,6 +46,11 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository }}
+          flavor:
+            prefix: v, suffix: '', onprefix: true
+          tags: |
+            type=raw,value=main,enable={{is_default_branch}}
+            type=raw,value=${{ inputs.version }},enable=${{ inputs.version != '' }}
 
       - name: Build and push
         uses: docker/build-push-action@v6
