@@ -84,6 +84,16 @@ This fork improves the **Fallback Mechanism** with the following changes:
 - Random selection within each priority level, no repeats
 - Only falls to next priority when all at current level fail
 
+#### 4. Stream Response Fallback Optimization
+**Problem**: In stream response mode, data was written to the client before checking for empty response. After fallback, the new channel's response would mix with previous data, causing **client parsing errors**.
+
+**Fix** (Stream Probe):
+- Stream requests are "probed" first: send stream request and cache all response data
+- Extract usage info from cache to check if there's valid content (`completion_tokens > 0`)
+- If `completion_tokens == 0`, immediately trigger fallback (**without sending any data to client**)
+- After successful probe, replay cached data to client
+- Client experience: completely normal stream response, **just with delay** (probe time)
+
 ### 🤖 Development Assistance
 
 All code modifications, testing, and verification in this project were assisted by [OpenClaw](https://github.com/openclaw/openclaw) AI Agent, including requirements analysis, code changes, Docker image building, and database simulation testing.
@@ -97,9 +107,10 @@ This project inherits the MIT License from the original project.
 
 | File | Change |
 |------|--------|
-| `relay/controller/text.go` | Restore original model on retry |
+| `relay/controller/text.go` | Restore original model on retry + Stream probe |
 | `controller/relay.go` | Rewrote fallback loop with failedChannelIds set |
 | `model/ability.go` | Added `GetRandomSatisfiedChannelExcluding` function |
+| `relay/adaptor/oneapi/relay/adaptor.go` | SetEventStreamHeaders for SSE streaming |
 </details>
 
 ---
