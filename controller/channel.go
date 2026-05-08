@@ -231,12 +231,16 @@ func FetchChannelModels(c *gin.Context) {
 				OwnedBy string `json:"owned_by"`
 			} `json:"data"`
 		}
-		if err := json.Unmarshal(body, &modelResp); err == nil && len(modelResp.Data) > 0 {
-			models := make([]string, len(modelResp.Data))
-			for i, m := range modelResp.Data {
-				models[i] = m.Id
+		if err := json.Unmarshal(body, &modelResp); err == nil && modelResp.Object == "list" {
+			if len(modelResp.Data) > 0 {
+				models := make([]string, len(modelResp.Data))
+				for i, m := range modelResp.Data {
+					models[i] = m.Id
+				}
+				return models, nil
 			}
-			return models, nil
+			// Format matches but list is empty — API reachable
+			return nil, fmt.Errorf("接口返回空模型列表")
 		}
 
 		// Fallback: { "models": [{ "id": "..." }, ...] }
