@@ -2,6 +2,7 @@ package controller
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -185,101 +186,96 @@ func FetchChannelModels(c *gin.Context) {
 		}
 	}
 
-	// Build request to the channel's /v1/models endpoint
-	// Remove trailing /v1 if present to avoid double /v1/v1/models
+	// Build base URL — strip trailing /v1 and /
 	baseURL := strings.TrimRight(req.BaseURL, "/")
 	baseURL = strings.TrimSuffix(baseURL, "/v1")
-	modelURL := baseURL + "/v1/models"
-	httpReq, err := http.NewRequest(http.MethodGet, modelURL, nil)
-	if err != nil {
-		c.JSON(http.StatusOK, gin.H{
-			"success": false,
-			"message": "创建请求失败: " + err.Error(),
-		})
-		return
-	}
 
-	if req.Key != "" {
-		key := strings.TrimSpace(strings.Split(req.Key, "\n")[0])
-		if !strings.HasPrefix(key, "Bearer ") {
-			httpReq.Header.Set("Authorization", "Bearer "+key)
-		} else {
-			httpReq.Header.Set("Authorization", key)
+	// Helper: try one URL, return parsed models or nil+error
+	tryURL := func(modelURL string) ([]string, error) {
+		httpReq, err := http.NewRequest(http.MethodGet, modelURL, nil)
+		if err != nil {
+			return nil, fmt.Errorf("创建请求失败: %v", err)
 		}
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Accept", "application/json")
-
-	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		c.JSON(http.StatusOK, gin.H{
-			"success": false,
-			"message": "请求目标接口失败: " + err.Error(),
-		})
-		return
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		c.JSON(http.StatusOK, gin.H{
-			"success": false,
-			"message": "读取响应失败: " + err.Error(),
-		})
-		return
-	}
-
-	// Try to parse OpenAI-compatible /v1/models response first
-	var modelResp struct {
-		Object string `json:"object"`
-		Data   []struct {
-			Id      string `json:"id"`
-			Object  string `json:"object"`
-			OwnedBy string `json:"owned_by"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(body, &modelResp); err == nil && len(modelResp.Data) > 0 {
-		models := make([]string, len(modelResp.Data))
-		for i, m := range modelResp.Data {
-			models[i] = m.Id
-		}
-		c.JSON(http.StatusOK, gin.H{
-			"success": true,
-			"message": "",
-			"data":    models,
-		})
-		return
-	}
-
-	// Fallback: try common alternative formats
-	// Some APIs return { "models": [...] }
-	var altResp struct {
-		Models []struct {
-			Id   string `json:"id"`
-			Name string `json:"name"`
-		} `json:"models"`
-	}
-	if err := json.Unmarshal(body, &altResp); err == nil && len(altResp.Models) > 0 {
-		models := make([]string, len(altResp.Models))
-		for i, m := range altResp.Models {
-			name := m.Id
-			if name == "" {
-				name = m.Name
+		if req.Key != "" {
+			key := strings.TrimSpace(strings.Split(req.Key, "\n")[0])
+			if !strings.HasPrefix(key, "Bearer ") {
+				httpReq.Header.Set("Authorization", "Bearer "+key)
+			} else {
+				httpReq.Header.Set("Authorization", key)
 			}
-			models[i] = name
 		}
+		httpReq.Header.Set("Content-Type", "application/json")
+		httpReq.Header.Set("Accept", "application/json")
+
+		client := &http.Client{Timeout: 15 * time.Second}
+		resp, err := client.Do(httpReq)
+		if err != nil {
+			return nil, fmt.Errorf("请求目标接口失败: %v", err)
+		}
+		defer resp.Body.Close()
+
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, fmt.Errorf("读取响应失败: %v", err)
+		}
+
+		// Try OpenAI-compatible format: { "object": "list", "data": [{ "id": "..." }, ...] }
+		var modelResp struct {
+			Object string `json:"object"`
+			Data   []struct {
+				Id      string `json:"id"`
+				Object  string `json:"object"`
+				OwnedBy string `json:"owned_by"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(body, &modelResp); err == nil && len(modelResp.Data) > 0 {
+			models := make([]string, len(modelResp.Data))
+			for i, m := range modelResp.Data {
+				models[i] = m.Id
+			}
+			return models, nil
+		}
+
+		// Fallback: { "models": [{ "id": "..." }, ...] }
+		var altResp struct {
+			Models []struct {
+				Id   string `json:"id"`
+				Name string `json:"name"`
+			} `json:"models"`
+		}
+		if err := json.Unmarshal(body, &altResp); err == nil && len(altResp.Models) > 0 {
+			models := make([]string, len(altResp.Models))
+			for i, m := range altResp.Models {
+				name := m.Id
+				if name == "" {
+					name = m.Name
+				}
+				models[i] = name
+			}
+			return models, nil
+		}
+
+		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+
+	// Try /v1/models first (standard), fall back to /models
+	models, err := tryURL(baseURL + "/v1/models")
+	if err != nil && strings.Contains(err.Error(), "HTTP 404") {
+		models, err = tryURL(baseURL + "/models")
+	}
+
+	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
-			"success": true,
-			"message": "",
-			"data":    models,
+			"success": false,
+			"message": "未能获取模型列表: " + err.Error() + "，请确认API地址是否正确",
 		})
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"success": false,
-		"message": "未能解析目标接口返回的模型列表，请确认API地址是否正确（HTTP " + strconv.Itoa(resp.StatusCode) + "）",
+		"success": true,
+		"message": "",
+		"data":    models,
 	})
 }
 
