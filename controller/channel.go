@@ -12,6 +12,7 @@ import (
 	"github.com/songquanpeng/one-api/common/config"
 	"github.com/songquanpeng/one-api/common/helper"
 	"github.com/songquanpeng/one-api/model"
+	"github.com/songquanpeng/one-api/relay/channeltype"
 )
 
 func GetAllChannels(c *gin.Context) {
@@ -161,6 +162,7 @@ func FetchChannelModels(c *gin.Context) {
 	var req struct {
 		BaseURL string `json:"base_url"`
 		Key     string `json:"key"`
+		Type    int    `json:"type"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusOK, gin.H{
@@ -171,11 +173,16 @@ func FetchChannelModels(c *gin.Context) {
 	}
 
 	if req.BaseURL == "" {
-		c.JSON(http.StatusOK, gin.H{
-			"success": false,
-			"message": "渠道API地址不能为空",
-		})
-		return
+		// Try to look up from channel type if provided
+		if req.Type >= 0 && req.Type < len(channeltype.ChannelBaseURLs) && channeltype.ChannelBaseURLs[req.Type] != "" {
+			req.BaseURL = channeltype.ChannelBaseURLs[req.Type]
+		} else {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": "预设渠道类型缺失API地址，请手动填写",
+			})
+			return
+		}
 	}
 
 	// Build request to the channel's /v1/models endpoint

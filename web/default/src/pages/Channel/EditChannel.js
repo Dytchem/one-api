@@ -1,6 +1,6 @@
 import React, {useEffect, useState} from 'react';
 import {useTranslation} from 'react-i18next';
-import {Button, Card, Form, Input, Label, Message} from 'semantic-ui-react';
+import {Button, Card, Dropdown, Form, Input, Label, Message} from 'semantic-ui-react';
 import {useNavigate, useParams} from 'react-router-dom';
 import {API, copy, getChannelModels, showError, showInfo, showSuccess, verifyJSON} from '../../helpers';
 import {CHANNEL_OPTIONS} from '../../constants';
@@ -60,6 +60,9 @@ const EditChannel = () => {
   const [fetchedModels, setFetchedModels] = useState([]);
   const [fetchingModels, setFetchingModels] = useState(false);
   const [fetchError, setFetchError] = useState('');
+  const [modelMappingPairs, setModelMappingPairs] = useState([]);
+  const [mappingFrom, setMappingFrom] = useState('');
+  const [mappingTo, setMappingTo] = useState('');
   const [config, setConfig] = useState({
     region: '',
     sk: '',
@@ -159,6 +162,42 @@ const EditChannel = () => {
     setModelOptions(localModelOptions);
   }, [originModelOptions, inputs.models]);
 
+  // Parse model_mapping JSON into pairs for visual editor
+  useEffect(() => {
+    if (inputs.model_mapping && inputs.model_mapping.startsWith('{')) {
+      try {
+        const parsed = JSON.parse(inputs.model_mapping);
+        const pairs = Object.entries(parsed).map(([from, to]) => ({from, to}));
+        setModelMappingPairs(pairs);
+      } catch (e) {
+        // invalid JSON, ignore
+      }
+    } else {
+      setModelMappingPairs([]);
+    }
+  }, [inputs.model_mapping]);
+
+  const addModelMapping = (from, to) => {
+    if (!from || !to) return;
+    setModelMappingPairs(prev => {
+      const next = [...prev, {from, to}];
+      const obj = {};
+      next.forEach(p => { obj[p.from] = p.to; });
+      setInputs(i => ({ ...i, model_mapping: JSON.stringify(obj, null, 2) }));
+      return next;
+    });
+  };
+
+  const removeModelMapping = (index) => {
+    setModelMappingPairs(prev => {
+      const next = prev.filter((_, i) => i !== index);
+      const obj = {};
+      next.forEach(p => { obj[p.from] = p.to; });
+      setInputs(i => ({ ...i, model_mapping: next.length > 0 ? JSON.stringify(obj, null, 2) : '' }));
+      return next;
+    });
+  };
+
   useEffect(() => {
     if (isEdit) {
       loadChannel().then();
@@ -233,19 +272,15 @@ const EditChannel = () => {
   };
 
   const handleFetchModels = async () => {
-    const baseUrl = inputs.base_url ? inputs.base_url.replace(/\/+$/, '') : '';
-    if (!baseUrl) {
-      showError(t('channel.edit.messages.base_url_required'));
-      return;
-    }
     setFetchingModels(true);
     setFetchError('');
     setFetchedModels([]);
     try {
       const key = inputs.key || '';
       const res = await API.post('/api/channel/fetch-models', {
-        base_url: baseUrl,
-        key: key
+        base_url: inputs.base_url || '',
+        key: key,
+        type: inputs.type
       });
       const { success, message, data } = res.data;
       if (success && Array.isArray(data) && data.length > 0) {
@@ -578,20 +613,63 @@ const EditChannel = () => {
             {inputs.type !== 43 && (
               <>
                 <Form.Field>
-                  <Form.TextArea
-                    label={t('channel.edit.model_mapping')}
-                    placeholder={`${t(
-                      'channel.edit.model_mapping_placeholder'
-                    )}\n${JSON.stringify(MODEL_MAPPING_EXAMPLE, null, 2)}`}
-                    name='model_mapping'
-                    onChange={handleInputChange}
-                    value={inputs.model_mapping}
-                    style={{
-                      minHeight: 150,
-                      fontFamily: 'JetBrains Mono, Consolas',
-                    }}
-                    autoComplete='new-password'
-                  />
+                  <label>{t('channel.edit.model_mapping')}</label>
+                  {modelMappingPairs.length === 0 && (
+                    <p style={{color: '#888', fontSize: '0.9em', marginBottom: 8}}>
+                      暂无映射，在下发添加映射规则
+                    </p>
+                  )}
+                  {modelMappingPairs.map((pair, idx) => (
+                    <div key={idx} style={{
+                      display: 'flex', alignItems: 'center', gap: 8,
+                      marginBottom: 6, padding: '6px 10px',
+                      background: '#f8f9fa', borderRadius: 6,
+                      border: '1px solid #e0e0e0'
+                    }}>
+                      <code style={{flex: 1, color: '#2185d0'}}>{pair.from}</code>
+                      <span style={{color: '#aaa'}}>→</span>
+                      <code style={{flex: 1, color: '#21ba45'}}>{pair.to}</code>
+                      <Button size='mini' negative
+                        onClick={() => removeModelMapping(idx)}
+                        style={{margin: 0, minWidth: 28, padding: '4px 8px'}}>✕</Button>
+                    </div>
+                  ))}
+                  <div style={{display: 'flex', gap: 8, alignItems: 'center', marginTop: 6}}>
+                    <Dropdown
+                      placeholder='源模型'
+                      search
+                      selection
+                      fluid
+                      options={fullModels.map(m => ({key: m, text: m, value: m}))}
+                      allowAdditions
+                      additionLabel='自定义: '
+                      value={mappingFrom}
+                      onChange={(e, {value}) => setMappingFrom(value)}
+                      style={{minWidth: 160}}
+                    />
+                    <span style={{color: '#aaa'}}>→</span>
+                    <Dropdown
+                      placeholder='目标模型'
+                      search
+                      selection
+                      fluid
+                      options={fullModels.map(m => ({key: m, text: m, value: m}))}
+                      allowAdditions
+                      additionLabel='自定义: '
+                      value={mappingTo}
+                      onChange={(e, {value}) => setMappingTo(value)}
+                      style={{minWidth: 160}}
+                    />
+                    <Button primary size='mini'
+                      onClick={() => {
+                        if (mappingFrom && mappingTo) {
+                          addModelMapping(mappingFrom, mappingTo);
+                          setMappingFrom('');
+                          setMappingTo('');
+                        }
+                      }}
+                      style={{margin: 0}}>添加</Button>
+                  </div>
                 </Form.Field>
                 <Form.Field>
                   <Form.TextArea
