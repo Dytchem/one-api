@@ -72,6 +72,48 @@ _✨ 通过标准的 OpenAI API 格式访问所有的大模型，开箱即用 �
 
 ### 📝 本分支修改记录
 
+#### 2026-05-08 获取模型列表 + 可视化模型映射
+
+**新功能**：「获取模型列表」按钮 — 在渠道编辑页面一键从渠道 API 获取支持的模型列表，再也不用手动填写 JSON。
+
+**功能特性**：
+- 点击按钮，自动请求渠道的 `/v1/models` 端点获取模型列表
+- 获取到的模型以标签形式展示，**点击即可添加**到渠道模型列表
+n- 兼容所有主流渠道类型，包括预设 base_url 的渠道（如 MiniMax、OpenRouter）和手动填写 base_url 的渠道
+- 智能路径探测：自动尝试 `/v1/models` → `/models` → `/v2/models`，提高获取成功率
+
+**前端（default 主题）**：
+- `EditChannel.js` 新增「获取模型列表」按钮，带 loading 状态
+- 模型映射编辑：文本框 JSON 改为可视化卡片列表
+  - 已选模型下拉选择 + 按钮添加/删除
+  - 底层仍存 JSON，不影响原有逻辑
+
+**后端**（`controller/channel.go`）：
+- 新增 `POST /api/channel/fetch-models` 接口
+- 接收 `base_url`、`key`、`type` 参数
+- `base_url` 为空时，根据 `type` 从 `ChannelBaseURLs` 查表获取预设地址
+- 自动 strip 路径末端的 `/v1`/`/v2`/`/v3`，避免路径重复叠加
+
+**已知不支持的渠道**：
+- 讯飞（认证方式为 HMAC-SHA1 签名，非标准 Bearer token）
+- 百炼 DashScope（无标准 `/v1/models` 端点，需专有 API）
+- Gemini 代理模式（base_url 含 query 参数，需特殊处理）
+
+**测试结果**：
+
+| 渠道 | 支持 | 模型数 |
+|------|:---:|------:|
+| MiniMax | ✅ | 7 |
+| OpenRouter | ✅ | 367 |
+| DeepSeek | ✅ | 2 |
+| 并行（Paratera） | ✅ | 88 |
+| 魔搭（ModelScope） | ✅ | 63 |
+| SCNet Plan | ✅ | 20 |
+| OpenCode Go | ✅ | 14 |
+| OpenCode Zen | ✅ | 41 |
+| 讯飞 | ❌ | 认证不兼容 |
+| 百炼 | ❌ | API 不支持 |
+
 #### 2026-04-14 功能修复
 
 **前端修复**：
@@ -167,6 +209,9 @@ _✨ 通过标准的 OpenAI API 格式访问所有的大模型，开箱即用 �
 | `relay/controller/text.go` | 重试时恢复原始模型名 |
 | `controller/relay.go` | 重写 fallback 循环 + failedChannelIds 集合 |
 | `model/ability.go` | 新增 `GetRandomSatisfiedChannelExcluding` 函数 |
+| `controller/channel.go` | 新增 `POST /api/channel/fetch-models` 获取模型列表接口 |
+| `router/api.go` | 注册 `/api/channel/fetch-models` 路由 |
+| `web/default/src/pages/Channel/EditChannel.js` | 获取模型列表按钮 + 可视化模型映射编辑器 |
 </details>
 
 ---
