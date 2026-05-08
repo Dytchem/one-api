@@ -186,9 +186,12 @@ func FetchChannelModels(c *gin.Context) {
 		}
 	}
 
-	// Build base URL — strip trailing /v1 and /
+	// Parse base URL: strip trailing / and version segments (/v1, /v2, /v3)
 	baseURL := strings.TrimRight(req.BaseURL, "/")
-	baseURL = strings.TrimSuffix(baseURL, "/v1")
+	for _, ver := range []string{"/v1", "/v2", "/v3"} {
+		baseURL = strings.TrimSuffix(baseURL, ver)
+	}
+	baseURL = strings.TrimRight(baseURL, "/")
 
 	// Helper: try one URL, return parsed models or nil+error
 	tryURL := func(modelURL string) ([]string, error) {
@@ -258,16 +261,16 @@ func FetchChannelModels(c *gin.Context) {
 		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 
-	// Try /v1/models first (standard), fall back to /models
+	// Try /v1/models first (standard), fall back to /models on any HTTP error
 	models, err := tryURL(baseURL + "/v1/models")
-	if err != nil && strings.Contains(err.Error(), "HTTP 404") {
+	if err != nil && strings.HasPrefix(err.Error(), "HTTP ") {
 		models, err = tryURL(baseURL + "/models")
 	}
 
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
-			"message": "未能获取模型列表: " + err.Error() + "，请确认API地址是否正确",
+			"message": "获取模型列表失败 (HTTP " + err.Error() + ")，请确认API地址和密钥是否正确",
 		})
 		return
 	}

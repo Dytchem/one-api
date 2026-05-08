@@ -640,7 +640,7 @@ const EditChannel = () => {
                       search
                       selection
                       fluid
-                      options={fullModels.map(m => ({key: m, text: m, value: m}))}
+                      options={inputs.models.map(m => ({key: m, text: m, value: m}))}
                       allowAdditions
                       additionLabel='自定义: '
                       value={mappingFrom}
@@ -653,7 +653,7 @@ const EditChannel = () => {
                       search
                       selection
                       fluid
-                      options={fullModels.map(m => ({key: m, text: m, value: m}))}
+                      options={inputs.models.map(m => ({key: m, text: m, value: m}))}
                       allowAdditions
                       additionLabel='自定义: '
                       value={mappingTo}
