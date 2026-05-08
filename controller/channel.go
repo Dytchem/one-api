@@ -273,7 +273,7 @@ func FetchChannelModels(c *gin.Context) {
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
-			"message": "获取模型列表失败 (HTTP " + err.Error() + ")，请确认API地址和密钥是否正确",
+			"message": "获取模型列表失败 (" + err.Error() + ")，请确认API地址和密钥是否正确",
 		})
 		return
 	}
