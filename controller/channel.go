@@ -179,7 +179,10 @@ func FetchChannelModels(c *gin.Context) {
 	}
 
 	// Build request to the channel's /v1/models endpoint
-	modelURL := strings.TrimRight(req.BaseURL, "/") + "/v1/models"
+	// Remove trailing /v1 if present to avoid double /v1/v1/models
+	baseURL := strings.TrimRight(req.BaseURL, "/")
+	baseURL = strings.TrimSuffix(baseURL, "/v1")
+	modelURL := baseURL + "/v1/models"
 	httpReq, err := http.NewRequest(http.MethodGet, modelURL, nil)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
