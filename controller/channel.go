@@ -261,10 +261,13 @@ func FetchChannelModels(c *gin.Context) {
 		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 
-	// Try /v1/models first (standard), fall back to /models on any HTTP error
+	// Try /v1/models first (standard), fall back to /models, then /v2/models
 	models, err := tryURL(baseURL + "/v1/models")
 	if err != nil && strings.HasPrefix(err.Error(), "HTTP ") {
 		models, err = tryURL(baseURL + "/models")
+	}
+	if err != nil && strings.HasPrefix(err.Error(), "HTTP ") {
+		models, err = tryURL(baseURL + "/v2/models")
 	}
 
 	if err != nil {
