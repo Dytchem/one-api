@@ -180,7 +180,7 @@ func FetchChannelModels(c *gin.Context) {
 		} else {
 			c.JSON(http.StatusOK, gin.H{
 				"success": false,
-				"message": "预设渠道类型缺失API地址，请手动填写",
+				"message": "预设渠道类型缺失API地址,请手动填写",
 			})
 			return
 		}
@@ -239,7 +239,7 @@ func FetchChannelModels(c *gin.Context) {
 				}
 				return models, nil
 			}
-			// Format matches but list is empty — API reachable
+			// Format matches but list is empty - API reachable
 			return nil, fmt.Errorf("接口返回空模型列表")
 		}
 
@@ -277,7 +277,148 @@ func FetchChannelModels(c *gin.Context) {
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
-			"message": "获取模型列表失败 (" + err.Error() + ")，请确认API地址和密钥是否正确",
+			"message": "获取模型列表失败 (" + err.Error() + "),请确认API地址和密钥是否正确",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data":    models,
+	})
+}
+
+func FetchChannelModelsByID(c *gin.Context) {
+	channelIdStr := c.Param("id")
+	channelId, err := strconv.ParseInt(channelIdStr, 10, 64)
+	if err != nil || channelId <= 0 {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": "无效的渠道ID",
+		})
+		return
+	}
+
+	// Read full channel from DB (selectAll=true to get the key)
+	channel, err := model.GetChannelById(int(channelId), true)
+	if err != nil || channel == nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": "渠道不存在",
+		})
+		return
+	}
+
+	// Build base URL
+	baseURL := channel.GetBaseURL()
+	if baseURL == "" {
+		if channel.Type >= 0 && channel.Type < len(channeltype.ChannelBaseURLs) && channeltype.ChannelBaseURLs[channel.Type] != "" {
+			baseURL = channeltype.ChannelBaseURLs[channel.Type]
+		} else {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": "预设渠道类型缺失API地址，请手动填写",
+			})
+			return
+		}
+	}
+
+	// Parse base URL: strip trailing / and version segments
+	baseURL = strings.TrimRight(baseURL, "/")
+	for _, ver := range []string{"/v1", "/v2", "/v3"} {
+		baseURL = strings.TrimSuffix(baseURL, ver)
+	}
+	baseURL = strings.TrimRight(baseURL, "/")
+
+	// Get the key (already complete from DB)
+	key := ""
+	if channel.Key != "" {
+		key = strings.TrimSpace(strings.Split(channel.Key, "\n")[0])
+	}
+
+	// Use the shared fetch logic via a helper request
+	// We call ourselves by constructing a request - but since we're in the same
+	// process, let's just inline the fetch logic directly
+	tryURL := func(modelURL string) ([]string, error) {
+		httpReq, err := http.NewRequest(http.MethodGet, modelURL, nil)
+		if err != nil {
+			return nil, fmt.Errorf("创建请求失败: %v", err)
+		}
+		if key != "" {
+			if !strings.HasPrefix(key, "Bearer ") {
+				httpReq.Header.Set("Authorization", "Bearer "+key)
+			} else {
+				httpReq.Header.Set("Authorization", key)
+			}
+		}
+		httpReq.Header.Set("Content-Type", "application/json")
+		httpReq.Header.Set("Accept", "application/json")
+
+		client := &http.Client{Timeout: 15 * time.Second}
+		resp, err := client.Do(httpReq)
+		if err != nil {
+			return nil, fmt.Errorf("请求目标接口失败: %v", err)
+		}
+		defer resp.Body.Close()
+
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, fmt.Errorf("读取响应失败: %v", err)
+		}
+
+		var modelResp struct {
+			Object string `json:"object"`
+			Data   []struct {
+				Id      string `json:"id"`
+				Object  string `json:"object"`
+				OwnedBy string `json:"owned_by"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(body, &modelResp); err == nil && modelResp.Object == "list" {
+			if len(modelResp.Data) > 0 {
+				models := make([]string, len(modelResp.Data))
+				for i, m := range modelResp.Data {
+					models[i] = m.Id
+				}
+				return models, nil
+			}
+			return nil, fmt.Errorf("接口返回空模型列表")
+		}
+
+		var altResp struct {
+			Models []struct {
+				Id   string `json:"id"`
+				Name string `json:"name"`
+			} `json:"models"`
+		}
+		if err := json.Unmarshal(body, &altResp); err == nil && len(altResp.Models) > 0 {
+			models := make([]string, len(altResp.Models))
+			for i, m := range altResp.Models {
+				name := m.Id
+				if name == "" {
+					name = m.Name
+				}
+				models[i] = name
+			}
+			return models, nil
+		}
+
+		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+
+	models, err := tryURL(baseURL + "/v1/models")
+	if err != nil && strings.HasPrefix(err.Error(), "HTTP ") {
+		models, err = tryURL(baseURL + "/models")
+	}
+	if err != nil && strings.HasPrefix(err.Error(), "HTTP ") {
+		models, err = tryURL(baseURL + "/v2/models")
+	}
+
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": "获取模型列表失败 (" + err.Error() + "),请确认API地址和密钥是否正确",
 		})
 		return
 	}

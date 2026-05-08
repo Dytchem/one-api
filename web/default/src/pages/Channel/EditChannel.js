@@ -276,12 +276,19 @@ const EditChannel = () => {
     setFetchError('');
     setFetchedModels([]);
     try {
-      const key = inputs.key || '';
-      const res = await API.post('/api/channel/fetch-models', {
-        base_url: inputs.base_url || '',
-        key: key,
-        type: inputs.type
-      });
+      // Editing existing channel: use channel_id, backend reads full base_url+key from DB
+      // New channel: pass base_url + key + type as before
+      let res;
+      if (isEdit && channelId) {
+        res = await API.get(`/api/channel/fetch-models/${channelId}`);
+      } else {
+        const key = inputs.key || '';
+        res = await API.post('/api/channel/fetch-models', {
+          base_url: inputs.base_url || '',
+          key: key,
+          type: inputs.type
+        });
+      }
       const { success, message, data } = res.data;
       if (success && Array.isArray(data) && data.length > 0) {
         setFetchedModels(data);
