@@ -119,13 +119,19 @@
         "fill_all": "填入所有模型",
         "clear": "清除所有模型",
         "add_custom": "填入",
-        "custom_placeholder": "输入自定义模型名称"
+        "custom_placeholder": "输入自定义模型名称",
+        "fetch_models": "获取模型列表"
+      },
+      "labels": {
+        "fetched_models": "共获取到 {{count}} 个模型，点击以添加到模型列表：",
+        "fetch_failed": "获取模型列表失败"
       },
       "messages": {
         "name_required": "请填写渠道名称和渠道密钥！",
         "models_required": "请至少选择一个模型！",
         "model_mapping_invalid": "模型映射必须是合法的 JSON 格式！",
         "update_success": "渠道更新成功！",
+        "base_url_required": "请先填写渠道API地址！",
         "create_success": "渠道创建成功！"
       },
       "spark_version": "模型版本",

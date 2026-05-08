@@ -119,13 +119,19 @@
         "fill_all": "Fill All Models",
         "clear": "Clear All Models",
         "add_custom": "Add",
-        "custom_placeholder": "Enter custom model name"
+        "custom_placeholder": "Enter custom model name",
+        "fetch_models": "Fetch Model List"
+      },
+      "labels": {
+        "fetched_models": "Fetched {{count}} models, click to add to model list:",
+        "fetch_failed": "Failed to fetch model list"
       },
       "messages": {
         "name_required": "Please enter channel name and key!",
         "models_required": "Please select at least one model!",
         "model_mapping_invalid": "Model mapping must be valid JSON format!",
         "update_success": "Channel updated successfully!",
+        "base_url_required": "Please fill in the API base URL first!",
         "create_success": "Channel created successfully!"
       },
       "spark_version": "Model Version",

@@ -1,8 +1,8 @@
 import React, {useEffect, useState} from 'react';
 import {useTranslation} from 'react-i18next';
-import {Button, Card, Form, Input, Message} from 'semantic-ui-react';
+import {Button, Card, Form, Input, Label, Message} from 'semantic-ui-react';
 import {useNavigate, useParams} from 'react-router-dom';
-import {API, copy, getChannelModels, showError, showInfo, showSuccess, verifyJSON,} from '../../helpers';
+import {API, copy, getChannelModels, showError, showInfo, showSuccess, verifyJSON} from '../../helpers';
 import {CHANNEL_OPTIONS} from '../../constants';
 import {renderChannelTip} from '../../helpers/render';
 
@@ -57,6 +57,9 @@ const EditChannel = () => {
   const [basicModels, setBasicModels] = useState([]);
   const [fullModels, setFullModels] = useState([]);
   const [customModel, setCustomModel] = useState('');
+  const [fetchedModels, setFetchedModels] = useState([]);
+  const [fetchingModels, setFetchingModels] = useState(false);
+  const [fetchError, setFetchError] = useState('');
   const [config, setConfig] = useState({
     region: '',
     sk: '',
@@ -227,6 +230,39 @@ const EditChannel = () => {
     } else {
       showError(message);
     }
+  };
+
+  const handleFetchModels = async () => {
+    const baseUrl = inputs.base_url ? inputs.base_url.replace(/\/+$/, '') : '';
+    if (!baseUrl) {
+      showError(t('channel.edit.messages.base_url_required'));
+      return;
+    }
+    setFetchingModels(true);
+    setFetchError('');
+    setFetchedModels([]);
+    try {
+      const key = inputs.key || '';
+      const res = await API.post('/api/channel/fetch-models', {
+        base_url: baseUrl,
+        key: key
+      });
+      const { success, message, data } = res.data;
+      if (success && Array.isArray(data) && data.length > 0) {
+        setFetchedModels(data);
+        setFetchError('');
+      } else if (success && Array.isArray(data) && data.length === 0) {
+        setFetchedModels([]);
+        setFetchError('获取到空模型列表');
+      } else {
+        setFetchedModels([]);
+        setFetchError(message || '获取模型列表失败');
+      }
+    } catch (error) {
+      setFetchedModels([]);
+      setFetchError(error.message || '网络请求失败');
+    }
+    setFetchingModels(false);
   };
 
   const addCustomModel = () => {
@@ -467,6 +503,14 @@ const EditChannel = () => {
                 >
                   {t('channel.edit.buttons.clear')}
                 </Button>
+                <Button
+                  type={'button'}
+                  loading={fetchingModels}
+                  onClick={handleFetchModels}
+                  style={{ marginLeft: '4px' }}
+                >
+                  {t('channel.edit.buttons.fetch_models')}
+                </Button>
                 <Input
                   action={
                     <Button type={'button'} onClick={addCustomModel}>
@@ -486,6 +530,50 @@ const EditChannel = () => {
                   }}
                 />
               </div>
+            )}
+            {inputs.type !== 43 && fetchedModels.length > 0 && (
+              <div style={{ marginBottom: '16px' }}>
+                <div style={{ marginBottom: '8px', color: 'rgba(0,0,0,0.4)', fontSize: '12px' }}>
+                  {t('channel.edit.labels.fetched_models', { count: fetchedModels.length })}
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                  {fetchedModels.map((model) => (
+                    <Label
+                      key={model}
+                      as='a'
+                      onClick={() => {
+                        if (!inputs.models.includes(model)) {
+                          handleInputChange(null, {
+                            name: 'models',
+                            value: [...inputs.models, model],
+                          });
+                        }
+                      }}
+                      style={{
+                        cursor: 'pointer',
+                        backgroundColor: inputs.models.includes(model)
+                          ? '#e8f5e9'
+                          : '#f5f5f5',
+                        border: inputs.models.includes(model)
+                          ? '1px solid #4caf50'
+                          : '1px solid #ddd',
+                        color: inputs.models.includes(model)
+                          ? '#2e7d32'
+                          : '#333',
+                      }}
+                    >
+                      {inputs.models.includes(model) && '✓ '}
+                      {model}
+                    </Label>
+                  ))}
+                </div>
+              </div>
+            )}
+            {inputs.type !== 43 && fetchError && (
+              <Message negative style={{ marginBottom: '12px' }}>
+                <Message.Header>{t('channel.edit.labels.fetch_failed')}</Message.Header>
+                <p>{fetchError}</p>
+              </Message>
             )}
             {inputs.type !== 43 && (
               <>
