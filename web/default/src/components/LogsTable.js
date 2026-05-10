@@ -99,7 +99,7 @@ function getColorByElapsedTime(elapsedTime) {
 }
 
 function renderDetail(log) {
-  const maxContentLen = 120;
+  const maxContentLen = 300;
   const content = log.content || '';
   const truncated = content.length > maxContentLen
     ? content.slice(0, maxContentLen - 3) + '...'
@@ -108,12 +108,9 @@ function renderDetail(log) {
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', alignItems: 'center' }}>
       <span
         style={{
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap',
-          maxWidth: '260px',
-          display: 'inline-block',
-          verticalAlign: 'middle',
+          flex: '1 1 auto',
+          minWidth: 0,
+          wordBreak: 'break-word',
         }}
         title={content}
       >

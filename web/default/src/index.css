@@ -126,7 +126,7 @@ code {
   table-layout: fixed;
 }
 
-/* 统一约束单元格内容，超长截断 */
+/* 统一约束单元格内容 */
 .ui.table.logs-table th,
 .ui.table.logs-table td,
 .ui.table.channels-table th,
@@ -139,16 +139,36 @@ code {
 .ui.table.redemptions-table td {
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* 数值列紧凑不换行 */
+.ui.table.logs-table td.numeric,
+.ui.table.channels-table td.numeric,
+.ui.table.tokens-table td.numeric,
+.ui.table.users-table td.numeric,
+.ui.table.redemptions-table td.numeric {
   white-space: nowrap;
 }
 
-/* 日志详情列允许换行但整体紧凑 */
+/* 日志详情列紧凑（2行截断，不撑高整行） */
 .ui.table.logs-table td:last-child {
-  white-space: normal;
-  word-break: break-all;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
   line-height: 1.4;
   padding-top: 4px;
   padding-bottom: 4px;
+  max-height: 6em;
+}
+
+/* 移动端详情列缩为2行 */
+@media screen and (max-width: 768px) {
+  .ui.table.logs-table td:last-child {
+    -webkit-line-clamp: 2;
+    max-height: 3.5em;
+  }
 }
 
 /* 防止 Label 组件换行导致行高变化 */
