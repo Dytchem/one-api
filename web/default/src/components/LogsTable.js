@@ -23,7 +23,7 @@ import {
 import { useTranslation } from 'react-i18next';
 
 import { ITEMS_PER_PAGE_OPTIONS } from '../constants';
-import { renderColorLabel, renderQuota } from '../helpers/render';
+import { renderColorLabel } from '../helpers/render';
 import { Link } from 'react-router-dom';
 
 function renderTimestamp(timestamp, request_id) {
@@ -43,50 +43,43 @@ function renderTimestamp(timestamp, request_id) {
   );
 }
 
-const MODE_OPTIONS = [
-  { key: 'all', text: '全部用户', value: 'all' },
-  { key: 'self', text: '当前用户', value: 'self' },
-];
-
-function renderType(type) {
-  switch (type) {
-    case 1:
-      return (
-        <Label basic color='green'>
-          充值
-        </Label>
-      );
-    case 2:
-      return (
-        <Label basic color='olive'>
-          消费
-        </Label>
-      );
-    case 3:
-      return (
-        <Label basic color='orange'>
-          管理
-        </Label>
-      );
-    case 4:
-      return (
-        <Label basic color='purple'>
-          系统
-        </Label>
-      );
-    case 5:
-      return (
-        <Label basic color='violet'>
-          测试
-        </Label>
-      );
-    default:
-      return (
-        <Label basic color='black'>
-          未知
-        </Label>
-      );
+function renderType(log) {
+  const type = log.type;
+  const content = log.content || '';
+  if (type === 5) {
+    return (
+      <Label basic color='violet'>
+        测试
+      </Label>
+    );
   }
+  if (type === 4 || (type === 2 && (content.includes('探针失败') || content.includes('渠道尝试')))) {
+    return (
+      <Label basic color='red'>
+        失败
+      </Label>
+    );
+  }
+  if (type === 2 && content.includes('探针确认')) {
+    return (
+      <Label basic color='green'>
+        成功
+      </Label>
+    );
+  }
+  if (type === 2) {
+    // 倍率 consumption logs
+    return (
+      <Label basic color='olive'>
+        消费
+      </Label>
+    );
+  }
+  return (
+    <Label basic color='black'>
+      未知
+    </Label>
+  );
 }
 
 function getColorByElapsedTime(elapsedTime) {
@@ -98,24 +91,42 @@ function getColorByElapsedTime(elapsedTime) {
   return 'red';
 }
 
+function processContent(content, type) {
+  if (!content) return '';
+  if (content.startsWith('倍率：')) return ''; // 消费日志，content为空，性能数据在专属列
+  if (content.startsWith('探针确认')) return ''; // 探针确认，性能数据在专属列
+  if (content.startsWith('探针失败')) {
+    const m = content.match(/错误: ([^,，]+)/);
+    return m ? `失败：${m[1]}` : '失败';
+  }
+  if (content.startsWith('渠道尝试')) {
+    const m = content.match(/错误: ([^,，]+)/);
+    return m ? `失败：${m[1]}` : '失败';
+  }
+  return content;
+}
+
 function renderDetail(log) {
-  const maxContentLen = 300;
-  const content = log.content || '';
-  const truncated = content.length > maxContentLen
-    ? content.slice(0, maxContentLen - 3) + '...'
-    : content;
+  const maxContentLen = 200;
+  const raw = log.content || '';
+  const processed = processContent(raw, log.type);
+  const display = processed.length > maxContentLen
+    ? processed.slice(0, maxContentLen - 3) + '...'
+    : processed;
   return (
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', alignItems: 'center' }}>
-      <span
-        style={{
-          flex: '1 1 auto',
-          minWidth: 0,
-          wordBreak: 'break-word',
-        }}
-        title={content}
-      >
-        {truncated}
-      </span>
+      {display ? (
+        <span
+          style={{
+            flex: '1 1 auto',
+            minWidth: 0,
+            wordBreak: 'break-word',
+          }}
+          title={processed}
+        >
+          {display}
+        </span>
+      ) : <span style={{ color: 'lightgray' }}>—</span>}
       {log.elapsed_time ? (
         <Label
           basic
@@ -132,7 +143,7 @@ function renderDetail(log) {
       ) : null}
       {log.system_prompt_reset ? (
         <Label basic size={'mini'} color='red'>
-          System Prompt Reset
+          SPR
         </Label>
       ) : null}
     </div>
@@ -175,12 +186,9 @@ const LogsTable = () => {
   });
 
   const LOG_OPTIONS = [
-    { key: '0', text: t('log.type.all'), value: 0 },
-    { key: '1', text: t('log.type.topup'), value: 1 },
-    { key: '2', text: t('log.type.usage'), value: 2 },
-    { key: '3', text: t('log.type.admin'), value: 3 },
-    { key: '4', text: t('log.type.system'), value: 4 },
-    { key: '5', text: t('log.type.test'), value: 5 },
+    { key: '0', text: '全部', value: 0 },
+    { key: '2', text: '消费', value: 2 },
+    { key: '5', text: '测试', value: 5 },
   ];
 
   const handleInputChange = (e, { name, value }) => {
@@ -226,9 +234,8 @@ const LogsTable = () => {
     setShowStat(!showStat);
   };
 
-  const showUserTokenQuota = () => {
-    return logType === 0 || logType === 2 || logType === 5;
-  };
+  // showUserTokenQuota always returns true: token 列始终显示
+  const showUserTokenQuota = () => true;
 
   function renderTokPerSec(log) {
     // 探针日志（completion_tokens=0）的 elapsed_time = TTFT，tok/s 无意义
@@ -341,17 +348,15 @@ const LogsTable = () => {
   return (
     <>
       <Header as='h3'>
-        {t('log.usage_details')}（{t('log.total_quota')}：
-        {showStat && renderQuota(stat.quota, t)}
+        {t('log.usage_details')}
         {!showStat && (
           <span
             onClick={handleEyeClick}
-            style={{ cursor: 'pointer', color: 'gray' }}
+            style={{ cursor: 'pointer', color: 'gray', marginLeft: 8 }}
           >
             {t('log.click_to_view')}
           </span>
         )}
-        ）
       </Header>
       <Form>
         <Form.Group>
@@ -559,7 +564,7 @@ const LogsTable = () => {
                       )}
                     </Table.Cell>
                   )}
-                  <Table.Cell>{renderType(log.type)}</Table.Cell>
+                  <Table.Cell>{renderType(log)}</Table.Cell>
                   <Table.Cell>
                     {log.model_name ? renderColorLabel(log.model_name) : ''}
                   </Table.Cell>
@@ -604,7 +609,7 @@ const LogsTable = () => {
 
         <Table.Footer>
           <Table.Row>
-            <Table.HeaderCell colSpan={'9'}>
+            <Table.HeaderCell colSpan={isAdminUser ? '10' : '9'}>
               <Select
                 placeholder={t('log.type.select')}
                 options={LOG_OPTIONS}
