@@ -13,8 +13,10 @@ import (
 	"github.com/songquanpeng/one-api/common"
 	"github.com/songquanpeng/one-api/common/config"
 	"github.com/songquanpeng/one-api/common/ctxkey"
+	"github.com/songquanpeng/one-api/common/helper"
 	"github.com/songquanpeng/one-api/common/logger"
 	"github.com/songquanpeng/one-api/common/render"
+	dbmodel "github.com/songquanpeng/one-api/model"
 	"github.com/songquanpeng/one-api/relay"
 	"github.com/songquanpeng/one-api/relay/adaptor"
 	"github.com/songquanpeng/one-api/relay/adaptor/openai"
@@ -97,9 +99,12 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 						if len(data) > 6 && data[:6] == "data: " {
 							var streamResp openai.ChatCompletionsStreamResponse
 							if err := json.Unmarshal([]byte(data[6:]), &streamResp); err == nil {
-								// Content detected via delta.content
+								// Content detected via delta.content or reasoning_content
 								if len(streamResp.Choices) > 0 {
-									if content, ok := streamResp.Choices[0].Delta.Content.(string); ok && content != "" {
+									delta := &streamResp.Choices[0].Delta
+									if content, ok := delta.Content.(string); ok && content != "" {
+										confirmed = true
+									} else if rc, ok := delta.ReasoningContent.(string); ok && rc != "" {
 										confirmed = true
 									}
 								}
@@ -113,6 +118,24 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 						if confirmed {
 							// First content token found: set headers, replay buffer, then passthrough
 							logger.Infof(ctx, "stream confirmed with first content token, replaying %d buffered bytes", buf.Len())
+
+							// Write probe confirm log immediately for visibility
+							chName := c.GetString(ctxkey.ChannelName)
+							chId := c.GetInt(ctxkey.ChannelId)
+							dbmodel.RecordConsumeLog(ctx, &dbmodel.Log{
+								UserId:            meta.UserId,
+								TokenName:         meta.TokenName,
+								ModelName:         meta.OriginModelName,
+								ChannelId:         chId,
+								PromptTokens:      promptTokens,
+								CompletionTokens:  0,
+								Quota:             0,
+								Content:           fmt.Sprintf("探针确认 - 渠道: %s (#%d), 模型: %s, 用时: %dms", chName, chId, meta.ActualModelName, helper.CalcElapsedTime(meta.StartTime)),
+								IsStream:          true,
+								ElapsedTime:       helper.CalcElapsedTime(meta.StartTime),
+								SystemPromptReset: systemPromptReset,
+							})
+
 							common.SetEventStreamHeaders(c)
 
 							bufReader := bytes.NewReader(buf.Bytes())
@@ -146,6 +169,24 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 				if !confirmed {
 					// Stream ended without any content → empty response, trigger fallback
 					logger.Warnf(ctx, "stream probe returned empty response (no content token found), triggering fallback")
+
+					// Write probe failure log with full format before returning
+					chName := c.GetString(ctxkey.ChannelName)
+					chId := c.GetInt(ctxkey.ChannelId)
+					dbmodel.RecordConsumeLog(ctx, &dbmodel.Log{
+						UserId:            meta.UserId,
+						TokenName:         meta.TokenName,
+						ModelName:         meta.OriginModelName,
+						ChannelId:         chId,
+						PromptTokens:      promptTokens,
+						CompletionTokens:  0,
+						Quota:             0,
+						Content:           fmt.Sprintf("探针失败 - 渠道: %s (#%d), 模型: %s, 错误: 空响应, 用时: %dms", chName, chId, meta.ActualModelName, helper.CalcElapsedTime(meta.StartTime)),
+						IsStream:          true,
+						ElapsedTime:       helper.CalcElapsedTime(meta.StartTime),
+						SystemPromptReset: systemPromptReset,
+					})
+
 					billing.ReturnPreConsumedQuota(ctx, preConsumedQuota, meta.TokenId)
 					return openai.ErrorWrapper(fmt.Errorf("empty response from channel during probe"), "empty_response", http.StatusBadGateway)
 				}
