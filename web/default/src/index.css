@@ -117,40 +117,12 @@ code {
 }
 
 /* ========== 表格紧凑布局修复 ========== */
-/* 固定表格布局，防止长内容撑高整行 */
-.ui.table.logs-table,
-.ui.table.channels-table,
-.ui.table.tokens-table,
-.ui.table.users-table,
-.ui.table.redemptions-table {
+/* 仅日志表用 fixed，防止长详情内容撑高整行 */
+.ui.table.logs-table {
   table-layout: fixed;
 }
 
-/* 统一约束单元格内容 */
-.ui.table.logs-table th,
-.ui.table.logs-table td,
-.ui.table.channels-table th,
-.ui.table.channels-table td,
-.ui.table.tokens-table th,
-.ui.table.tokens-table td,
-.ui.table.users-table th,
-.ui.table.users-table td,
-.ui.table.redemptions-table th,
-.ui.table.redemptions-table td {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* 数值列紧凑不换行 */
-.ui.table.logs-table td.numeric,
-.ui.table.channels-table td.numeric,
-.ui.table.tokens-table td.numeric,
-.ui.table.users-table td.numeric,
-.ui.table.redemptions-table td.numeric {
-  white-space: nowrap;
-}
-
-/* 日志详情列紧凑（2行截断，不撑高整行） */
+/* 日志详情列紧凑（最多4行，不撑高整行） */
 .ui.table.logs-table td:last-child {
   display: -webkit-box;
   -webkit-line-clamp: 4;
