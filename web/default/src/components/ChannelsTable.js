@@ -523,7 +523,7 @@ const ChannelsTable = () => {
           {t('channel.detail_notice')}
         </Message>
       )}
-      <Table basic={'very'} compact size='small'>
+      <Table basic={'very'} compact size='small' className='channels-table'>
         <Table.Header>
           <Table.Row>
             <Table.HeaderCell

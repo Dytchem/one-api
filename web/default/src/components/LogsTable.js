@@ -99,11 +99,27 @@ function getColorByElapsedTime(elapsedTime) {
 }
 
 function renderDetail(log) {
+  const maxContentLen = 120;
+  const content = log.content || '';
+  const truncated = content.length > maxContentLen
+    ? content.slice(0, maxContentLen - 3) + '...'
+    : content;
   return (
-    <>
-      {log.content}
-      <br />
-      {log.elapsed_time && (
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', alignItems: 'center' }}>
+      <span
+        style={{
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+          maxWidth: '260px',
+          display: 'inline-block',
+          verticalAlign: 'middle',
+        }}
+        title={content}
+      >
+        {truncated}
+      </span>
+      {log.elapsed_time ? (
         <Label
           basic
           size={'mini'}
@@ -111,22 +127,18 @@ function renderDetail(log) {
         >
           {log.elapsed_time} ms
         </Label>
-      )}
-      {log.is_stream && (
-        <>
-          <Label size={'mini'} color='pink'>
-            Stream
-          </Label>
-        </>
-      )}
-      {log.system_prompt_reset && (
-        <>
-          <Label basic size={'mini'} color='red'>
-            System Prompt Reset
-          </Label>
-        </>
-      )}
-    </>
+      ) : null}
+      {log.is_stream ? (
+        <Label size={'mini'} color='pink'>
+          Stream
+        </Label>
+      ) : null}
+      {log.system_prompt_reset ? (
+        <Label basic size={'mini'} color='red'>
+          System Prompt Reset
+        </Label>
+      ) : null}
+    </div>
   );
 }
 
@@ -222,7 +234,10 @@ const LogsTable = () => {
   };
 
   function renderTokPerSec(log) {
+    // 探针日志（type=5）的 elapsed_time = TTFT，completion_tokens = 0，
+    // tok/s 无意义（等于 prompt_tokens / TTFT，数值巨大如 44417）
     if (!log.elapsed_time || log.elapsed_time === 0) return '';
+    if (log.type === 5) return ''; // 测试/探针日志跳过
     const totalTokens = (log.prompt_tokens || 0) + (log.completion_tokens || 0);
     if (totalTokens === 0) return '';
     const speed = totalTokens / (log.elapsed_time / 1000);
@@ -427,7 +442,7 @@ const LogsTable = () => {
           onChange={(e, { value }) => setSearchKeyword(value)}
         />
       </Form>
-      <Table basic={'very'} compact size='small'>
+      <Table basic={'very'} compact size='small' className='logs-table'>
         <Table.Header>
           <Table.Row>
             <Table.HeaderCell

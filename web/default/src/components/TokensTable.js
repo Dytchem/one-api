@@ -318,7 +318,7 @@ const TokensTable = () => {
         />
       </Form>
 
-      <Table basic={'very'} compact size='small'>
+      <Table basic={'very'} compact size='small' className='tokens-table'>
         <Table.Header>
           <Table.Row>
             <Table.HeaderCell

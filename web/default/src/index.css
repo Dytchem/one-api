@@ -115,3 +115,43 @@ code {
     font-size: 0.9em !important;
   }
 }
+
+/* ========== 表格紧凑布局修复 ========== */
+/* 固定表格布局，防止长内容撑高整行 */
+.ui.table.logs-table,
+.ui.table.channels-table,
+.ui.table.tokens-table,
+.ui.table.users-table,
+.ui.table.redemptions-table {
+  table-layout: fixed;
+}
+
+/* 统一约束单元格内容，超长截断 */
+.ui.table.logs-table th,
+.ui.table.logs-table td,
+.ui.table.channels-table th,
+.ui.table.channels-table td,
+.ui.table.tokens-table th,
+.ui.table.tokens-table td,
+.ui.table.users-table th,
+.ui.table.users-table td,
+.ui.table.redemptions-table th,
+.ui.table.redemptions-table td {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 日志详情列允许换行但整体紧凑 */
+.ui.table.logs-table td:last-child {
+  white-space: normal;
+  word-break: break-all;
+  line-height: 1.4;
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
+/* 防止 Label 组件换行导致行高变化 */
+.ui.table td .ui.label {
+  white-space: nowrap;
+}

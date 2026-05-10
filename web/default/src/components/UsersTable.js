@@ -198,7 +198,7 @@ const UsersTable = () => {
         />
       </Form>
 
-      <Table basic={'very'} compact size='small'>
+      <Table basic={'very'} compact size='small' className='users-table'>
         <Table.Header>
           <Table.Row>
             <Table.HeaderCell
