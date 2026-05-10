@@ -94,13 +94,10 @@ function getColorByElapsedTime(elapsedTime) {
 function processContent(content, type, log) {
   if (!content) return '';
   if (content.startsWith('倍率：')) {
-    // 消费日志：构造 tokens 摘要
-    const pt = log.prompt_tokens || 0;
-    const ct = log.completion_tokens || 0;
-    const parts = [];
-    if (pt) parts.push(`↑${pt.toLocaleString()}`);
-    if (ct) parts.push(`↓${ct.toLocaleString()}`);
-    return parts.join(' → ') || '';
+    // 消费日志：提取 | 后面的请求内容摘要
+    const idx = content.indexOf(' | ');
+    if (idx !== -1) return content.substring(idx + 3);
+    return '';
   }
   if (content.startsWith('探针确认')) {
     // 探针成功：显示 TTFT（elapsed_time 已有独立标签，这里简写）

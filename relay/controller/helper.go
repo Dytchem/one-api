@@ -95,6 +95,41 @@ func preConsumeQuota(ctx context.Context, textRequest *relaymodel.GeneralOpenAIR
 	return preConsumedQuota, nil
 }
 
+func getRequestPreview(textRequest *relaymodel.GeneralOpenAIRequest) string {
+	if textRequest == nil || len(textRequest.Messages) == 0 {
+		return ""
+	}
+	for _, msg := range textRequest.Messages {
+		if msg.Role == "system" {
+			continue
+		}
+		var text string
+		switch v := msg.Content.(type) {
+		case string:
+			text = v
+		case []any:
+			for _, part := range v {
+				if m, ok := part.(map[string]any); ok && m["type"] == "text" {
+					if t, ok := m["text"].(string); ok {
+						text = t
+						break
+					}
+				}
+			}
+		}
+		if len(text) > 0 {
+			// Clean: replace newlines with spaces, trim
+			cleaned := strings.TrimSpace(strings.ReplaceAll(text, "\n", " "))
+			runes := []rune(cleaned)
+			if len(runes) > 50 {
+				return string(runes[:50]) + "…"
+			}
+			return cleaned
+		}
+	}
+	return ""
+}
+
 func postConsumeQuota(ctx context.Context, usage *relaymodel.Usage, meta *meta.Meta, textRequest *relaymodel.GeneralOpenAIRequest, ratio float64, preConsumedQuota int64, modelRatio float64, groupRatio float64, systemPromptReset bool) {
 	if usage == nil {
 		logger.Error(ctx, "usage is nil, which is unexpected")
@@ -124,6 +159,10 @@ func postConsumeQuota(ctx context.Context, usage *relaymodel.Usage, meta *meta.M
 		logger.Error(ctx, "error update user quota cache: "+err.Error())
 	}
 	logContent := fmt.Sprintf("倍率：%.2f × %.2f × %.2f", modelRatio, groupRatio, completionRatio)
+	requestPreview := getRequestPreview(textRequest)
+	if requestPreview != "" {
+		logContent += " | " + requestPreview
+	}
 	model.RecordConsumeLog(ctx, &model.Log{
 		UserId:            meta.UserId,
 		ChannelId:         meta.ChannelId,
