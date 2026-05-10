@@ -571,6 +571,7 @@ const ChannelsTable = () => {
               onClick={() => {
                 sortChannel('response_time');
               }}
+              hidden={showDetail}
             >
               {t('channel.table.response_time')}
             </Table.HeaderCell>
@@ -624,7 +625,7 @@ const ChannelsTable = () => {
                   <Table.Cell>{renderGroup(channel.group)}</Table.Cell>
                   <Table.Cell>{renderType(channel.type, t)}</Table.Cell>
                   <Table.Cell>{renderStatus(channel.status, t)}</Table.Cell>
-                  <Table.Cell>
+                  <Table.Cell hidden={showDetail}>
                     <Popup
                       content={
                         channel.test_time

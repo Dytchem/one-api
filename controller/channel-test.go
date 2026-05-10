@@ -65,7 +65,7 @@ func parseTestResponse(resp string) (*openai.TextResponse, string, error) {
 	return &response, stringContent, nil
 }
 
-func testChannel(ctx context.Context, channel *model.Channel, request *relaymodel.GeneralOpenAIRequest) (responseMessage string, err error, openaiErr *relaymodel.Error) {
+func testChannel(ctx context.Context, channel *model.Channel, request *relaymodel.GeneralOpenAIRequest) (responseMessage string, err error, openaiErr *relaymodel.Error, testUsage *relaymodel.Usage) {
 	startTime := time.Now()
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -86,7 +86,7 @@ func testChannel(ctx context.Context, channel *model.Channel, request *relaymode
 	apiType := channeltype.ToAPIType(channel.Type)
 	adaptor := relay.GetAdaptor(apiType)
 	if adaptor == nil {
-		return "", fmt.Errorf("invalid api type: %d, adaptor is nil", apiType), nil
+		return "", fmt.Errorf("invalid api type: %d, adaptor is nil", apiType), nil, nil
 	}
 	adaptor.Init(meta)
 	modelName := request.Model
@@ -104,36 +104,53 @@ func testChannel(ctx context.Context, channel *model.Channel, request *relaymode
 	request.Model = modelName
 	convertedRequest, err := adaptor.ConvertRequest(c, relaymode.ChatCompletions, request)
 	if err != nil {
-		return "", err, nil
+		return "", err, nil, nil
 	}
 	jsonData, err := json.Marshal(convertedRequest)
 	if err != nil {
-		return "", err, nil
+		return "", err, nil, nil
 	}
+	var promptTokens, completionTokens int
+
 	defer func() {
-		logContent := fmt.Sprintf("渠道 %s 测试成功，响应：%s", channel.Name, responseMessage)
+		elapsedMs := helper.CalcElapsedTime(startTime)
+		// 构建日志内容（类似消费日志格式）
+		logContent := fmt.Sprintf("渠道测试 - %s (#%d), 模型: %s, 用时: %dms", channel.Name, channel.Id, modelName, elapsedMs)
 		if err != nil || openaiErr != nil {
-			errorMessage := ""
+			errMsg := ""
 			if err != nil {
-				errorMessage = err.Error()
+				errMsg = err.Error()
 			} else {
-				errorMessage = openaiErr.Message
+				errMsg = openaiErr.Message
 			}
-			logContent = fmt.Sprintf("渠道 %s 测试失败，错误：%s", channel.Name, errorMessage)
+			logContent = fmt.Sprintf("渠道测试 - %s (#%d), 模型: %s, 失败: %s, 用时: %dms", channel.Name, channel.Id, modelName, errMsg, elapsedMs)
 		}
+
+		// 记录测试日志（Type 5），与消费日志相同丰富度
 		go model.RecordTestLog(ctx, &model.Log{
-			ChannelId:   channel.Id,
-			ModelName:   modelName,
-			Content:     logContent,
-			ElapsedTime: helper.CalcElapsedTime(startTime),
+			UserId:          0,
+			ChannelId:       channel.Id,
+			ModelName:       modelName,
+			Content:         logContent,
+			ElapsedTime:     elapsedMs,
+			PromptTokens:    promptTokens,
+			CompletionTokens: completionTokens,
 		})
+
+		// 记录到健康度滑动窗口
+		if err != nil || openaiErr != nil {
+			monitor.GlobalPerformanceStore.RecordFailure(channel.Id, elapsedMs)
+		} else if testUsage != nil {
+			monitor.GlobalPerformanceStore.RecordRequest(channel.Id, testUsage.PromptTokens, testUsage.CompletionTokens, elapsedMs, 0)
+		}
 	}()
+
 	logger.SysLog(string(jsonData))
 	requestBody := bytes.NewBuffer(jsonData)
 	c.Request.Body = io.NopCloser(requestBody)
 	resp, err := adaptor.DoRequest(c, meta, requestBody)
 	if err != nil {
-		return "", err, nil
+		return "", err, nil, nil
 	}
 	if resp != nil && resp.StatusCode != http.StatusOK {
 		err := controller.RelayErrorHandler(resp)
@@ -141,29 +158,35 @@ func testChannel(ctx context.Context, channel *model.Channel, request *relaymode
 		if errorMessage != "" {
 			errorMessage = ", error message: " + errorMessage
 		}
-		return "", fmt.Errorf("http status code: %d%s", resp.StatusCode, errorMessage), &err.Error
+		return "", fmt.Errorf("http status code: %d%s", resp.StatusCode, errorMessage), &err.Error, nil
 	}
 	usage, respErr := adaptor.DoResponse(c, resp, meta)
 	if respErr != nil {
-		return "", fmt.Errorf("%s", respErr.Error.Message), &respErr.Error
+		return "", fmt.Errorf("%s", respErr.Error.Message), &respErr.Error, nil
 	}
 	if usage == nil {
-		return "", errors.New("usage is nil"), nil
+		return "", errors.New("usage is nil"), nil, nil
+	}
+	// 设置 usage 给测试日志和滑动窗口
+	testUsage = usage
+	if usage != nil {
+		promptTokens = usage.PromptTokens
+		completionTokens = usage.CompletionTokens
 	}
 	rawResponse := w.Body.String()
 	_, responseMessage, err = parseTestResponse(rawResponse)
 	if err != nil {
 		logger.SysError(fmt.Sprintf("failed to parse error: %s, \nresponse: %s", err.Error(), rawResponse))
-		return "", err, nil
+		return "", err, nil, nil
 	}
 	result := w.Result()
 	// print result.Body
 	respBody, err := io.ReadAll(result.Body)
 	if err != nil {
-		return "", err, nil
+		return "", err, nil, nil
 	}
 	logger.SysLog(fmt.Sprintf("testing channel #%d, response: \n%s", channel.Id, string(respBody)))
-	return responseMessage, nil, nil
+	return responseMessage, nil, nil, testUsage
 }
 
 func TestChannel(c *gin.Context) {
@@ -187,7 +210,7 @@ func TestChannel(c *gin.Context) {
 	modelName := c.Query("model")
 	testRequest := buildTestRequest(modelName)
 	tik := time.Now()
-	responseMessage, err, _ := testChannel(ctx, channel, testRequest)
+	responseMessage, err, _, _ := testChannel(ctx, channel, testRequest)
 	tok := time.Now()
 	milliseconds := tok.Sub(tik).Milliseconds()
 	if err != nil {
@@ -240,7 +263,7 @@ func testChannels(ctx context.Context, notify bool, scope string) error {
 			isChannelEnabled := channel.Status == model.ChannelStatusEnabled
 			tik := time.Now()
 			testRequest := buildTestRequest("")
-			_, err, openaiErr := testChannel(ctx, channel, testRequest)
+			_, err, openaiErr, _ := testChannel(ctx, channel, testRequest)
 			tok := time.Now()
 			milliseconds := tok.Sub(tik).Milliseconds()
 			if isChannelEnabled && milliseconds > disableThreshold {

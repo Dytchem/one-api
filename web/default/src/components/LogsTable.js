@@ -218,8 +218,16 @@ const LogsTable = () => {
   };
 
   const showUserTokenQuota = () => {
-    return logType !== 5;
+    return logType === 0 || logType === 2 || logType === 5;
   };
+
+  function renderTokPerSec(log) {
+    if (!log.elapsed_time || log.elapsed_time === 0) return '';
+    const totalTokens = (log.prompt_tokens || 0) + (log.completion_tokens || 0);
+    if (totalTokens === 0) return '';
+    const speed = totalTokens / (log.elapsed_time / 1000);
+    return speed.toFixed(1);
+  }
 
   const loadLogs = async (startIdx, size) => {
     let url = '';
@@ -509,6 +517,12 @@ const LogsTable = () => {
                 >
                   {t('log.table.quota')}
                 </Table.HeaderCell>
+                <Table.HeaderCell
+                  style={{ cursor: 'pointer' }}
+                  width={1}
+                >
+                  tok/s
+                </Table.HeaderCell>
               </>
             )}
             <Table.HeaderCell>{t('log.table.detail')}</Table.HeaderCell>
@@ -576,6 +590,9 @@ const LogsTable = () => {
                       </Table.Cell>
                       <Table.Cell>
                         {log.quota ? renderQuota(log.quota, t, 6) : ''}
+                      </Table.Cell>
+                      <Table.Cell>
+                        {renderTokPerSec(log)}
                       </Table.Cell>
                     </>
                   )}
