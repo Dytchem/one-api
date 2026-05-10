@@ -127,9 +127,9 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 							probeTTFT := helper.CalcElapsedTime(meta.StartTime)
 							probeLogContent := getRequestPreview(textRequest)
 							if probeLogContent != "" {
-								probeLogContent = fmt.Sprintf("探测成功，请求模型：%s，请求内容：%s", meta.ActualModelName, probeLogContent)
+								probeLogContent = fmt.Sprintf("探测成功，请求模型：%s/%s，请求内容：%s", chName, meta.ActualModelName, probeLogContent)
 							} else {
-								probeLogContent = fmt.Sprintf("探测成功，请求模型：%s，%s | %dms", meta.ActualModelName, chName, probeTTFT)
+								probeLogContent = fmt.Sprintf("探测成功，请求模型：%s/%s，%s | %dms", chName, meta.ActualModelName, chName, probeTTFT)
 							}
 							dbmodel.RecordConsumeLog(ctx, &dbmodel.Log{
 								UserId:            meta.UserId,
@@ -209,9 +209,9 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 					chId := c.GetInt(ctxkey.ChannelId)
 					probeFailLogContent := getRequestPreview(textRequest)
 					if probeFailLogContent != "" {
-						probeFailLogContent = fmt.Sprintf("探测失败，请求模型：%s，请求内容：%s", meta.ActualModelName, probeFailLogContent)
+						probeFailLogContent = fmt.Sprintf("探测失败，请求模型：%s/%s，请求内容：%s", chName, meta.ActualModelName, probeFailLogContent)
 					} else {
-						probeFailLogContent = fmt.Sprintf("探测失败，请求模型：%s，%s | 空响应", meta.ActualModelName, chName)
+						probeFailLogContent = fmt.Sprintf("探测失败，请求模型：%s/%s，%s | 空响应", chName, meta.ActualModelName, chName)
 					}
 					dbmodel.RecordConsumeLog(ctx, &dbmodel.Log{
 						UserId:            meta.UserId,
