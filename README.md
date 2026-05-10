@@ -109,6 +109,26 @@ _✨ 通过标准的 OpenAI API 格式访问所有的大模型，开箱即用 �
 - `middleware/distributor.go`（+12 行健康度选择）
 - `model/ability.go`（+13 行辅助函数）
 
+#### 2026-05-10 前端 UI 优化 — 日志表格紧凑布局 + tok/s 计算修正
+
+**日志表格布局修复**：
+- 详情列：去掉固定 `maxWidth` 限制，改用 `line-clamp: 4` 自动截断（桌面 4 行 / 手机 2 行）
+- 时间列宽度收窄（`width=3` → `width=2`）
+- 移除"额度"列，减少视觉干扰
+- 仅日志表使用 `table-layout: fixed`，其他表格恢复原生布局，避免操作列按钮竖排撑高行
+
+**tok/s 计算修正**：
+- 旧：`tok/s = (prompt_tokens + completion_tokens) / elapsed_ms` ❌ 含输入 token
+- 新：`tok/s = completion_tokens / elapsed_ms` ✅ 仅输出速度
+- 探针确认日志（`completion_tokens=0`）自动跳过，不显示 tok/s
+
+**改动文件**：
+- `web/default/src/index.css`（新增紧凑布局 CSS）
+- `web/default/src/components/LogsTable.js`（详情布局 + tok/s 逻辑）
+- `web/default/src/components/ChannelsTable.js`（className 标注）
+
+---
+
 #### 2026-05-08 获取模型列表 + 可视化模型映射
 
 **新功能**：「获取模型列表」按钮 — 在渠道编辑页面一键从渠道 API 获取支持的模型列表，再也不用手动填写 JSON。
