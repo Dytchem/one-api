@@ -121,8 +121,8 @@ func getRequestPreview(textRequest *relaymodel.GeneralOpenAIRequest) string {
 			// Clean: replace newlines with spaces, trim
 			cleaned := strings.TrimSpace(strings.ReplaceAll(text, "\n", " "))
 			runes := []rune(cleaned)
-			if len(runes) > 50 {
-				return string(runes[:50]) + "…"
+			if len(runes) > 30 {
+				return string(runes[:30]) + "…"
 			}
 			return cleaned
 		}
@@ -130,7 +130,7 @@ func getRequestPreview(textRequest *relaymodel.GeneralOpenAIRequest) string {
 	return ""
 }
 
-func postConsumeQuota(ctx context.Context, usage *relaymodel.Usage, meta *meta.Meta, textRequest *relaymodel.GeneralOpenAIRequest, ratio float64, preConsumedQuota int64, modelRatio float64, groupRatio float64, systemPromptReset bool) {
+func postConsumeQuota(ctx context.Context, usage *relaymodel.Usage, meta *meta.Meta, textRequest *relaymodel.GeneralOpenAIRequest, ratio float64, preConsumedQuota int64, modelRatio float64, groupRatio float64, systemPromptReset bool, responseSnippet string) {
 	if usage == nil {
 		logger.Error(ctx, "usage is nil, which is unexpected")
 		return
@@ -158,10 +158,12 @@ func postConsumeQuota(ctx context.Context, usage *relaymodel.Usage, meta *meta.M
 	if err != nil {
 		logger.Error(ctx, "error update user quota cache: "+err.Error())
 	}
-	logContent := fmt.Sprintf("倍率：%.2f × %.2f × %.2f", modelRatio, groupRatio, completionRatio)
-	requestPreview := getRequestPreview(textRequest)
-	if requestPreview != "" {
-		logContent += " | " + requestPreview
+	logContent := responseSnippet
+	if logContent == "" {
+		logContent = getRequestPreview(textRequest)
+	}
+	if logContent == "" {
+		logContent = fmt.Sprintf("消费: %d↑ %d↓", promptTokens, completionTokens)
 	}
 	model.RecordConsumeLog(ctx, &model.Log{
 		UserId:            meta.UserId,

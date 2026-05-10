@@ -93,29 +93,14 @@ function getColorByElapsedTime(elapsedTime) {
 
 function processContent(content, type, log) {
   if (!content) return '';
-  if (content.startsWith('倍率：')) {
-    // 消费日志：提取 | 后面的请求内容摘要
-    const idx = content.indexOf(' | ');
-    if (idx !== -1) return content.substring(idx + 3);
-    return '';
-  }
-  if (content.startsWith('探针确认')) {
-    // 探针成功：显示 TTFT（elapsed_time 已有独立标签，这里简写）
-    return '探针成功';
-  }
-  if (content.startsWith('探针失败')) {
-    const m = content.match(/错误: ([^,，]+)/);
-    return m ? `失败：${m[1]}` : '失败';
-  }
-  if (content.startsWith('渠道尝试')) {
-    const m = content.match(/错误: ([^,，]+)/);
-    return m ? `失败：${m[1]}` : '失败';
-  }
+  // 旧版倍率日志兼容：不显示
+  if (content.startsWith('倍率：')) return '';
+  // 所有日志类型统一显示 content
   return content;
 }
 
 function renderDetail(log) {
-  const maxContentLen = 200;
+  const maxContentLen = 30;
   const raw = log.content || '';
   const processed = processContent(raw, log.type, log);
   const display = processed.length > maxContentLen
@@ -126,7 +111,7 @@ function renderDetail(log) {
       {display ? (
         <span
           style={{
-            flex: '1 1 auto',
+            flex: '0 1 auto',
             minWidth: 0,
             wordBreak: 'break-word',
           }}

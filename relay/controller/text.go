@@ -87,6 +87,7 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 				scanner.Split(bufio.ScanLines)
 				var probeUsage *model.Usage
 				confirmed := false
+				var responseSnippet string
 
 				for scanner.Scan() {
 					data := scanner.Text()
@@ -124,6 +125,10 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 							chName := c.GetString(ctxkey.ChannelName)
 							chId := c.GetInt(ctxkey.ChannelId)
 							probeTTFT := helper.CalcElapsedTime(meta.StartTime)
+							probeLogContent := getRequestPreview(textRequest)
+							if probeLogContent == "" {
+								probeLogContent = fmt.Sprintf("探针确认 - %s | %dms", chName, probeTTFT)
+							}
 							dbmodel.RecordConsumeLog(ctx, &dbmodel.Log{
 								UserId:            meta.UserId,
 								TokenName:         meta.TokenName,
@@ -132,7 +137,7 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 								PromptTokens:      promptTokens,
 								CompletionTokens:  0,
 								Quota:             0,
-								Content:           fmt.Sprintf("探针确认 - 渠道: %s (#%d), 模型: %s, 用时: %dms", chName, chId, meta.ActualModelName, probeTTFT),
+								Content:           probeLogContent,
 								IsStream:          true,
 								ElapsedTime:       probeTTFT,
 								SystemPromptReset: systemPromptReset,
@@ -166,6 +171,22 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 							render.StringData(c, data)
 						}
 
+						// Accumulate response content snippet from passthrough
+						if responseSnippet == "" && len(data) > 6 && data[:6] == "data: " {
+							var streamResp openai.ChatCompletionsStreamResponse
+							if json.Unmarshal([]byte(data[6:]), &streamResp) == nil && len(streamResp.Choices) > 0 {
+								delta := &streamResp.Choices[0].Delta
+								if c, ok := delta.Content.(string); ok && c != "" {
+									runes := []rune(c)
+									if len(runes) > 30 {
+										responseSnippet = string(runes[:30]) + "…"
+									} else {
+										responseSnippet = c
+									}
+								}
+							}
+						}
+
 						// Still extract usage from passthrough
 						if len(data) > 6 && data[:6] == "data: " {
 							var streamResp openai.ChatCompletionsStreamResponse
@@ -181,9 +202,13 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 					// Stream ended without any content → empty response, trigger fallback
 					logger.Warnf(ctx, "stream probe returned empty response (no content token found), triggering fallback")
 
-					// Write probe failure log with full format before returning
+					// Write probe failure log
 					chName := c.GetString(ctxkey.ChannelName)
 					chId := c.GetInt(ctxkey.ChannelId)
+					probeFailLogContent := getRequestPreview(textRequest)
+					if probeFailLogContent == "" {
+						probeFailLogContent = fmt.Sprintf("探针失败 - %s | 空响应", chName)
+					}
 					dbmodel.RecordConsumeLog(ctx, &dbmodel.Log{
 						UserId:            meta.UserId,
 						TokenName:         meta.TokenName,
@@ -192,7 +217,7 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 						PromptTokens:      promptTokens,
 						CompletionTokens:  0,
 						Quota:             0,
-						Content:           fmt.Sprintf("探针失败 - 渠道: %s (#%d), 模型: %s, 错误: 空响应, 用时: %dms", chName, chId, meta.ActualModelName, helper.CalcElapsedTime(meta.StartTime)),
+						Content:           probeFailLogContent,
 						IsStream:          true,
 						ElapsedTime:       helper.CalcElapsedTime(meta.StartTime),
 						SystemPromptReset: systemPromptReset,
@@ -205,7 +230,7 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 				logger.Infof(ctx, "stream finished with passthrough, usage: %+v", probeUsage)
 				render.Done(c)
 
-				go postConsumeQuota(ctx, probeUsage, meta, textRequest, ratio, preConsumedQuota, modelRatio, groupRatio, systemPromptReset)
+				go postConsumeQuota(ctx, probeUsage, meta, textRequest, ratio, preConsumedQuota, modelRatio, groupRatio, systemPromptReset, responseSnippet)
 				return nil
 			} else {
 				logger.Warnf(ctx, "stream probe request failed: %v", probeErr)
@@ -242,7 +267,7 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 		billing.ReturnPreConsumedQuota(ctx, preConsumedQuota, meta.TokenId)
 		return openai.ErrorWrapper(fmt.Errorf("empty response from channel"), "empty_response", http.StatusBadGateway)
 	}
-	go postConsumeQuota(ctx, usage, meta, textRequest, ratio, preConsumedQuota, modelRatio, groupRatio, systemPromptReset)
+	go postConsumeQuota(ctx, usage, meta, textRequest, ratio, preConsumedQuota, modelRatio, groupRatio, systemPromptReset, "")
 	return nil
 }
 
