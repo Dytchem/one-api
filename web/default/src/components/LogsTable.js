@@ -231,13 +231,12 @@ const LogsTable = () => {
   };
 
   function renderTokPerSec(log) {
-    // 探针日志（type=5）的 elapsed_time = TTFT，completion_tokens = 0，
-    // tok/s 无意义（等于 prompt_tokens / TTFT，数值巨大如 44417）
+    // 探针日志（completion_tokens=0）的 elapsed_time = TTFT，tok/s 无意义
     if (!log.elapsed_time || log.elapsed_time === 0) return '';
-    if (log.type === 5) return ''; // 测试/探针日志跳过
-    const totalTokens = (log.prompt_tokens || 0) + (log.completion_tokens || 0);
-    if (totalTokens === 0) return '';
-    const speed = totalTokens / (log.elapsed_time / 1000);
+    const completionTokens = log.completion_tokens || 0;
+    if (completionTokens === 0) return ''; // 探针确认日志跳过
+    // tok/s = 输出 tokens / 生成时间（秒），不含输入 tokens
+    const speed = completionTokens / (log.elapsed_time / 1000);
     return speed.toFixed(1);
   }
 
@@ -447,7 +446,7 @@ const LogsTable = () => {
               onClick={() => {
                 sortLog('created_time');
               }}
-              width={3}
+              width={2}
             >
               {t('log.table.time')}
             </Table.HeaderCell>
@@ -522,15 +521,6 @@ const LogsTable = () => {
                 </Table.HeaderCell>
                 <Table.HeaderCell
                   style={{ cursor: 'pointer' }}
-                  onClick={() => {
-                    sortLog('quota');
-                  }}
-                  width={1}
-                >
-                  {t('log.table.quota')}
-                </Table.HeaderCell>
-                <Table.HeaderCell
-                  style={{ cursor: 'pointer' }}
                   width={1}
                 >
                   tok/s
@@ -601,9 +591,6 @@ const LogsTable = () => {
                         {log.completion_tokens ? log.completion_tokens : ''}
                       </Table.Cell>
                       <Table.Cell>
-                        {log.quota ? renderQuota(log.quota, t, 6) : ''}
-                      </Table.Cell>
-                      <Table.Cell>
                         {renderTokPerSec(log)}
                       </Table.Cell>
                     </>
@@ -617,7 +604,7 @@ const LogsTable = () => {
 
         <Table.Footer>
           <Table.Row>
-            <Table.HeaderCell colSpan={'10'}>
+            <Table.HeaderCell colSpan={'9'}>
               <Select
                 placeholder={t('log.type.select')}
                 options={LOG_OPTIONS}
