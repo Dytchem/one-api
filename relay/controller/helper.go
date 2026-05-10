@@ -16,6 +16,7 @@ import (
 	"github.com/songquanpeng/one-api/common"
 	"github.com/songquanpeng/one-api/common/config"
 	"github.com/songquanpeng/one-api/common/logger"
+	"github.com/songquanpeng/one-api/monitor"
 	"github.com/songquanpeng/one-api/model"
 	"github.com/songquanpeng/one-api/relay/adaptor/openai"
 	billingratio "github.com/songquanpeng/one-api/relay/billing/ratio"
@@ -138,6 +139,15 @@ func postConsumeQuota(ctx context.Context, usage *relaymodel.Usage, meta *meta.M
 	})
 	model.UpdateUserUsedQuotaAndRequestCount(meta.UserId, quota)
 	model.UpdateChannelUsedQuota(meta.ChannelId, quota)
+
+	// 记录渠道性能指标到滑动窗口
+	monitor.GlobalPerformanceStore.RecordRequest(
+		meta.ChannelId,
+		promptTokens,
+		completionTokens,
+		helper.CalcElapsedTime(meta.StartTime),
+		0, // TTFT not available here
+	)
 }
 
 func getMappedModelName(modelName string, mapping map[string]string) (string, bool) {

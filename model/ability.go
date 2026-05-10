@@ -39,9 +39,9 @@ func GetRandomSatisfiedChannel(group string, model string, ignoreFirstPriority b
 		channelQuery = DB.Where(groupCol+" = ? and model = ? and enabled = "+trueVal+" and priority = (?)", group, model, maxPrioritySubQuery)
 	}
 	if common.UsingSQLite || common.UsingPostgreSQL {
-		err = channelQuery.Order("RANDOM()").First(&ability).Error
+		err = channelQuery.Order("RANDOM()").First(ability).Error
 	} else {
-		err = channelQuery.Order("RAND()").First(&ability).Error
+		err = channelQuery.Order("RAND()").First(ability).Error
 	}
 	if err != nil {
 		return nil, err
@@ -111,6 +111,22 @@ func GetGroupModels(ctx context.Context, group string) ([]string, error) {
 	}
 	sort.Strings(models)
 	return models, err
+}
+
+// GetTopSatisfiedAbilities returns all enabled abilities at max priority for group+model.
+// Caller can use monitor.FilterAbilities to filter degraded channels and sort by health.
+func GetTopSatisfiedAbilities(group string, model string) ([]Ability, error) {
+	groupCol := "`group`"
+	trueVal := "1"
+	if common.UsingPostgreSQL {
+		groupCol = `"group"`
+		trueVal = "true"
+	}
+	maxPrioritySubQuery := DB.Model(&Ability{}).Select("MAX(priority)").Where(groupCol+" = ? and model = ? and enabled = "+trueVal, group, model)
+	var abilities []Ability
+	err := DB.Where(groupCol+" = ? and model = ? and enabled = "+trueVal+" and priority = (?)", group, model, maxPrioritySubQuery).
+		Find(&abilities).Error
+	return abilities, err
 }
 
 // GetRandomSatisfiedChannelExcluding finds a random channel for the given group and model,

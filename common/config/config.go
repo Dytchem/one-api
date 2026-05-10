@@ -150,6 +150,13 @@ var MetricSuccessRateThreshold = env.Float64("METRIC_SUCCESS_RATE_THRESHOLD", 0.
 var MetricSuccessChanSize = env.Int("METRIC_SUCCESS_CHAN_SIZE", 1024)
 var MetricFailChanSize = env.Int("METRIC_FAIL_CHAN_SIZE", 128)
 
+// Channel health metrics: sliding window + circuit breaker
+var ChannelHealthEnabled = env.Bool("CHANNEL_HEALTH_ENABLED", true)
+var ChannelHealthWindowSize = env.Int("CHANNEL_HEALTH_WINDOW_SIZE", 20)   // 滑动窗口大小
+var ChannelHealthFailWeight = env.Float64("CHANNEL_HEALTH_FAIL_WEIGHT", 3.0) // 失败权重（失败一次相当于失败权重次成功）
+var CircuitBreakerThreshold = env.Int("CIRCUIT_BREAKER_THRESHOLD", 3)        // 连续失败熔断阈值
+var CircuitBreakerCooldown = env.Int("CIRCUIT_BREAKER_COOLDOWN", 60)        // 熔断冷却时间（秒）
+
 var InitialRootToken = os.Getenv("INITIAL_ROOT_TOKEN")
 
 var InitialRootAccessToken = os.Getenv("INITIAL_ROOT_ACCESS_TOKEN")

@@ -10,6 +10,7 @@ import (
 	"github.com/songquanpeng/one-api/common/ctxkey"
 	"github.com/songquanpeng/one-api/common/logger"
 	"github.com/songquanpeng/one-api/model"
+	"github.com/songquanpeng/one-api/monitor"
 	"github.com/songquanpeng/one-api/relay/channeltype"
 )
 
@@ -44,7 +45,21 @@ func Distribute() func(c *gin.Context) {
 		} else {
 			requestModel = c.GetString(ctxkey.RequestModel)
 			var err error
-			channel, err = model.CacheGetRandomSatisfiedChannel(userGroup, requestModel, false)
+
+			// Health-aware selection: get all top-priority abilities, filter degraded, pick best
+			abilities, abilityErr := model.GetTopSatisfiedAbilities(userGroup, requestModel)
+			if abilityErr != nil && len(abilities) > 0 {
+				filtered := monitor.FilterAbilities(abilities, nil)
+				if len(filtered) > 0 {
+					channel, err = model.GetChannelById(filtered[0].ChannelId, false)
+				}
+			}
+
+			// Fallback to original random selection if health-aware path failed
+			if channel == nil {
+				channel, err = model.CacheGetRandomSatisfiedChannel(userGroup, requestModel, false)
+			}
+
 			if err != nil {
 				message := fmt.Sprintf("当前分组 %s 下对于模型 %s 无可用渠道", userGroup, requestModel)
 				if channel != nil {

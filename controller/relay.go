@@ -86,6 +86,13 @@ func Relay(c *gin.Context) {
 			logger.Warnf(ctx, "no available channel found (all exhausted), giving up")
 			break
 		}
+		// Skip degraded channels (circuit breaker active)
+		if monitor.GlobalPerformanceStore.IsDegraded(channel.Id) {
+			logger.Debugf(ctx, "skipping degraded channel #%d for retry", channel.Id)
+			failedChannelIds[channel.Id] = true
+			i++ // Don't consume retry count for degraded channels
+			continue
+		}
 		logger.Infof(ctx, "using channel #%d to retry (remain times %d), failed set: %v", channel.Id, i, failedChannelIds)
 		middleware.SetupContextForSelectedChannel(c, channel, originalModel)
 		requestBody, err := common.GetRequestBody(c)
@@ -143,6 +150,8 @@ func processChannelRelayError(ctx context.Context, userId int, channelId int, ch
 	} else {
 		monitor.Emit(channelId, false)
 	}
+	// 记录失败到滑动窗口
+	monitor.GlobalPerformanceStore.RecordFailure(channelId, 0)
 }
 
 func RelayNotImplemented(c *gin.Context) {

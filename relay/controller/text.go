@@ -17,6 +17,7 @@ import (
 	"github.com/songquanpeng/one-api/common/logger"
 	"github.com/songquanpeng/one-api/common/render"
 	dbmodel "github.com/songquanpeng/one-api/model"
+	"github.com/songquanpeng/one-api/monitor"
 	"github.com/songquanpeng/one-api/relay"
 	"github.com/songquanpeng/one-api/relay/adaptor"
 	"github.com/songquanpeng/one-api/relay/adaptor/openai"
@@ -122,6 +123,7 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 							// Write probe confirm log immediately for visibility
 							chName := c.GetString(ctxkey.ChannelName)
 							chId := c.GetInt(ctxkey.ChannelId)
+							probeTTFT := helper.CalcElapsedTime(meta.StartTime)
 							dbmodel.RecordConsumeLog(ctx, &dbmodel.Log{
 								UserId:            meta.UserId,
 								TokenName:         meta.TokenName,
@@ -130,11 +132,20 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 								PromptTokens:      promptTokens,
 								CompletionTokens:  0,
 								Quota:             0,
-								Content:           fmt.Sprintf("探针确认 - 渠道: %s (#%d), 模型: %s, 用时: %dms", chName, chId, meta.ActualModelName, helper.CalcElapsedTime(meta.StartTime)),
+								Content:           fmt.Sprintf("探针确认 - 渠道: %s (#%d), 模型: %s, 用时: %dms", chName, chId, meta.ActualModelName, probeTTFT),
 								IsStream:          true,
-								ElapsedTime:       helper.CalcElapsedTime(meta.StartTime),
+								ElapsedTime:       probeTTFT,
 								SystemPromptReset: systemPromptReset,
 							})
+
+							// 记录 TTFT 到滑动窗口（后续 postConsumeQuota 会记录完整 tok/s）
+							monitor.GlobalPerformanceStore.RecordRequest(
+								chId,
+								promptTokens,
+								0, // 完成 tokens 未知
+								probeTTFT,
+								probeTTFT, // TTFT = 从开始到首次 content 的耗时
+							)
 
 							common.SetEventStreamHeaders(c)
 
