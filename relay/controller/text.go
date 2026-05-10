@@ -63,7 +63,7 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 	}
 	adaptor.Init(meta)
 
-	// For stream requests: probe with streaming, buffer data, then replay to client
+	// Stream probe: buffer until first content token, then replay + passthrough
 	if meta.IsStream {
 		// Create a clone for probe
 		probeRequest := &model.GeneralOpenAIRequest{}
@@ -78,52 +78,81 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 			// Do probe request with streaming
 			probeResp, probeErr := adaptor.DoRequest(c, meta, probeRequestBody)
 			if probeErr == nil && probeResp != nil && probeResp.StatusCode/100 == 2 {
-				// Probe succeeded - buffer the stream data
-				var probeBuffer bytes.Buffer
+				// Buffer until first content token, then replay + passthrough
+				var buf bytes.Buffer
 				scanner := bufio.NewScanner(probeResp.Body)
 				scanner.Split(bufio.ScanLines)
 				var probeUsage *model.Usage
+				confirmed := false
 
 				for scanner.Scan() {
 					data := scanner.Text()
-					probeBuffer.WriteString(data)
-					probeBuffer.WriteString("\n")
 
-					// Try to extract usage from the last line
-					if len(data) > 6 && data[:6] == "data: " {
-						var streamResp openai.ChatCompletionsStreamResponse
-						if json.Unmarshal([]byte(data[6:]), &streamResp) == nil && streamResp.Usage != nil {
-							probeUsage = streamResp.Usage
+					if !confirmed {
+						// Probe phase: write to buffer, check for first content
+						buf.WriteString(data)
+						buf.WriteString("\n")
+
+						// Check for first meaningful content token
+						if len(data) > 6 && data[:6] == "data: " {
+							var streamResp openai.ChatCompletionsStreamResponse
+							if err := json.Unmarshal([]byte(data[6:]), &streamResp); err == nil {
+								// Content detected via delta.content
+								if len(streamResp.Choices) > 0 {
+									if content, ok := streamResp.Choices[0].Delta.Content.(string); ok && content != "" {
+										confirmed = true
+									}
+								}
+								// Also capture usage whenever available
+								if streamResp.Usage != nil {
+									probeUsage = streamResp.Usage
+								}
+							}
+						}
+
+						if confirmed {
+							// First content token found: set headers, replay buffer, then passthrough
+							logger.Infof(ctx, "stream confirmed with first content token, replaying %d buffered bytes", buf.Len())
+							common.SetEventStreamHeaders(c)
+
+							bufReader := bytes.NewReader(buf.Bytes())
+							lineScanner := bufio.NewScanner(bufReader)
+							lineScanner.Split(bufio.ScanLines)
+							for lineScanner.Scan() {
+								line := lineScanner.Text()
+								if len(line) > 0 {
+									render.StringData(c, line)
+								}
+							}
+							buf.Reset()
+						}
+					} else {
+						// Passthrough mode: forward directly
+						if len(data) > 0 {
+							render.StringData(c, data)
+						}
+
+						// Still extract usage from passthrough
+						if len(data) > 6 && data[:6] == "data: " {
+							var streamResp openai.ChatCompletionsStreamResponse
+							if json.Unmarshal([]byte(data[6:]), &streamResp) == nil && streamResp.Usage != nil {
+								probeUsage = streamResp.Usage
+							}
 						}
 					}
 				}
 				probeResp.Body.Close()
 
-				// Check if probe has valid content
-				if probeUsage == nil || probeUsage.CompletionTokens == 0 {
-					// Probe returned empty - trigger fallback
-					logger.Warnf(ctx, "stream probe returned empty response, triggering fallback")
+				if !confirmed {
+					// Stream ended without any content → empty response, trigger fallback
+					logger.Warnf(ctx, "stream probe returned empty response (no content token found), triggering fallback")
 					billing.ReturnPreConsumedQuota(ctx, preConsumedQuota, meta.TokenId)
 					return openai.ErrorWrapper(fmt.Errorf("empty response from channel during probe"), "empty_response", http.StatusBadGateway)
 				}
 
-				logger.Infof(ctx, "stream probe successful with %d bytes buffered", probeBuffer.Len())
-
-				// Now set headers and replay buffered data to client
-				common.SetEventStreamHeaders(c)
-				reader := bytes.NewReader(probeBuffer.Bytes())
-				streamScanner := bufio.NewScanner(reader)
-				streamScanner.Split(bufio.ScanLines)
-
-				for streamScanner.Scan() {
-					data := streamScanner.Text()
-					if len(data) > 0 {
-						render.StringData(c, data)
-					}
-				}
+				logger.Infof(ctx, "stream finished with passthrough, usage: %+v", probeUsage)
 				render.Done(c)
 
-				// Post consume and return - the probe response was sent to client
 				go postConsumeQuota(ctx, probeUsage, meta, textRequest, ratio, preConsumedQuota, modelRatio, groupRatio, systemPromptReset)
 				return nil
 			} else {
