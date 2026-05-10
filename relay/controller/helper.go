@@ -159,11 +159,15 @@ func postConsumeQuota(ctx context.Context, usage *relaymodel.Usage, meta *meta.M
 		logger.Error(ctx, "error update user quota cache: "+err.Error())
 	}
 	logContent := responseSnippet
-	if logContent == "" {
+	if logContent != "" {
+		logContent = "回复完成，回复内容：" + logContent
+	} else {
 		logContent = getRequestPreview(textRequest)
-	}
-	if logContent == "" {
-		logContent = fmt.Sprintf("消费: %d↑ %d↓", promptTokens, completionTokens)
+		if logContent != "" {
+			logContent = "回复完成，回复内容：" + logContent
+		} else {
+			logContent = fmt.Sprintf("回复完成，回复内容：%d↑ %d↓", promptTokens, completionTokens)
+		}
 	}
 	model.RecordConsumeLog(ctx, &model.Log{
 		UserId:            meta.UserId,

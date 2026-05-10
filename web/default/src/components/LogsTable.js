@@ -53,14 +53,22 @@ function renderType(log) {
       </Label>
     );
   }
-  if (type === 4 || (type === 2 && (content.includes('探针失败') || content.includes('渠道尝试')))) {
+  if (type === 4 || content.startsWith('探测失败') || content.includes('探针失败') || content.includes('渠道尝试')) {
     return (
       <Label basic color='red'>
         失败
       </Label>
     );
   }
-  if (type === 2 && content.includes('探针确认')) {
+  if (content.startsWith('探测成功') || content.includes('探针确认')) {
+    return (
+      <Label basic color='green'>
+        成功
+      </Label>
+    );
+  }
+  if (type === 2 && log.completion_tokens === 0) {
+    // 新格式：探测成功（completion_tokens=0）
     return (
       <Label basic color='green'>
         成功
@@ -68,7 +76,7 @@ function renderType(log) {
     );
   }
   if (type === 2) {
-    // 倍率 consumption logs
+    // 消费日志
     return (
       <Label basic color='olive'>
         消费
@@ -93,9 +101,9 @@ function getColorByElapsedTime(elapsedTime) {
 
 function processContent(content, type, log) {
   if (!content) return '';
-  // 旧版倍率日志兼容：不显示
+  // 旧版倍率日志：不显示
   if (content.startsWith('倍率：')) return '';
-  // 所有日志类型统一显示 content
+  // 后端已写入前缀，直接返回
   return content;
 }
 
@@ -107,38 +115,40 @@ function renderDetail(log) {
     ? processed.slice(0, maxContentLen - 3) + '...'
     : processed;
   return (
-    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', alignItems: 'center' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
       {display ? (
         <span
           style={{
-            flex: '0 1 auto',
-            minWidth: 0,
             wordBreak: 'break-word',
+            color: '#555',
+            lineHeight: '1.4',
           }}
           title={processed}
         >
           {display}
         </span>
       ) : <span style={{ color: 'lightgray' }}>—</span>}
-      {log.elapsed_time ? (
-        <Label
-          basic
-          size={'mini'}
-          color={getColorByElapsedTime(log.elapsed_time)}
-        >
-          {log.elapsed_time} ms
-        </Label>
-      ) : null}
-      {log.is_stream ? (
-        <Label size={'mini'} color='pink'>
-          Stream
-        </Label>
-      ) : null}
-      {log.system_prompt_reset ? (
-        <Label basic size={'mini'} color='red'>
-          SPR
-        </Label>
-      ) : null}
+      <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+        {log.elapsed_time ? (
+          <Label
+            basic
+            size={'mini'}
+            color={getColorByElapsedTime(log.elapsed_time)}
+          >
+            {log.elapsed_time} ms
+          </Label>
+        ) : null}
+        {log.is_stream ? (
+          <Label size={'mini'} color='pink'>
+            Stream
+          </Label>
+        ) : null}
+        {log.system_prompt_reset ? (
+          <Label basic size={'mini'} color='red'>
+            SPR
+          </Label>
+        ) : null}
+      </div>
     </div>
   );
 }

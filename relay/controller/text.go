@@ -126,8 +126,10 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 							chId := c.GetInt(ctxkey.ChannelId)
 							probeTTFT := helper.CalcElapsedTime(meta.StartTime)
 							probeLogContent := getRequestPreview(textRequest)
-							if probeLogContent == "" {
-								probeLogContent = fmt.Sprintf("探针确认 - %s | %dms", chName, probeTTFT)
+							if probeLogContent != "" {
+								probeLogContent = "探测成功，请求内容：" + probeLogContent
+							} else {
+								probeLogContent = fmt.Sprintf("探测成功，%s | %dms", chName, probeTTFT)
 							}
 							dbmodel.RecordConsumeLog(ctx, &dbmodel.Log{
 								UserId:            meta.UserId,
@@ -206,8 +208,10 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 					chName := c.GetString(ctxkey.ChannelName)
 					chId := c.GetInt(ctxkey.ChannelId)
 					probeFailLogContent := getRequestPreview(textRequest)
-					if probeFailLogContent == "" {
-						probeFailLogContent = fmt.Sprintf("探针失败 - %s | 空响应", chName)
+					if probeFailLogContent != "" {
+						probeFailLogContent = "探测失败，请求内容：" + probeFailLogContent
+					} else {
+						probeFailLogContent = fmt.Sprintf("探测失败，%s | 空响应", chName)
 					}
 					dbmodel.RecordConsumeLog(ctx, &dbmodel.Log{
 						UserId:            meta.UserId,
