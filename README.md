@@ -72,6 +72,43 @@ _✨ 通过标准的 OpenAI API 格式访问所有的大模型，开箱即用 �
 
 ### 📝 本分支修改记录
 
+#### 2026-05-10 渠道健康度滑动窗口 + 熔断器 + tok/s 选择优化
+
+**新功能**：实时追踪每个渠道的性能指标，健康度优先选择 + 连续失败熔断。
+
+**渠道健康度滑动窗口**（`monitor/sliding.go`）：
+- 每个渠道维护最近 20 次请求的滑动窗口
+- 记录：`success`、`prompt_tokens`、`completion_tokens`、`elapsed_ms`、`ttft_ms`
+- 健康度计算：`health_score = 成功率×0.7 + 归一化速度×0.3`
+- 连续 3 次失败 → 熔断（60s 冷却后自动恢复）
+
+**渠道选择逻辑优化**：
+- 初始路由（`middleware/distributor.go`）：优先选健康度最高的渠道
+- Fallback 重试（`controller/relay.go`）：自动跳过熔断中的渠道
+- 同 priority 层按健康度排序，不再完全随机
+
+**DB 日志改进**：
+- 每条流式请求写两条 Type 2 日志：探针确认（`completion_tokens=0`）+ 请求完成（完整统计）
+
+**新增环境变量**：
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `CHANNEL_HEALTH_ENABLED` | `true` | 全局开关 |
+| `CHANNEL_HEALTH_WINDOW_SIZE` | `20` | 滑动窗口大小 |
+| `CHANNEL_HEALTH_FAIL_WEIGHT` | `3.0` | 失败权重倍率 |
+| `CIRCUIT_BREAKER_THRESHOLD` | `3` | 连续失败熔断阈值 |
+| `CIRCUIT_BREAKER_COOLDOWN` | `60` | 熔断冷却时间（秒） |
+
+**改动文件**：
+- `monitor/sliding.go`（新增，409 行）
+- `common/config/config.go`（+6 行配置项）
+- `relay/controller/helper.go`（+9 行 tok/s 记录）
+- `relay/controller/text.go`（+11 行 TTFT 记录）
+- `controller/relay.go`（+7 行熔断跳过）
+- `middleware/distributor.go`（+12 行健康度选择）
+- `model/ability.go`（+13 行辅助函数）
+
 #### 2026-05-08 获取模型列表 + 可视化模型映射
 
 **新功能**：「获取模型列表」按钮 — 在渠道编辑页面一键从渠道 API 获取支持的模型列表，再也不用手动填写 JSON。
@@ -79,7 +116,7 @@ _✨ 通过标准的 OpenAI API 格式访问所有的大模型，开箱即用 �
 **功能特性**：
 - 点击按钮，自动请求渠道的 `/v1/models` 端点获取模型列表
 - 获取到的模型以标签形式展示，**点击即可添加**到渠道模型列表
-n- 兼容所有主流渠道类型，包括预设 base_url 的渠道（如 MiniMax、OpenRouter）和手动填写 base_url 的渠道
+- 兼容所有主流渠道类型，包括预设 base_url 的渠道（如 MiniMax、OpenRouter）和手动填写 base_url 的渠道
 - 智能路径探测：自动尝试 `/v1/models` → `/models` → `/v2/models`，提高获取成功率
 
 **前端（default 主题）**：
@@ -206,9 +243,13 @@ n- 兼容所有主流渠道类型，包括预设 base_url 的渠道（如 MiniMa
 
 | 修改文件 | 修改内容 |
 |---------|---------|
-| `relay/controller/text.go` | 重试时恢复原始模型名 |
-| `controller/relay.go` | 重写 fallback 循环 + failedChannelIds 集合 |
-| `model/ability.go` | 新增 `GetRandomSatisfiedChannelExcluding` 函数 |
+| `monitor/sliding.go` | 新增渠道健康度滑动窗口 |
+| `common/config/config.go` | 新增健康度相关配置项 |
+| `relay/controller/helper.go` | postConsumeQuota 记录 tok/s |
+| `relay/controller/text.go` | Probe TTFT 记录 + 模型重试 |
+| `controller/relay.go` | 重写 fallback 循环 + failedChannelIds 集合 + 熔断跳过 |
+| `middleware/distributor.go` | 健康度优先的渠道选择 |
+| `model/ability.go` | 新增 `GetTopSatisfiedAbilities` 辅助函数 |
 | `controller/channel.go` | 新增 `POST /api/channel/fetch-models` 获取模型列表接口 |
 | `router/api.go` | 注册 `/api/channel/fetch-models` 路由 |
 | `web/default/src/pages/Channel/EditChannel.js` | 获取模型列表按钮 + 可视化模型映射编辑器 |
