@@ -91,10 +91,21 @@ function getColorByElapsedTime(elapsedTime) {
   return 'red';
 }
 
-function processContent(content, type) {
+function processContent(content, type, log) {
   if (!content) return '';
-  if (content.startsWith('倍率：')) return ''; // 消费日志，content为空，性能数据在专属列
-  if (content.startsWith('探针确认')) return ''; // 探针确认，性能数据在专属列
+  if (content.startsWith('倍率：')) {
+    // 消费日志：构造 tokens 摘要
+    const pt = log.prompt_tokens || 0;
+    const ct = log.completion_tokens || 0;
+    const parts = [];
+    if (pt) parts.push(`↑${pt.toLocaleString()}`);
+    if (ct) parts.push(`↓${ct.toLocaleString()}`);
+    return parts.join(' → ') || '';
+  }
+  if (content.startsWith('探针确认')) {
+    // 探针成功：显示 TTFT（elapsed_time 已有独立标签，这里简写）
+    return '探针成功';
+  }
   if (content.startsWith('探针失败')) {
     const m = content.match(/错误: ([^,，]+)/);
     return m ? `失败：${m[1]}` : '失败';
@@ -109,7 +120,7 @@ function processContent(content, type) {
 function renderDetail(log) {
   const maxContentLen = 200;
   const raw = log.content || '';
-  const processed = processContent(raw, log.type);
+  const processed = processContent(raw, log.type, log);
   const display = processed.length > maxContentLen
     ? processed.slice(0, maxContentLen - 3) + '...'
     : processed;
