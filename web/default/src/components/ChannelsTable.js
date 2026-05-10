@@ -80,6 +80,7 @@ const promptID = 'detail';
 const ChannelsTable = () => {
   const { t } = useTranslation();
   const [channels, setChannels] = useState([]);
+  const [healthData, setHealthData] = useState({});
   const [loading, setLoading] = useState(true);
   const [activePage, setActivePage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(() => parseInt(localStorage.getItem('itemsPerPage') || '10'));
@@ -138,6 +139,16 @@ const ChannelsTable = () => {
     setLoading(false);
   };
 
+  const loadHealthData = async () => {
+    const res = await API.get('/api/channel/health');
+    const { success, data } = res.data;
+    if (success && data) {
+      const map = {};
+      data.forEach(h => { map[h.channel_id] = h; });
+      setHealthData(map);
+    }
+  };
+
   const handleItemsPerPageChange = (e, { value }) => {
     setItemsPerPage(value);
     localStorage.setItem('itemsPerPage', value.toString());
@@ -157,6 +168,7 @@ const ChannelsTable = () => {
   const refresh = async () => {
     setLoading(true);
     await loadChannels(activePage - 1);
+    await loadHealthData();
   };
 
   const toggleShowDetail = () => {
@@ -171,6 +183,7 @@ const ChannelsTable = () => {
         showError(reason);
       });
     loadChannelModels().then();
+    loadHealthData().then();
   }, []);
 
   const manageChannel = async (id, action, idx, value) => {
@@ -298,6 +311,69 @@ const ChannelsTable = () => {
         </Label>
       );
     }
+  };
+
+
+  const renderHealthBadge = (channelId, t) => {
+    const h = healthData[channelId];
+    if (!h) {
+      return <Label basic color='grey'>{t('channel.table.health_no_data')}</Label>;
+    }
+    if (h.degraded) {
+      return (
+        <Popup
+          trigger={<Label basic color='red'>{t('channel.table.health_degraded')}</Label>}
+          content={<div>
+            <b>{t('channel.table.health_degraded_popup')}</b><br/>
+            {t('channel.table.health_score')}: {h.health_score.toFixed(2)}<br/>
+            {t('channel.table.health_success_rate')}: {(h.success_rate * 100).toFixed(0)}%<br/>
+            {t('channel.table.health_tok_per_sec')}: {h.tok_per_sec > 0 ? h.tok_per_sec.toFixed(1) : '-'}<br/>
+            {t('channel.table.health_ttft')}: {h.avg_ttft_ms > 0 ? `${h.avg_ttft_ms}ms` : '-'}
+          </div>}
+          basic
+        />
+      );
+    }
+    if (h.health_score >= 0.8) {
+      return (
+        <Popup
+          trigger={<Label basic color='green'>{(h.health_score * 100).toFixed(0)}%</Label>}
+          content={<div>
+            {t('channel.table.health_score')}: {h.health_score.toFixed(2)}<br/>
+            {t('channel.table.health_success_rate')}: {(h.success_rate * 100).toFixed(0)}%<br/>
+            {t('channel.table.health_tok_per_sec')}: {h.tok_per_sec > 0 ? h.tok_per_sec.toFixed(1) : '-'} tok/s<br/>
+            {t('channel.table.health_ttft')}: {h.avg_ttft_ms > 0 ? `${h.avg_ttft_ms}ms` : '-'}
+          </div>}
+          basic
+        />
+      );
+    }
+    if (h.health_score >= 0.5) {
+      return (
+        <Popup
+          trigger={<Label basic color='yellow'>{(h.health_score * 100).toFixed(0)}%</Label>}
+          content={<div>
+            {t('channel.table.health_score')}: {h.health_score.toFixed(2)}<br/>
+            {t('channel.table.health_success_rate')}: {(h.success_rate * 100).toFixed(0)}%<br/>
+            {t('channel.table.health_tok_per_sec')}: {h.tok_per_sec > 0 ? h.tok_per_sec.toFixed(1) : '-'} tok/s<br/>
+            {t('channel.table.health_ttft')}: {h.avg_ttft_ms > 0 ? `${h.avg_ttft_ms}ms` : '-'}
+          </div>}
+          basic
+        />
+      );
+    }
+    return (
+      <Popup
+        trigger={<Label basic color='orange'>{(h.health_score * 100).toFixed(0)}%</Label>}
+        content={<div>
+          {t('channel.table.health_score')}: {h.health_score.toFixed(2)}<br/>
+          {t('channel.table.health_success_rate')}: {(h.success_rate * 100).toFixed(0)}%<br/>
+          {t('channel.table.health_tok_per_sec')}: {h.tok_per_sec > 0 ? h.tok_per_sec.toFixed(1) : '-'} tok/s<br/>
+          {t('channel.table.health_ttft')}: {h.avg_ttft_ms > 0 ? `${h.avg_ttft_ms}ms` : '-'}
+        </div>}
+        basic
+      />
+    );
   };
 
   const searchChannels = async () => {
@@ -509,6 +585,15 @@ const ChannelsTable = () => {
             <Table.HeaderCell
               style={{ cursor: 'pointer' }}
               onClick={() => {
+                sortChannel('health');
+              }}
+              hidden={!showDetail}
+            >
+              {t('channel.table.health')}
+            </Table.HeaderCell>
+            <Table.HeaderCell
+              style={{ cursor: 'pointer' }}
+              onClick={() => {
                 sortChannel('priority');
               }}
               hidden={!showDetail}
@@ -566,6 +651,9 @@ const ChannelsTable = () => {
                       content={t('channel.table.click_to_update')}
                       basic
                     />
+                  </Table.Cell>
+                  <Table.Cell hidden={!showDetail}>
+                    {renderHealthBadge(channel.id, t)}
                   </Table.Cell>
                   <Table.Cell hidden={!showDetail}>
                     <Popup
@@ -674,7 +762,7 @@ const ChannelsTable = () => {
 
         <Table.Footer>
           <Table.Row>
-            <Table.HeaderCell colSpan={showDetail ? '10' : '8'}>
+            <Table.HeaderCell colSpan={showDetail ? '11' : '8'}>
               <Button size='tiny' as={Link} to='/channel/add' loading={loading}>
                 {t('channel.buttons.add')}
               </Button>

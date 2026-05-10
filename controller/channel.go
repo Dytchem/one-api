@@ -13,6 +13,7 @@ import (
 	"github.com/songquanpeng/one-api/common/config"
 	"github.com/songquanpeng/one-api/common/helper"
 	"github.com/songquanpeng/one-api/model"
+	"github.com/songquanpeng/one-api/monitor"
 	"github.com/songquanpeng/one-api/relay/channeltype"
 )
 
@@ -454,4 +455,51 @@ func UpdateChannel(c *gin.Context) {
 		"data":    channel,
 	})
 	return
+}
+
+// ChannelHealthResponse 健康度指标响应
+type ChannelHealthResponse struct {
+	ChannelId   int     `json:"channel_id"`
+	Degraded    bool    `json:"degraded"`           // 是否熔断中
+	HealthScore float64 `json:"health_score"`        // 健康度 0.0~1.0
+	SuccessRate float64 `json:"success_rate"`         // 成功率 0.0~1.0
+	TokPerSec   float64 `json:"tok_per_sec"`         // 平均吞吐量 tok/s
+	AvgTTFT     int64   `json:"avg_ttft_ms"`         // 平均首次响应时间 ms
+	RecordCount int     `json:"record_count"`        // 窗口内记录数
+}
+
+// GetChannelHealth 返回所有渠道的健康度指标
+func GetChannelHealth(c *gin.Context) {
+	channels, err := model.GetAllChannels(0, 0, "all", "", "")
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
+
+	healthData := make([]ChannelHealthResponse, 0, len(channels))
+	for _, ch := range channels {
+		resp := ChannelHealthResponse{
+			ChannelId:   ch.Id,
+			Degraded:    monitor.GlobalPerformanceStore.IsDegraded(ch.Id),
+			HealthScore: monitor.GlobalPerformanceStore.GetHealthScore(ch.Id),
+			SuccessRate: monitor.GlobalPerformanceStore.GetRecentSuccessRate(ch.Id),
+			TokPerSec:   monitor.GlobalPerformanceStore.GetChannelSpeed(ch.Id),
+			AvgTTFT:     monitor.GlobalPerformanceStore.GetRecentTTFT(ch.Id),
+		}
+		// 有数据时记录数设为窗口大小（简化处理）
+		count := monitor.GlobalPerformanceStore.GetRecordCount(ch.Id)
+		if count > 0 {
+			resp.RecordCount = count
+		}
+		healthData = append(healthData, resp)
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data":    healthData,
+	})
 }

@@ -63,7 +63,15 @@
       "priority_tip": "渠道选择优先级，越高越优先",
       "select_test_model": "请选择测试模型",
       "click_to_update": "点击更新",
-      "balance_not_supported": "-"
+      "balance_not_supported": "-",
+      "health": "健康",
+      "health_no_data": "暂无",
+      "health_degraded": "熔断",
+      "health_degraded_popup": "渠道已熔断（连续失败过多）",
+      "health_score": "健康度",
+      "health_success_rate": "成功率",
+      "health_tok_per_sec": "速率",
+      "health_ttft": "延迟"
     },
     "buttons": {
       "test": "测试",

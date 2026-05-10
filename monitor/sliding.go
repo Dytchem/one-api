@@ -376,3 +376,16 @@ func (s *PerformanceStore) ResetChannelMetrics(channelId int) {
 		m.degradedSince = 0
 	}
 }
+
+// GetRecordCount 获取滑动窗口当前记录数
+func (s *PerformanceStore) GetRecordCount(channelId int) int {
+	s.mu.RLock()
+	m, ok := s.channels[channelId]
+	s.mu.RUnlock()
+	if !ok || m == nil {
+		return 0
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.count
+}
