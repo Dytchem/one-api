@@ -67,12 +67,12 @@ export default function LogTableRow({ item, userIsAdmin }) {
         <TableCell>{item.prompt_tokens || ''}</TableCell>
         <TableCell>{item.completion_tokens || ''}</TableCell>
         <TableCell>{item.quota ? renderQuota(item.quota, 6) : ''}</TableCell>
-        <TableCell sx={{ verticalAlign: 'top' }}>
+        <TableCell sx={{ verticalAlign: 'top', minWidth: 300 }}>
           <Stack spacing={0.5}>
             <Box sx={{ whiteSpace: 'normal', wordWrap: 'break-word' }}>{item.content}</Box>
             <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
               {item.elapsed_time > 0 && (
-                <Label variant="filled" color={item.type === 2 && item.content.includes('探针确认') ? 'warning' : 'error'}>
+                <Label variant="filled" color={item.type === 2 && item.content && item.content.includes('探测') ? 'warning' : 'error'}>
                   {item.elapsed_time} ms
                 </Label>
               )}
