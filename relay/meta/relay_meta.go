@@ -16,6 +16,7 @@ type Meta struct {
 	Mode         int
 	ChannelType  int
 	ChannelId    int
+	ChannelName  string
 	TokenId      int
 	TokenName    string
 	UserId       int
@@ -42,6 +43,7 @@ func GetByContext(c *gin.Context) *Meta {
 		Mode:               relaymode.GetByPath(c.Request.URL.Path),
 		ChannelType:        c.GetInt(ctxkey.Channel),
 		ChannelId:          c.GetInt(ctxkey.ChannelId),
+		ChannelName:        c.GetString(ctxkey.ChannelName),
 		TokenId:            c.GetInt(ctxkey.TokenId),
 		TokenName:          c.GetString(ctxkey.TokenName),
 		UserId:             c.GetInt(ctxkey.Id),

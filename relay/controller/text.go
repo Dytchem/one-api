@@ -266,12 +266,17 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 		billing.ReturnPreConsumedQuota(ctx, preConsumedQuota, meta.TokenId)
 		return respErr
 	}
+	// 提取非流式回复内容用于日志
+	responseSnippet := ""
+	if rt, ok := c.Get("response_content"); ok {
+		responseSnippet, _ = rt.(string)
+	}
 	if usage != nil && usage.CompletionTokens == 0 {
 		logger.Warnf(ctx, "empty response detected (completion_tokens=0), triggering fallback")
 		billing.ReturnPreConsumedQuota(ctx, preConsumedQuota, meta.TokenId)
 		return openai.ErrorWrapper(fmt.Errorf("empty response from channel"), "empty_response", http.StatusBadGateway)
 	}
-	go postConsumeQuota(ctx, usage, meta, textRequest, ratio, preConsumedQuota, modelRatio, groupRatio, systemPromptReset, "")
+	go postConsumeQuota(ctx, usage, meta, textRequest, ratio, preConsumedQuota, modelRatio, groupRatio, systemPromptReset, responseSnippet)
 	return nil
 }
 

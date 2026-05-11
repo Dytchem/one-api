@@ -175,6 +175,19 @@ func Handler(c *gin.Context, resp *http.Response, promptTokens int, modelName st
 			StatusCode: resp.StatusCode,
 		}, nil
 	}
+
+	// 捕获非流式回复内容用于日志
+	if len(textResponse.Choices) > 0 {
+		replyText := strings.TrimSpace(textResponse.Choices[0].Message.StringContent())
+		if len(replyText) > 0 {
+			runes := []rune(replyText)
+			if len(runes) > 30 {
+				replyText = string(runes[:30]) + "…"
+			}
+			c.Set("response_content", replyText)
+		}
+	}
+
 	// Reset response body
 	resp.Body = io.NopCloser(bytes.NewBuffer(responseBody))
 	// We shouldn't set the header before we parse the response body, because the parse part may fail.
