@@ -126,23 +126,6 @@ func testChannel(ctx context.Context, channel *model.Channel, request *relaymode
 			logContent = fmt.Sprintf("测试完成，请求模型：%s/%s，回复内容：失败 | %s", channel.Name, modelName, errMsg)
 		}
 
-		// 先记录探测日志（非消费类型，不走配额）
-		probeContent := fmt.Sprintf("探测成功，请求模型：%s/%s，请求内容：测试请求", channel.Name, modelName)
-		if err != nil || openaiErr != nil {
-			probeContent = fmt.Sprintf("探测失败，请求模型：%s/%s，请求内容：测试请求", channel.Name, modelName)
-		}
-		// 使用消费日志类型（Type 2），quota=0 不扣费
-		go model.RecordConsumeLog(ctx, &model.Log{
-			UserId:      0,
-			ChannelId:   channel.Id,
-			ModelName:   modelName,
-			TokenName:   "",
-			Content:     probeContent,
-			Quota:       0,
-			ElapsedTime: elapsedMs,
-			IsStream:    false,
-		})
-
 		// 记录测试日志（Type 5），与消费日志相同丰富度
 		go model.RecordTestLog(ctx, &model.Log{
 			UserId:          0,
