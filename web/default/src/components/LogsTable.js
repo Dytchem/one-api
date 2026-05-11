@@ -75,6 +75,13 @@ function renderType(log) {
       </Label>
     );
   }
+  if (content.startsWith('回复完成')) {
+    return (
+      <Label basic color='orange'>
+        完成
+      </Label>
+    );
+  }
   if (type === 2) {
     // 消费日志
     return (
@@ -108,15 +115,11 @@ function processContent(content, type, log) {
 }
 
 function renderDetail(log) {
-  const maxContentLen = 30;
   const raw = log.content || '';
   const processed = processContent(raw, log.type, log);
-  const display = processed.length > maxContentLen
-    ? processed.slice(0, maxContentLen - 3) + '...'
-    : processed;
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-      {display ? (
+      {processed ? (
         <span
           style={{
             wordBreak: 'break-word',
@@ -125,7 +128,7 @@ function renderDetail(log) {
           }}
           title={processed}
         >
-          {display}
+          {processed}
         </span>
       ) : <span style={{ color: 'lightgray' }}>—</span>}
       <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>

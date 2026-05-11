@@ -122,25 +122,12 @@ code {
   table-layout: fixed;
 }
 
-/* 日志详情列紧凑（最多4行，不撑高整行） */
+/* 日志详情列：不截断，标签自适应高度 */
 .ui.table.logs-table td:last-child {
-  display: -webkit-box;
-  -webkit-line-clamp: 4;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
   word-break: break-word;
   line-height: 1.4;
   padding-top: 4px;
   padding-bottom: 4px;
-  max-height: 6em;
-}
-
-/* 移动端详情列缩为2行 */
-@media screen and (max-width: 768px) {
-  .ui.table.logs-table td:last-child {
-    -webkit-line-clamp: 2;
-    max-height: 3.5em;
-  }
 }
 
 /* 防止 Label 组件换行导致行高变化 */
