@@ -75,6 +75,13 @@ function renderType(log) {
       </Label>
     );
   }
+  if (content.startsWith('回复完成')) {
+    return (
+      <Label basic color='orange'>
+        完成
+      </Label>
+    );
+  }
   if (type === 2) {
     // 消费日志
     return (
