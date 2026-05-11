@@ -115,7 +115,7 @@ func testChannel(ctx context.Context, channel *model.Channel, request *relaymode
 	defer func() {
 		elapsedMs := helper.CalcElapsedTime(startTime)
 		// 构建日志内容（类似消费日志格式）
-		logContent := fmt.Sprintf("渠道测试 - %s (#%d), 模型: %s, 用时: %dms", channel.Name, channel.Id, modelName, elapsedMs)
+		logContent := fmt.Sprintf("测试完成，请求模型：%s/%s，回复内容：测试通过", channel.Name, modelName)
 		if err != nil || openaiErr != nil {
 			errMsg := ""
 			if err != nil {
@@ -123,7 +123,7 @@ func testChannel(ctx context.Context, channel *model.Channel, request *relaymode
 			} else {
 				errMsg = openaiErr.Message
 			}
-			logContent = fmt.Sprintf("渠道测试 - %s (#%d), 模型: %s, 失败: %s, 用时: %dms", channel.Name, channel.Id, modelName, errMsg, elapsedMs)
+			logContent = fmt.Sprintf("测试完成，请求模型：%s/%s，回复内容：失败 | %s", channel.Name, modelName, errMsg)
 		}
 
 		// 记录测试日志（Type 5），与消费日志相同丰富度

@@ -6,23 +6,33 @@ import { timestamp2string, renderQuota } from 'utils/common';
 import Label from 'ui-component/Label';
 import LogType from '../type/LogType';
 
-function renderType(type) {
-  const typeOption = LogType[type];
-  if (typeOption) {
+function renderType(type, content) {
+  // Type=5 always shows 测试
+  if (type === 5) {
     return (
-      <Label variant="filled" color={typeOption.color}>
-        {' '}
-        {typeOption.text}{' '}
-      </Label>
-    );
-  } else {
-    return (
-      <Label variant="filled" color="error">
-        {' '}
-        未知{' '}
+      <Label variant="filled" color="secondary">
+        {' '}测试{' '}
       </Label>
     );
   }
+  // Type=2: 按 content 前缀区分
+  if (type === 2 && content) {
+    if (content.startsWith('探测成功')) {
+      return <Label variant="filled" color="success">{' '}成功{' '}</Label>;
+    }
+    if (content.startsWith('探测失败')) {
+      return <Label variant="filled" color="error">{' '}失败{' '}</Label>;
+    }
+    if (content.startsWith('回复完成')) {
+      return <Label variant="filled" color="orange">{' '}完成{' '}</Label>;
+    }
+  }
+  // fallback
+  return (
+    <Label variant="filled" color="default">
+      {' '}{type}{' '}
+    </Label>
+  );
 }
 
 export default function LogTableRow({ item, userIsAdmin }) {
@@ -46,7 +56,7 @@ export default function LogTableRow({ item, userIsAdmin }) {
             </Label>
           )}
         </TableCell>
-        <TableCell>{renderType(item.type)}</TableCell>
+        <TableCell>{renderType(item.type, item.content)}</TableCell>
         <TableCell>
           {item.model_name && (
             <Label color="primary" variant="outlined">
