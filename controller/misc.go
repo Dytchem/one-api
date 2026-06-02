@@ -9,6 +9,7 @@ import (
 	"github.com/songquanpeng/one-api/common"
 	"github.com/songquanpeng/one-api/common/config"
 	"github.com/songquanpeng/one-api/common/i18n"
+	"github.com/songquanpeng/one-api/common/logger"
 	"github.com/songquanpeng/one-api/common/message"
 	"github.com/songquanpeng/one-api/model"
 
@@ -151,38 +152,31 @@ func SendPasswordResetEmail(c *gin.Context) {
 		})
 		return
 	}
-	if !model.IsEmailAlreadyTaken(email) {
-		c.JSON(http.StatusOK, gin.H{
-			"success": false,
-			"message": "该邮箱地址未注册",
-		})
-		return
-	}
-	code := common.GenerateVerificationCode(0)
-	common.RegisterVerificationCodeWithKey(email, code, common.PasswordResetPurpose)
-	link := fmt.Sprintf("%s/user/reset?email=%s&token=%s", config.ServerAddress, email, code)
-	subject := fmt.Sprintf("%s 密码重置", config.SystemName)
-	content := message.EmailTemplate(
-		subject,
-		fmt.Sprintf(`
-			<p>您好！</p>
-			<p>您正在进行 %s 密码重置。</p>
-			<p>请点击下面的按钮进行密码重置：</p>
-			<p style="text-align: center; margin: 30px 0;">
-				<a href="%s" style="background-color: #007bff; color: white; padding: 12px 24px; text-decoration: none; border-radius: 4px; display: inline-block;">重置密码</a>
-			</p>
-			<p style="color: #666;">如果按钮无法点击，请复制以下链接到浏览器中打开：</p>
-			<p style="background-color: #f8f8f8; padding: 10px; border-radius: 4px; word-break: break-all;">%s</p>
-			<p style="color: #666;">重置链接 %d 分钟内有效，如果不是本人操作，请忽略。</p>
-		`, config.SystemName, link, link, common.VerificationValidMinutes),
-	)
-	err := message.SendEmail(subject, email, content)
-	if err != nil {
-		c.JSON(http.StatusOK, gin.H{
-			"success": false,
-			"message": fmt.Sprintf("%s%s", i18n.Translate(c, "send_email_failed"), err.Error()),
-		})
-		return
+	// dyt-34: 防止邮箱 oracle —— 不论邮箱是否注册都返回相同响应
+	// 真实存在才发邮件，不存在静默成功
+	if model.IsEmailAlreadyTaken(email) {
+		code := common.GenerateVerificationCode(0)
+		common.RegisterVerificationCodeWithKey(email, code, common.PasswordResetPurpose)
+		link := fmt.Sprintf("%s/user/reset?email=%s&token=%s", config.ServerAddress, email, code)
+		subject := fmt.Sprintf("%s 密码重置", config.SystemName)
+		content := message.EmailTemplate(
+			subject,
+			fmt.Sprintf(`
+				<p>您好！</p>
+				<p>您正在进行 %s 密码重置。</p>
+				<p>请点击下面的按钮进行密码重置：</p>
+				<p style="text-align: center; margin: 30px 0;">
+					<a href="%s" style="background-color: #007bff; color: white; padding: 12px 24px; text-decoration: none; border-radius: 4px; display: inline-block;">重置密码</a>
+				</p>
+				<p style="color: #666;">如果按钮无法点击，请复制以下链接到浏览器中打开：</p>
+				<p style="background-color: #f8f8f8; padding: 10px; border-radius: 4px; word-break: break-all;">%s</p>
+				<p style="color: #666;">重置链接 %d 分钟内有效，如果不是本人操作，请忽略。</p>
+			`, config.SystemName, link, link, common.VerificationValidMinutes),
+		)
+		err := message.SendEmail(subject, email, content)
+		if err != nil {
+			logger.SysError("failed to send password reset email: " + err.Error())
+		}
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,

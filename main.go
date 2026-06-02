@@ -3,6 +3,7 @@ package main
 import (
 	"embed"
 	"fmt"
+	"net/http"
 	"os"
 	"strconv"
 
@@ -108,7 +109,20 @@ func main() {
 	server.Use(middleware.Language())
 	middleware.SetUpLogger(server)
 	// Initialize session store
+	// dyt-34: 显式设置 cookie 安全选项
+	// - HttpOnly=true 防止 XSS 窃取 session
+	// - SameSite=Lax 防 CSRF（兼容跨页跳转但阻止第三方站发 cookie）
+	// - MaxAge=7 天，避免仅 session cookie（重启浏览器失效）
+	// - Secure 默认 false（主人用 HTTP）；HTTPS 反代场景主人可设 SESSION_COOKIE_SECURE=true
 	store := cookie.NewStore([]byte(config.SessionSecret))
+	cookieSecure := os.Getenv("SESSION_COOKIE_SECURE") == "true"
+	store.Options(sessions.Options{
+		Path:     "/",
+		MaxAge:   7 * 24 * 60 * 60, // 7 天
+		HttpOnly: true,
+		Secure:   cookieSecure,
+		SameSite: http.SameSiteLaxMode,
+	})
 	server.Use(sessions.Sessions("session", store))
 
 	router.SetRouter(server, buildFS)
