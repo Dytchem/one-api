@@ -166,6 +166,14 @@ func migrateDB() error {
 func InitLogDB() {
 	if os.Getenv("LOG_SQL_DSN") == "" {
 		LOG_DB = DB
+		// dyt-20: 即使 LOG_SQL_DSN 未设，LOG_DB 与主库共享，仍需迁移 payload 表
+		if config.IsMasterNode {
+			logger.SysLog("payload table migration started (shared DB)")
+			if err := migrateLOGDB(); err != nil {
+				logger.FatalLog("failed to migrate payload table: " + err.Error())
+				return
+			}
+		}
 		return
 	}
 
