@@ -114,6 +114,32 @@ dyt-28 代码改动 = 0，纯依赖版本号升级，零回归风险。
 
 dyt-29 代码改动 = 0（仅 Dockerfile），运行时改为可复现的已知安全版本。
 
+### 库升级（dyt-30）
+
+| 改进 | 说明 |
+|------|------|
+| golang-jwt v3 → v5.3.1 | v3 已 EOL，v5 API 兼容（只改 import path 1 行）|
+| marked ^4.1.1 → ^4.3.0 | 修 GHSA-rrrm-qjm4-v8hf ReDoS；保守升 v4.x 末版，零 API 变化 |
+
+dyt-30 代码改动 = 1 行（zhipu adaptor 的 import path），零回归风险。
+
+---
+
+## 🛡️ 安全修复总览（dyt-27 ~ dyt-30）
+
+| ID | 严重度 | 修复 | dyt |
+|----|--------|------|-----|
+| S1 | 🔴 高 | CORS 拆除 `AllowAllOrigins+AllowCredentials` | dyt-27 |
+| S2 | 🔴 高 | SMTP TLS 移除 `InsecureSkipVerify` | dyt-27 |
+| S3 | 🔴 高 | `math/rand` → `crypto/rand` | dyt-27 |
+| S4 | 🟠 中 | bytedance/sonic 1.11.6 → 1.12.5（修 GHSA-8633-2w75-77qx）| dyt-28 |
+| S5 | 🟠 中 | golang-jwt v3 EOL → v5.3.1 | dyt-30 |
+| S6 | 🟠 中 | Go 1.20 EOL → 1.22 | dyt-28 |
+| S7 | 🟠 中 | Dockerfile pin base image（node:20-alpine, golang:1.22-alpine3.20, alpine:3.20）| dyt-29 |
+| S8 | 🟡 低 | marked ReDoS（GHSA-rrrm-qjm4-v8hf） | dyt-30 |
+
+**所有 8 个安全问题已修复**。4 个 dyt tag，累计代码改动 ~10 行，**0 业务行为变化**。
+
 完整变更记录 → [GitHub Releases](https://github.com/Dytchem/one-api/releases)
 
 ## 快速部署
