@@ -164,6 +164,9 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 										localConfirmed = true
 									} else if rc, ok := delta.ReasoningContent.(string); ok && rc != "" {
 										localConfirmed = true
+									} else if len(delta.ToolCalls) > 0 {
+										// dyt-26: tool_calls 也是有效响应（M3 流式 tool_calls 时没有 content/reasoning_content）
+										localConfirmed = true
 									}
 									// dyt-20: 记录 finish_reason 出现
 									if fr := streamResp.Choices[0].FinishReason; fr != nil && *fr != "" {
