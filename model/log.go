@@ -3,6 +3,7 @@ package model
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"gorm.io/gorm"
 
@@ -111,15 +112,26 @@ func RecordConsumeLogWithId(ctx context.Context, log *Log) int64 {
 	return recordLogHelperWithId(ctx, log)
 }
 
-// RecordChannelAttemptLog 记录渠道尝试日志（包括成功和失败的 fallback）
-func RecordChannelAttemptLog(ctx context.Context, userId int, channelId int, channelName string, modelName string, success bool, errorMessage string) {
+// RecordChannelAttemptLog dyt-22: 记录渠道尝试日志（去重 empty_response，模型显示 jarvis→MiniMax-M3）
+func RecordChannelAttemptLog(ctx context.Context, userId int, channelId int, channelName string, modelName string, actualModel string, success bool, errorMessage string) {
+	// dyt-22: 去重 — 探测失败已由 type=2 日志记录，跳过重复的 type=4
+	if !success && (strings.Contains(errorMessage, "empty_response") || strings.Contains(errorMessage, "empty response")) {
+		return
+	}
+
+	// dyt-22: 模型映射显示
+	modelDisplay := modelName
+	if actualModel != "" && actualModel != modelName {
+		modelDisplay = fmt.Sprintf("%s→%s", modelName, actualModel)
+	}
+
 	log := &Log{
 		UserId:    userId,
 		Username:  GetUsernameById(userId),
 		CreatedAt: helper.GetTimestamp(),
 		Type:      LogTypeSystem,
 		Content:   fmt.Sprintf("渠道尝试 - 渠道: %s (#%d), 模型: %s, 状态: %s, 错误: %s",
-			channelName, channelId, modelName,
+			channelName, channelId, modelDisplay,
 			map[bool]string{true: "成功", false: "失败"}[success],
 			errorMessage),
 		Quota: 0,

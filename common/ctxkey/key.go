@@ -12,6 +12,7 @@ const (
 	RequestModel      = "request_model"
 	ConvertedRequest  = "converted_request"
 	OriginalModel     = "original_model"
+	ActualModel      = "actual_model" // dyt-22: 映射后的渠道真实模型名
 	Group             = "group"
 	ModelMapping      = "model_mapping"
 	ChannelName       = "channel_name"

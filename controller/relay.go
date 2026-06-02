@@ -61,7 +61,8 @@ func Relay(c *gin.Context) {
 		return
 	}
 	// 记录首次请求失败的日志
-	dbmodel.RecordChannelAttemptLog(ctx, userId, channelId, channelName, originalModel, false, bizErr.Error.Message)
+	actualModel := c.GetString(ctxkey.ActualModel)
+	dbmodel.RecordChannelAttemptLog(ctx, userId, channelId, channelName, originalModel, actualModel, false, bizErr.Error.Message)
 	failedChannelIds := map[int]bool{channelId: true}
 	group := c.GetString(ctxkey.Group)
 	go processChannelRelayError(ctx, userId, channelId, channelName, *bizErr)
@@ -105,7 +106,8 @@ func Relay(c *gin.Context) {
 		retryChannelId := c.GetInt(ctxkey.ChannelId)
 		retryChannelName := c.GetString(ctxkey.ChannelName)
 		// 记录重试失败的日志
-		dbmodel.RecordChannelAttemptLog(ctx, userId, retryChannelId, retryChannelName, originalModel, false, bizErr.Error.Message)
+		retryActualModel := c.GetString(ctxkey.ActualModel)
+		dbmodel.RecordChannelAttemptLog(ctx, userId, retryChannelId, retryChannelName, originalModel, retryActualModel, false, bizErr.Error.Message)
 		failedChannelIds[retryChannelId] = true
 		go processChannelRelayError(ctx, userId, retryChannelId, retryChannelName, *bizErr)
 	}

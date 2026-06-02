@@ -52,6 +52,7 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 	}
 	textRequest.Model, _ = getMappedModelName(textRequest.Model, meta.ModelMapping)
 	meta.ActualModelName = textRequest.Model
+	c.Set(ctxkey.ActualModel, meta.ActualModelName) // dyt-22: 供 relay.go 使用
 	systemPromptReset := setSystemPrompt(ctx, textRequest, meta.ForcedSystemPrompt)
 	modelRatio := billingratio.GetModelRatio(textRequest.Model, meta.ChannelType)
 	groupRatio := billingratio.GetGroupRatio(meta.Group)
@@ -186,9 +187,9 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 							probeTTFT := helper.CalcElapsedTime(meta.StartTime)
 							probeLogContent := getRequestPreview(textRequest)
 							if probeLogContent != "" {
-								probeLogContent = fmt.Sprintf("探测成功，请求模型：%s/%s，请求内容：%s", chName, meta.ActualModelName, probeLogContent)
+								probeLogContent = fmt.Sprintf("探测成功，渠道：%s(#%d)，模型：%s→%s，请求内容：%s", chName, chId, meta.OriginModelName, meta.ActualModelName, probeLogContent)
 							} else {
-								probeLogContent = fmt.Sprintf("探测成功，请求模型：%s/%s，%s | %dms", chName, meta.ActualModelName, chName, probeTTFT)
+								probeLogContent = fmt.Sprintf("探测成功，渠道：%s(#%d)，模型：%s→%s，%s | %dms", chName, chId, meta.OriginModelName, meta.ActualModelName, chName, probeTTFT)
 							}
 							dbmodel.RecordConsumeLog(ctx, &dbmodel.Log{
 								UserId:            meta.UserId,
@@ -298,9 +299,9 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 					chId := c.GetInt(ctxkey.ChannelId)
 					probeFailLogContent := getRequestPreview(textRequest)
 					if probeFailLogContent != "" {
-						probeFailLogContent = fmt.Sprintf("探测失败，请求模型：%s/%s，请求内容：%s | 上游：%s", chName, meta.ActualModelName, probeFailLogContent, combinedReason)
+						probeFailLogContent = fmt.Sprintf("探测失败，渠道：%s(#%d)，模型：%s→%s，请求内容：%s | 上游：%s", chName, chId, meta.OriginModelName, meta.ActualModelName, probeFailLogContent, combinedReason)
 					} else {
-						probeFailLogContent = fmt.Sprintf("探测失败，请求模型：%s/%s，%s | 空响应 | 上游：%s", chName, meta.ActualModelName, chName, combinedReason)
+						probeFailLogContent = fmt.Sprintf("探测失败，渠道：%s(#%d)，模型：%s→%s，%s | 空响应 | 上游：%s", chName, chId, meta.OriginModelName, meta.ActualModelName, chName, combinedReason)
 					}
 					failLogId := dbmodel.RecordConsumeLogWithId(ctx, &dbmodel.Log{
 						UserId:            meta.UserId,
@@ -382,7 +383,7 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 		// dyt-20: 记录非流式空响应日志 + payload
 		chName := c.GetString(ctxkey.ChannelName)
 		chId := c.GetInt(ctxkey.ChannelId)
-		failLogContent := fmt.Sprintf("回复为空，请求模型：%s/%s，completion_tokens=0", chName, meta.ActualModelName)
+		failLogContent := fmt.Sprintf("回复为空，渠道：%s(#%d)，模型：%s→%s，completion_tokens=0", chName, chId, meta.OriginModelName, meta.ActualModelName)
 		failLogId := dbmodel.RecordConsumeLogWithId(ctx, &dbmodel.Log{
 			UserId:            meta.UserId,
 			TokenName:         meta.TokenName,
