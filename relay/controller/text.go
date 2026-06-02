@@ -78,48 +78,77 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 		// Get probe request body
 		probeRequestBody, err := getRequestBody(c, meta, probeRequest, adaptor)
 		if err == nil {
-			// Do probe request with streaming
-			probeResp, probeErr := adaptor.DoRequest(c, meta, probeRequestBody)
-			if probeErr == nil && probeResp != nil && probeResp.StatusCode/100 == 2 {
-				// Buffer until first content token, then replay + passthrough
-				var buf bytes.Buffer
-				scanner := bufio.NewScanner(probeResp.Body)
-				scanner.Split(bufio.ScanLines)
-				var probeUsage *model.Usage
-				confirmed := false
-				var responseSnippet string
+			// 改进2：探测 empty response 时同渠道重试 1 次
+			// 抽成闭包便于复用
+			doProbe := func(retryLabel string) (success bool, probeUsage *model.Usage, responseSnippet string, buf *bytes.Buffer, scanner *bufio.Scanner, statusCode int, errReason string) {
+				resp, doErr := adaptor.DoRequest(c, meta, probeRequestBody)
+				if doErr != nil || resp == nil || resp.StatusCode/100 != 2 {
+					code := 0
+					if resp != nil {
+						code = resp.StatusCode
+					}
+					if doErr != nil {
+						return false, nil, "", nil, nil, code, "请求错误: " + doErr.Error()
+					}
+					return false, nil, "", nil, nil, code, fmt.Sprintf("HTTP %d 非 2xx", code)
+				}
+				defer resp.Body.Close()
 
-				for scanner.Scan() {
-					data := scanner.Text()
+				var localBuf bytes.Buffer
+				localBuf.Grow(4096)
+				localScanner := bufio.NewScanner(resp.Body)
+				localScanner.Split(bufio.ScanLines)
+				var localUsage *model.Usage
+				localConfirmed := false
+				var localSnippet string
 
-					if !confirmed {
+				// 改进1：追踪上游返回细节
+				lineCount := 0
+				bytesRead := 0
+				sawDone := false
+				lastLine := ""
+
+				for localScanner.Scan() {
+					data := localScanner.Text()
+					lineCount++
+					bytesRead += len(data)
+					if len(data) > 0 {
+						lastLine = data
+					}
+
+					if !localConfirmed {
 						// Probe phase: write to buffer, check for first content
-						buf.WriteString(data)
-						buf.WriteString("\n")
+						localBuf.WriteString(data)
+						localBuf.WriteString("\n")
 
 						// Check for first meaningful content token
 						if len(data) > 6 && data[:6] == "data: " {
-							var streamResp openai.ChatCompletionsStreamResponse
-							if err := json.Unmarshal([]byte(data[6:]), &streamResp); err == nil {
-								// Content detected via delta.content or reasoning_content
-								if len(streamResp.Choices) > 0 {
-									delta := &streamResp.Choices[0].Delta
-									if content, ok := delta.Content.(string); ok && content != "" {
-										confirmed = true
-									} else if rc, ok := delta.ReasoningContent.(string); ok && rc != "" {
-										confirmed = true
+							// 检测 [DONE] 哨兵
+							if data == "data: [DONE]" || data == "data:[DONE]" {
+								sawDone = true
+							} else {
+								var streamResp openai.ChatCompletionsStreamResponse
+								if jsonErr := json.Unmarshal([]byte(data[6:]), &streamResp); jsonErr == nil {
+									// Content detected via delta.content or reasoning_content
+									if len(streamResp.Choices) > 0 {
+										delta := &streamResp.Choices[0].Delta
+										if content, ok := delta.Content.(string); ok && content != "" {
+											localConfirmed = true
+										} else if rc, ok := delta.ReasoningContent.(string); ok && rc != "" {
+											localConfirmed = true
+										}
 									}
-								}
-								// Also capture usage whenever available
-								if streamResp.Usage != nil {
-									probeUsage = streamResp.Usage
+									// Also capture usage whenever available
+									if streamResp.Usage != nil {
+										localUsage = streamResp.Usage
+									}
 								}
 							}
 						}
 
-						if confirmed {
+						if localConfirmed {
 							// First content token found: set headers, replay buffer, then passthrough
-							logger.Infof(ctx, "stream confirmed with first content token, replaying %d buffered bytes", buf.Len())
+							logger.Infof(ctx, "stream confirmed with first content token (retry=%s), replaying %d buffered bytes", retryLabel, localBuf.Len())
 
 							// Write probe confirm log immediately for visibility
 							chName := c.GetString(ctxkey.ChannelName)
@@ -156,7 +185,7 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 
 							common.SetEventStreamHeaders(c)
 
-							bufReader := bytes.NewReader(buf.Bytes())
+							bufReader := bytes.NewReader(localBuf.Bytes())
 							lineScanner := bufio.NewScanner(bufReader)
 							lineScanner.Split(bufio.ScanLines)
 							for lineScanner.Scan() {
@@ -165,7 +194,7 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 									render.StringData(c, line)
 								}
 							}
-							buf.Reset()
+							localBuf.Reset()
 						}
 					} else {
 						// Passthrough mode: forward directly
@@ -174,44 +203,65 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 						}
 
 						// Accumulate response content snippet from passthrough
-						if responseSnippet == "" && len(data) > 6 && data[:6] == "data: " {
+						if localSnippet == "" && len(data) > 6 && data[:6] == "data: " && data != "data: [DONE]" {
 							var streamResp openai.ChatCompletionsStreamResponse
 							if json.Unmarshal([]byte(data[6:]), &streamResp) == nil && len(streamResp.Choices) > 0 {
 								delta := &streamResp.Choices[0].Delta
 								if c, ok := delta.Content.(string); ok && c != "" {
 									runes := []rune(c)
 									if len(runes) > 30 {
-										responseSnippet = string(runes[:30]) + "…"
+										localSnippet = string(runes[:30]) + "…"
 									} else {
-										responseSnippet = c
+										localSnippet = c
 									}
 								}
 							}
 						}
 
 						// Still extract usage from passthrough
-						if len(data) > 6 && data[:6] == "data: " {
+						if len(data) > 6 && data[:6] == "data: " && data != "data: [DONE]" {
 							var streamResp openai.ChatCompletionsStreamResponse
 							if json.Unmarshal([]byte(data[6:]), &streamResp) == nil && streamResp.Usage != nil {
-								probeUsage = streamResp.Usage
+								localUsage = streamResp.Usage
 							}
 						}
 					}
 				}
-				probeResp.Body.Close()
 
-				if !confirmed {
-					// Stream ended without any content → empty response, trigger fallback
-					logger.Warnf(ctx, "stream probe returned empty response (no content token found), triggering fallback")
+				if !localConfirmed {
+					// Stream ended without any content → 改进1：记录详细原因
+					reason := classifyEmptyResponse(lineCount, bytesRead, sawDone, lastLine, resp.StatusCode)
+					return false, nil, "", nil, nil, resp.StatusCode, reason
+				}
 
-					// Write probe failure log
+				return true, localUsage, localSnippet, &localBuf, localScanner, resp.StatusCode, ""
+			}
+
+			// 改进2：第一次探测
+			success, probeUsage, responseSnippet, _, _, _, errReason := doProbe("first")
+			if !success {
+				logger.Warnf(ctx, "stream probe returned empty response on first try: %s, retrying once on same channel", errReason)
+
+				// 第二次（重试）
+				success, probeUsage2, responseSnippet2, _, _, _, errReason2 := doProbe("retry-1")
+				if !success {
+					// 两次都空 → 记录失败日志，触发 fallback
+					combinedReason := errReason
+					if errReason2 != "" && errReason2 != errReason {
+						combinedReason = errReason + "；重试1次仍空: " + errReason2
+					} else if errReason2 != "" {
+						combinedReason = errReason + "；重试1次仍空"
+					}
+
+					logger.Warnf(ctx, "stream probe returned empty response after retry: %s, triggering fallback", combinedReason)
+
 					chName := c.GetString(ctxkey.ChannelName)
 					chId := c.GetInt(ctxkey.ChannelId)
 					probeFailLogContent := getRequestPreview(textRequest)
 					if probeFailLogContent != "" {
-						probeFailLogContent = fmt.Sprintf("探测失败，请求模型：%s/%s，请求内容：%s", chName, meta.ActualModelName, probeFailLogContent)
+						probeFailLogContent = fmt.Sprintf("探测失败，请求模型：%s/%s，请求内容：%s | 上游：%s", chName, meta.ActualModelName, probeFailLogContent, combinedReason)
 					} else {
-						probeFailLogContent = fmt.Sprintf("探测失败，请求模型：%s/%s，%s | 空响应", chName, meta.ActualModelName, chName)
+						probeFailLogContent = fmt.Sprintf("探测失败，请求模型：%s/%s，%s | 空响应 | 上游：%s", chName, meta.ActualModelName, chName, combinedReason)
 					}
 					dbmodel.RecordConsumeLog(ctx, &dbmodel.Log{
 						UserId:            meta.UserId,
@@ -228,17 +278,19 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 					})
 
 					billing.ReturnPreConsumedQuota(ctx, preConsumedQuota, meta.TokenId)
-					return openai.ErrorWrapper(fmt.Errorf("empty response from channel during probe"), "empty_response", http.StatusBadGateway)
+					return openai.ErrorWrapper(fmt.Errorf("empty response from channel during probe: %s", combinedReason), "empty_response", http.StatusBadGateway)
 				}
 
-				logger.Infof(ctx, "stream finished with passthrough, usage: %+v", probeUsage)
-				render.Done(c)
-
-				go postConsumeQuota(ctx, probeUsage, meta, textRequest, ratio, preConsumedQuota, modelRatio, groupRatio, systemPromptReset, responseSnippet)
-				return nil
-			} else {
-				logger.Warnf(ctx, "stream probe request failed: %v", probeErr)
+				logger.Infof(ctx, "stream probe succeeded on retry-1 after first empty response")
+				probeUsage = probeUsage2
+				responseSnippet = responseSnippet2
 			}
+
+			logger.Infof(ctx, "stream finished with passthrough, usage: %+v", probeUsage)
+			render.Done(c)
+
+			go postConsumeQuota(ctx, probeUsage, meta, textRequest, ratio, preConsumedQuota, modelRatio, groupRatio, systemPromptReset, responseSnippet)
+			return nil
 		} else {
 			logger.Warnf(ctx, "probe request body failed: %s", err.Error())
 		}
@@ -303,4 +355,21 @@ func getRequestBody(c *gin.Context, meta *meta.Meta, textRequest *model.GeneralO
 	logger.Debugf(c.Request.Context(), "converted request: \n%s", string(jsonData))
 	requestBody = bytes.NewBuffer(jsonData)
 	return requestBody, nil
+}
+
+// classifyEmptyResponse 改进1：根据上游响应特征生成可读原因
+// 用于探测失败日志和 empty_response 错误信息
+func classifyEmptyResponse(lineCount, bytesRead int, sawDone bool, lastLine string, statusCode int) string {
+	if lineCount == 0 {
+		return fmt.Sprintf("空body (HTTP %d, 0字节)", statusCode)
+	}
+	if sawDone {
+		return fmt.Sprintf("[DONE]空流 (HTTP %d, %d行/%d字节, 无content token)", statusCode, lineCount, bytesRead)
+	}
+	// 截断 lastLine 到 60 字节
+	preview := lastLine
+	if len(preview) > 60 {
+		preview = preview[:60] + "…"
+	}
+	return fmt.Sprintf("连接断/异常结束 (HTTP %d, %d行/%d字节, 末行: %q)", statusCode, lineCount, bytesRead, preview)
 }
