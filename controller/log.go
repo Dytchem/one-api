@@ -173,3 +173,76 @@ func DeleteHistoryLogs(c *gin.Context) {
 	})
 	return
 }
+
+// GetFailLogs dyt-20: 失败日志分页列表（失败定义：content含"失败"或"错误"或"empty"）
+func GetFailLogs(c *gin.Context) {
+	p, _ := strconv.Atoi(c.Query("p"))
+	if p < 0 {
+		p = 0
+	}
+	size := config.ItemsPerPage
+	if s := c.Query("size"); s != "" {
+		if parsedSize, err := strconv.Atoi(s); err == nil && parsedSize > 0 {
+			size = parsedSize
+		}
+	}
+	channel, _ := strconv.Atoi(c.Query("channel"))
+	modelName := c.Query("model_name")
+	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
+	endTimestamp, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
+
+	logs, total, err := model.GetFailLogs(channel, modelName, startTimestamp, endTimestamp, p*size, size)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": err.Error()})
+		return
+	}
+
+	items := make([]gin.H, 0, len(logs))
+	for _, log := range logs {
+		items = append(items, gin.H{
+			"id":          log.Id,
+			"time":        log.CreatedAt,
+			"channel_id":  log.ChannelId,
+			"model_name":  log.ModelName,
+			"content":     log.Content,
+			"prompt_tokens": log.PromptTokens,
+			"has_payload": model.LogHasPayload(int64(log.Id)),
+		})
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data": gin.H{
+			"total": total,
+			"items": items,
+		},
+	})
+}
+
+// GetFailLogPayload dyt-20: 单条失败日志详情（含完整 payload）
+func GetFailLogPayload(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "invalid id"})
+		return
+	}
+
+	payload, err := model.GetLogPayload(id)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": "payload not found or " + err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data": gin.H{
+			"log_id":  payload.LogId,
+			"request":  payload.Request,
+			"response": payload.Response,
+			"error":    payload.Error,
+			"created_at": payload.CreatedAt,
+		},
+	})
+}

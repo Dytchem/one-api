@@ -24,6 +24,7 @@ import EditRedemption from './pages/Redemption/EditRedemption';
 import TopUp from './pages/TopUp';
 import Log from './pages/Log';
 import Chat from './pages/Chat';
+import FailLog from './pages/FailLog';
 import LarkOAuth from './components/LarkOAuth';
 import Dashboard from './pages/Dashboard';
 
@@ -279,6 +280,14 @@ function App() {
         element={
           <PrivateRoute>
             <Log />
+          </PrivateRoute>
+        }
+      />
+      <Route
+        path='/fail-logs'
+        element={
+          <PrivateRoute>
+            <FailLog />
           </PrivateRoute>
         }
       />

@@ -115,6 +115,9 @@ func SetApiRouter(router *gin.Engine) {
 		logRoute.GET("/search", middleware.AdminAuth(), controller.SearchAllLogs)
 		logRoute.GET("/self", middleware.UserAuth(), controller.GetUserLogs)
 		logRoute.GET("/self/search", middleware.UserAuth(), controller.SearchUserLogs)
+		// dyt-20: 失败日志 API
+		logRoute.GET("/fail/list", middleware.AdminAuth(), controller.GetFailLogs)
+		logRoute.GET("/fail/:id", middleware.AdminAuth(), controller.GetFailLogPayload)
 		groupRoute := apiRouter.Group("/group")
 		groupRoute.Use(middleware.AdminAuth())
 		{

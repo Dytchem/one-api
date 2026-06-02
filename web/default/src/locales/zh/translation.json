@@ -13,7 +13,8 @@
     "chat": "聊天",
     "login": "登录",
     "logout": "注销",
-    "register": "注册"
+    "register": "注册",
+    "fail_logs": "失败日志"
   },
   "topup": {
     "title": "充值中心",
@@ -837,5 +838,30 @@
     "notice": {
       "password_copied": "新密码已复制到剪贴板：{{password}}"
     }
+  },
+  "fail_log": {
+    "title": "失败日志浏览器",
+    "total": "共",
+    "items": "条",
+    "search": "搜索",
+    "channel": "渠道",
+    "model": "模型",
+    "status": "状态码",
+    "preview": "预览",
+    "payload": "载荷",
+    "time": "时间",
+    "prev": "上一页",
+    "next": "下一页",
+    "empty": "暂无失败日志",
+    "detail_title": "失败请求详情",
+    "error_info": "错误信息",
+    "request": "请求体",
+    "response": "响应体",
+    "copy": "复制",
+    "close": "关闭",
+    "no_payload": "该日志暂无完整请求/响应载荷（可能是旧版本日志）。",
+    "payload_load_fail": "载荷加载失败",
+    "channel_placeholder": "渠道ID",
+    "model_placeholder": "模型名"
   }
 }

@@ -39,6 +39,10 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 	}
 	meta.IsStream = textRequest.Stream
 
+	// dyt-20: 缓存请求 JSON 副本，供 payload 存储
+	requestJSON, _ := json.Marshal(textRequest)
+	c.Set("dyt20_request_json", string(requestJSON))
+
 	originModel := c.GetString(ctxkey.OriginalModel)
 	if originModel != "" {
 		meta.OriginModelName = originModel
@@ -80,7 +84,7 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 		if err == nil {
 			// 改进2：探测 empty response 时同渠道重试 1 次
 			// 抽成闭包便于复用
-			doProbe := func(retryLabel string) (success bool, probeUsage *model.Usage, responseSnippet string, buf *bytes.Buffer, scanner *bufio.Scanner, statusCode int, errReason string) {
+			doProbe := func(retryLabel string) (success bool, probeUsage *model.Usage, responseSnippet string, buf *bytes.Buffer, scanner *bufio.Scanner, statusCode int, errReason string, respBody string) {
 				resp, doErr := adaptor.DoRequest(c, meta, probeRequestBody)
 				if doErr != nil || resp == nil || resp.StatusCode/100 != 2 {
 					code := 0
@@ -88,9 +92,9 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 						code = resp.StatusCode
 					}
 					if doErr != nil {
-						return false, nil, "", nil, nil, code, "请求错误: " + doErr.Error()
+						return false, nil, "", nil, nil, code, "请求错误: " + doErr.Error(), ""
 					}
-					return false, nil, "", nil, nil, code, fmt.Sprintf("HTTP %d 非 2xx", code)
+					return false, nil, "", nil, nil, code, fmt.Sprintf("HTTP %d 非 2xx", code), ""
 				}
 				defer resp.Body.Close()
 
@@ -108,12 +112,33 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 				sawDone := false
 				lastLine := ""
 
+				// dyt-20: 异常检测 — finish_reason 出现但缺 usage
+				sawFinishReason := false
+				finishReasonValue := ""
+
+				// dyt-20: 完整响应 body 累积（限 100KB）
+				var respBodyBuf bytes.Buffer
+				const maxRespBodySize = 100 * 1024
+				respBodyTruncated := false
+
 				for localScanner.Scan() {
 					data := localScanner.Text()
 					lineCount++
 					bytesRead += len(data)
 					if len(data) > 0 {
 						lastLine = data
+					}
+
+					// dyt-20: 累积响应 body
+					if !respBodyTruncated {
+						if respBodyBuf.Len()+len(data)+1 > maxRespBodySize {
+							respBodyTruncated = true
+							// 写一个标记
+							respBodyBuf.WriteString("\n...[truncated at 100KB]")
+						} else {
+							respBodyBuf.WriteString(data)
+							respBodyBuf.WriteString("\n")
+						}
 					}
 
 					if !localConfirmed {
@@ -136,6 +161,11 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 											localConfirmed = true
 										} else if rc, ok := delta.ReasoningContent.(string); ok && rc != "" {
 											localConfirmed = true
+										}
+										// dyt-20: 记录 finish_reason 出现
+										if fr := streamResp.Choices[0].FinishReason; fr != nil && *fr != "" {
+											sawFinishReason = true
+											finishReasonValue = *fr
 										}
 									}
 									// Also capture usage whenever available
@@ -228,22 +258,31 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 					}
 				}
 
-				if !localConfirmed {
-					// Stream ended without any content → 改进1：记录详细原因
+				// dyt-20: 失败判定。考虑 3 种情况：
+				// 1) 未收到 content/reasoning token → empty response
+				// 2) 收到 finish_reason 但缺 usage 且流末尾不是 [DONE] → 异常断流
+				// 3) 正常空流（仅 [DONE]）→ 成功
+				streamAbnormal := sawFinishReason && localUsage == nil && !sawDone
+				if !localConfirmed || streamAbnormal {
+					// Stream ended without content or with abnormal truncation
 					reason := classifyEmptyResponse(lineCount, bytesRead, sawDone, lastLine, resp.StatusCode)
-					return false, nil, "", nil, nil, resp.StatusCode, reason
+					// dyt-20: 附加 finish_reason 异常提示
+					if streamAbnormal {
+						reason = fmt.Sprintf("%s | 异常：finish_reason=%s 出现但缺 usage（疑似流中断）", reason, finishReasonValue)
+					}
+					return false, nil, "", nil, nil, resp.StatusCode, reason, respBodyBuf.String()
 				}
 
-				return true, localUsage, localSnippet, &localBuf, localScanner, resp.StatusCode, ""
+				return true, localUsage, localSnippet, &localBuf, localScanner, resp.StatusCode, "", respBodyBuf.String()
 			}
 
 			// 改进2：第一次探测
-			success, probeUsage, responseSnippet, _, _, _, errReason := doProbe("first")
+			success, probeUsage, responseSnippet, _, _, _, errReason, _ := doProbe("first")
 			if !success {
 				logger.Warnf(ctx, "stream probe returned empty response on first try: %s, retrying once on same channel", errReason)
 
 				// 第二次（重试）
-				success, probeUsage2, responseSnippet2, _, _, _, errReason2 := doProbe("retry-1")
+				success, probeUsage2, responseSnippet2, _, _, _, errReason2, _ := doProbe("retry-1")
 				if !success {
 					// 两次都空 → 记录失败日志，触发 fallback
 					combinedReason := errReason
@@ -263,7 +302,7 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 					} else {
 						probeFailLogContent = fmt.Sprintf("探测失败，请求模型：%s/%s，%s | 空响应 | 上游：%s", chName, meta.ActualModelName, chName, combinedReason)
 					}
-					dbmodel.RecordConsumeLog(ctx, &dbmodel.Log{
+					failLogId := dbmodel.RecordConsumeLogWithId(ctx, &dbmodel.Log{
 						UserId:            meta.UserId,
 						TokenName:         meta.TokenName,
 						ModelName:         meta.OriginModelName,
@@ -276,6 +315,20 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 						ElapsedTime:       helper.CalcElapsedTime(meta.StartTime),
 						SystemPromptReset: systemPromptReset,
 					})
+
+					// dyt-20: 异步写 payload（包含原始请求/响应/错误）
+					if failLogId > 0 {
+						if reqJSON, ok := c.Get("dyt20_request_json"); ok {
+							reqStr, _ := reqJSON.(string)
+							dbmodel.RecordLogPayloadAsync(&dbmodel.LogPayload{
+								LogId:     failLogId,
+								Request:   reqStr,
+								Response:  "", // 探测阶段响应被丢掉，保留空
+								Error:     combinedReason,
+								CreatedAt: meta.StartTime.Unix(),
+							})
+						}
+					}
 
 					billing.ReturnPreConsumedQuota(ctx, preConsumedQuota, meta.TokenId)
 					return openai.ErrorWrapper(fmt.Errorf("empty response from channel during probe: %s", combinedReason), "empty_response", http.StatusBadGateway)
@@ -326,6 +379,35 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 	if usage != nil && usage.CompletionTokens == 0 {
 		logger.Warnf(ctx, "empty response detected (completion_tokens=0), triggering fallback")
 		billing.ReturnPreConsumedQuota(ctx, preConsumedQuota, meta.TokenId)
+		// dyt-20: 记录非流式空响应日志 + payload
+		chName := c.GetString(ctxkey.ChannelName)
+		chId := c.GetInt(ctxkey.ChannelId)
+		failLogContent := fmt.Sprintf("回复为空，请求模型：%s/%s，completion_tokens=0", chName, meta.ActualModelName)
+		failLogId := dbmodel.RecordConsumeLogWithId(ctx, &dbmodel.Log{
+			UserId:            meta.UserId,
+			TokenName:         meta.TokenName,
+			ModelName:         meta.OriginModelName,
+			ChannelId:         chId,
+			PromptTokens:      promptTokens,
+			CompletionTokens:  0,
+			Quota:             0,
+			Content:           failLogContent,
+			IsStream:          meta.IsStream,
+			ElapsedTime:       helper.CalcElapsedTime(meta.StartTime),
+			SystemPromptReset: systemPromptReset,
+		})
+		if failLogId > 0 {
+			if reqJSON, ok := c.Get("dyt20_request_json"); ok {
+				reqStr, _ := reqJSON.(string)
+				dbmodel.RecordLogPayloadAsync(&dbmodel.LogPayload{
+					LogId:     failLogId,
+					Request:   reqStr,
+					Response:  responseSnippet,
+					Error:     "empty response (non-stream): completion_tokens=0",
+					CreatedAt: meta.StartTime.Unix(),
+				})
+			}
+		}
 		return openai.ErrorWrapper(fmt.Errorf("empty response from channel"), "empty_response", http.StatusBadGateway)
 	}
 	go postConsumeQuota(ctx, usage, meta, textRequest, ratio, preConsumedQuota, modelRatio, groupRatio, systemPromptReset, responseSnippet)

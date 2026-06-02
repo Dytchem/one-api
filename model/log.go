@@ -51,6 +51,19 @@ func recordLogHelper(ctx context.Context, log *Log) {
 	logger.Infof(ctx, "record log: %+v", log)
 }
 
+// recordLogHelperWithId dyt-20: 返回创建的 log id
+func recordLogHelperWithId(ctx context.Context, log *Log) int64 {
+	requestId := helper.GetRequestID(ctx)
+	log.RequestId = requestId
+	err := LOG_DB.Create(log).Error
+	if err != nil {
+		logger.Error(ctx, "failed to record log: "+err.Error())
+		return 0
+	}
+	logger.Infof(ctx, "record log: %+v", log)
+	return int64(log.Id)
+}
+
 func RecordLog(ctx context.Context, userId int, logType int, content string) {
 	if logType == LogTypeConsume && !config.LogConsumeEnabled {
 		return
@@ -85,6 +98,17 @@ func RecordConsumeLog(ctx context.Context, log *Log) {
 	log.CreatedAt = helper.GetTimestamp()
 	log.Type = LogTypeConsume
 	recordLogHelper(ctx, log)
+}
+
+// RecordConsumeLogWithId dyt-20: 同步写消费日志并返回 log id（供 payload 关联）
+func RecordConsumeLogWithId(ctx context.Context, log *Log) int64 {
+	if !config.LogConsumeEnabled {
+		return 0
+	}
+	log.Username = GetUsernameById(log.UserId)
+	log.CreatedAt = helper.GetTimestamp()
+	log.Type = LogTypeConsume
+	return recordLogHelperWithId(ctx, log)
 }
 
 // RecordChannelAttemptLog 记录渠道尝试日志（包括成功和失败的 fallback）
@@ -264,4 +288,100 @@ func SearchLogsByDayAndModel(userId, start, end int) (LogStatistics []*LogStatis
 	`, userId, start, end).Scan(&LogStatistics).Error
 
 	return LogStatistics, err
+}
+
+// LogPayload 完整保留失败请求/响应的 payload（dyt-20 新增）
+type LogPayload struct {
+	LogId     int64  `gorm:"primaryKey"` // 一对一关联 logs.id
+	Request   string `gorm:"type:longtext"`
+	Response  string `gorm:"type:longtext"`
+	Error     string `gorm:"type:longtext"`
+	CreatedAt int64
+}
+
+// payloadQueue 异步写队列，避免阻塞请求
+var payloadQueue = make(chan *LogPayload, 2048)
+
+func init() {
+	// 启动 2 个 worker 消费队列
+	for i := 0; i < 2; i++ {
+		go func() {
+			for p := range payloadQueue {
+				if err := payloadDB().Create(p).Error; err != nil {
+					logger.SysError("failed to record log payload: " + err.Error())
+				}
+			}
+		}()
+	}
+}
+
+func payloadDB() *gorm.DB {
+	return LOG_DB
+}
+
+// RecordLogPayloadAsync 异步写 payload（不阻塞）
+func RecordLogPayloadAsync(payload *LogPayload) {
+	select {
+	case payloadQueue <- payload:
+	default:
+		// 队列满则丢弃，避免内存泄漏
+		logger.SysLog(fmt.Sprintf("payload queue full, dropped log_id=%d", payload.LogId))
+	}
+}
+
+// RecordLogPayload 同步写 payload（用于测试/补录）
+func RecordLogPayload(payload *LogPayload) error {
+	return payloadDB().Create(payload).Error
+}
+
+// GetLogPayload 按 logId 查 payload
+func GetLogPayload(logId int64) (*LogPayload, error) {
+	var p LogPayload
+	err := payloadDB().Where("log_id = ?", logId).First(&p).Error
+	if err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
+
+// LogHasPayload dyt-20: 检查某 log 是否有 payload
+func LogHasPayload(logId int64) bool {
+	var cnt int64
+	payloadDB().Model(&LogPayload{}).Where("log_id = ?", logId).Count(&cnt)
+	return cnt > 0
+}
+
+// GetFailLogs dyt-20: 失败日志分页列表
+// 筛选：type=2 的"探测失败"和"回复为空" + type=5 的测试失败
+func GetFailLogs(channelId int, modelName string, startTimestamp, endTimestamp int64, offset, size int) ([]*Log, int64, error) {
+	var logs []*Log
+	var total int64
+
+	query := LOG_DB.Model(&Log{}).
+		Where("type IN (2, 5)").
+		Where("content LIKE '探测失败%' OR content LIKE '回复为空%'")
+
+	if channelId > 0 {
+		query = query.Where("channel_id = ?", channelId)
+	}
+	if modelName != "" {
+		query = query.Where("model_name LIKE ?", "%"+modelName+"%")
+	}
+	if startTimestamp > 0 {
+		query = query.Where("created_at >= ?", startTimestamp)
+	}
+	if endTimestamp > 0 {
+		query = query.Where("created_at <= ?", endTimestamp)
+	}
+
+	// count
+	query.Count(&total)
+
+	// order by time desc, paginate
+	err := query.
+		Order("created_at DESC").
+		Offset(offset).Limit(size).
+		Find(&logs).Error
+
+	return logs, total, err
 }

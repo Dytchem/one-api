@@ -13,7 +13,8 @@
     "chat": "Chat",
     "login": "Login",
     "logout": "Logout",
-    "register": "Register"
+    "register": "Register",
+    "fail_logs": "Fail Logs"
   },
   "topup": {
     "title": "Top Up Center",
@@ -841,5 +842,30 @@
     "notice": {
       "password_copied": "New password copied to clipboard: {{password}}"
     }
+  },
+  "fail_log": {
+    "title": "Fail Log Browser",
+    "total": "Total",
+    "items": "items",
+    "search": "Search",
+    "channel": "Channel",
+    "model": "Model",
+    "status": "Status",
+    "preview": "Preview",
+    "payload": "Payload",
+    "time": "Time",
+    "prev": "Prev",
+    "next": "Next",
+    "empty": "No fail logs",
+    "detail_title": "Fail Request Detail",
+    "error_info": "Error Info",
+    "request": "Request",
+    "response": "Response",
+    "copy": "Copy",
+    "close": "Close",
+    "no_payload": "No full request/response payload available (possibly old log format).",
+    "payload_load_fail": "Payload load failed",
+    "channel_placeholder": "Channel ID",
+    "model_placeholder": "Model Name"
   }
 }

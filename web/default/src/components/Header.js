@@ -62,6 +62,11 @@ let headerButtons = [
     icon: 'book',
   },
   {
+    name: 'header.fail_logs',
+    to: '/fail-logs',
+    icon: 'warning circle',
+  },
+  {
     name: 'header.setting',
     to: '/setting',
     icon: 'setting',
