@@ -24,6 +24,10 @@ var DisplayTokenStatEnabled = true
 
 // Any options with "Secret", "Token" in its key won't be return by GetOptions
 
+// SessionSecret 由 common/init.go 处理：
+// - 如果设了 SESSION_SECRET 环境变量（≠"random_string"）→ 用它
+// - 否则 → uuid.New()（重启后所有 session 失效）
+// 推荐主人设一个 ≥32 字符的随机串
 var SessionSecret = uuid.New().String()
 
 var OptionMap map[string]string
@@ -112,7 +116,10 @@ var SyncFrequency = env.Int("SYNC_FREQUENCY", 10*60) // unit is second
 var BatchUpdateEnabled = false
 var BatchUpdateInterval = env.Int("BATCH_UPDATE_INTERVAL", 5)
 
-var RelayTimeout = env.Int("RELAY_TIMEOUT", 0) // unit is second
+// dyt-31: RelayTimeout 默认 300s（5分钟），原默认 0=无超时会被恶意上游永久卡住
+// 5 分钟足够任何 LLM 响应（即使最慢的 reasoning 模型也 30s 内）
+// 主人如果调过 RELAY_TIMEOUT 环境变量，本默认值会被覆盖
+var RelayTimeout = env.Int("RELAY_TIMEOUT", 300) // unit is second
 
 var GeminiSafetySetting = env.String("GEMINI_SAFETY_SETTING", "BLOCK_NONE")
 
