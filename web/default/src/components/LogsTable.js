@@ -53,14 +53,14 @@ function renderType(log) {
       </Label>
     );
   }
-  if (type === 4 || content.startsWith('探测失败') || content.includes('探针失败') || content.includes('渠道尝试')) {
+  if (type === 4 || content.includes('探测失败') || content.includes('探针失败') || content.includes('渠道尝试')) {
     return (
       <Label basic color='red'>
         失败
       </Label>
     );
   }
-  if (content.startsWith('探测成功') || content.includes('探针确认')) {
+  if (content.includes('探测成功') || content.includes('探针确认')) {
     return (
       <Label basic color='green'>
         成功

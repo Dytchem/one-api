@@ -371,7 +371,7 @@ func GetFailLogs(channelId int, modelName string, startTimestamp, endTimestamp i
 
 	query := LOG_DB.Model(&Log{}).
 		Where("type IN (2, 5)").
-		Where("content LIKE '探测失败%' OR content LIKE '回复为空%'")
+		Where("content LIKE '%探测失败%' OR content LIKE '%回复为空%'")
 
 	if channelId > 0 {
 		query = query.Where("channel_id = ?", channelId)
