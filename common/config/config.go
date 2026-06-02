@@ -121,6 +121,10 @@ var BatchUpdateInterval = env.Int("BATCH_UPDATE_INTERVAL", 5)
 // 主人如果调过 RELAY_TIMEOUT 环境变量，本默认值会被覆盖
 var RelayTimeout = env.Int("RELAY_TIMEOUT", 300) // unit is second
 
+// dyt-33: log_payloads 默认 7 天后自动清理
+// 设 LOG_PAYLOAD_TTL_HOURS=0 禁用清理（不推荐，payload 会无限增长）
+var LogPayloadTTLHours = env.Int("LOG_PAYLOAD_TTL_HOURS", 7*24) // unit is hour
+
 var GeminiSafetySetting = env.String("GEMINI_SAFETY_SETTING", "BLOCK_NONE")
 
 var Theme = env.String("THEME", "default")

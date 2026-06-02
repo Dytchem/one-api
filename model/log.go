@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -314,6 +315,39 @@ type LogPayload struct {
 // payloadQueue 异步写队列，避免阻塞请求
 var payloadQueue = make(chan *LogPayload, 2048)
 
+// dyt-33: payload 默认保留 7 天（主人可设 LOG_PAYLOAD_TTL_HOURS 环境变量覆盖）
+// 每天凌晨 3 点跑一次清理
+// 长文本 payload 可能 100KB+ / 条，不定期清理会无限增长
+const defaultPayloadTTLHours = 7 * 24
+
+func getPayloadTTLHours() int {
+	ttl := config.LogPayloadTTLHours
+	if ttl < 0 {
+		// 负数 = 禁用清理（不推荐）
+		return -1
+	}
+	if ttl == 0 {
+		return defaultPayloadTTLHours
+	}
+	return ttl
+}
+
+func CleanupOldPayloads() {
+	ttl := getPayloadTTLHours()
+	if ttl < 0 {
+		return // 禁用清理
+	}
+	cutoff := helper.GetTimestamp() - int64(ttl*3600)
+	result := payloadDB().Where("created_at < ?", cutoff).Delete(&LogPayload{})
+	if result.Error != nil {
+		logger.SysError("failed to cleanup old payloads: " + result.Error.Error())
+		return
+	}
+	if result.RowsAffected > 0 {
+		logger.SysLog(fmt.Sprintf("cleaned up %d old log_payloads entries (TTL=%dh)", result.RowsAffected, ttl))
+	}
+}
+
 func init() {
 	// 启动 2 个 worker 消费队列
 	for i := 0; i < 2; i++ {
@@ -325,6 +359,16 @@ func init() {
 			}
 		}()
 	}
+	// dyt-33: 启动 payload 定期清理任务，每 24h 跑一次
+	go func() {
+		// 启动后等 1 小时再首次跑，避免启动期 IO 竞争
+		time.Sleep(1 * time.Hour)
+		ticker := time.NewTicker(24 * time.Hour)
+		defer ticker.Stop()
+		for range ticker.C {
+			CleanupOldPayloads()
+		}
+	}()
 }
 
 func payloadDB() *gorm.DB {
