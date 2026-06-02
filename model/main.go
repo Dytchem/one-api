@@ -25,7 +25,9 @@ func CreateRootAccountIfNeed() error {
 	var user User
 	//if user.Status != util.UserStatusEnabled {
 	if err := DB.First(&user).Error; err != nil {
-		logger.SysLog("no user exists, creating a root user for you: username is root, password is 123456")
+		// dyt-35: 去掉明文密码日志（避免明文密码传 ELK / 远端二次泄露）
+		// 主人首次登录后请务必修改默认密码（README 顶部警告）
+		logger.SysLog("no user exists, creating a root user. Username: root, default password is shown in README. Please change it after first login!")
 		hashedPassword, err := common.Password2Hash("123456")
 		if err != nil {
 			return err

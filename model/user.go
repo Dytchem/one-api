@@ -174,8 +174,28 @@ func (user *User) Update(updatePassword bool) error {
 	}
 	if user.Status == UserStatusDisabled {
 		blacklist.BanUser(user.Id)
+		// dyt-35: 用户被禁用时主动清除 Redis user_enabled 缓存
+		// 避免 SyncFrequency（默认 10 分钟）后才生效
+		if common.RedisEnabled {
+			if err := common.RedisDel(fmt.Sprintf("user_enabled:%d", user.Id)); err != nil {
+				logger.SysError("failed to clear user_enabled cache: " + err.Error())
+			}
+		}
 	} else if user.Status == UserStatusEnabled {
 		blacklist.UnbanUser(user.Id)
+		// dyt-35: 启用时同样清缓存，让下一个请求拿到最新状态
+		if common.RedisEnabled {
+			if err := common.RedisDel(fmt.Sprintf("user_enabled:%d", user.Id)); err != nil {
+				logger.SysError("failed to clear user_enabled cache: " + err.Error())
+			}
+		}
+	} else if user.Status == UserStatusDeleted {
+		// dyt-35: 删除时同样清
+		if common.RedisEnabled {
+			if err := common.RedisDel(fmt.Sprintf("user_enabled:%d", user.Id)); err != nil {
+				logger.SysError("failed to clear user_enabled cache: " + err.Error())
+			}
+		}
 	}
 	err = DB.Model(user).Updates(user).Error
 	return err
