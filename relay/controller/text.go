@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -91,13 +92,22 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 			resp, doErr := adaptor.DoRequest(c, meta, bytes.NewReader(probeBodyBytes))
 			if doErr != nil || resp == nil || resp.StatusCode/100 != 2 {
 				code := 0
+				bodyStr := ""
 				if resp != nil {
 					code = resp.StatusCode
+					// dyt-36: 非 2xx 必须读 body（获取上游实际错误 + 关闭连接）
+					bodyBytes, readErr := io.ReadAll(io.LimitReader(resp.Body, 100*1024))
+					if readErr == nil {
+						bodyStr = string(bodyBytes)
+					}
+					resp.Body.Close()
 				}
 				if doErr != nil {
-					return false, nil, "", nil, nil, code, "请求错误: " + doErr.Error(), ""
+					return false, nil, "", nil, nil, code, "请求错误: " + doErr.Error(), bodyStr
 				}
-				return false, nil, "", nil, nil, code, fmt.Sprintf("HTTP %d 非 2xx", code), ""
+				// dyt-36: 从 body 提取简洁错误预览，加 [code] 供前端提取
+				errPreview := extractUpstreamError(bodyStr, code)
+				return false, nil, "", nil, nil, code, fmt.Sprintf("HTTP %d: %s [%d]", code, errPreview, code), bodyStr
 			}
 			defer resp.Body.Close()
 
@@ -509,4 +519,56 @@ func classifyEmptyResponse(lineCount, bytesRead int, sawDone bool, lastLine stri
 		preview = preview[:200] + "…"
 	}
 	return fmt.Sprintf("连接断/异常结束 (HTTP %d, %d行/%d字节, 末行: %q)%s", statusCode, lineCount, bytesRead, preview, codeTag)
+}
+
+// extractUpstreamError dyt-36: 从上游非 2xx body 提取简洁错误预览（120 字内）
+func extractUpstreamError(body string, statusCode int) string {
+	if body == "" {
+		return fmt.Sprintf("HTTP %d (no body)", statusCode)
+	}
+	// 尝试 OpenAI 格式: {"error":{"message":"..."}}
+	var openAIErr struct {
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if json.Unmarshal([]byte(body), &openAIErr) == nil && openAIErr.Error.Message != "" {
+		s := strings.TrimSpace(openAIErr.Error.Message)
+		runes := []rune(s)
+		if len(runes) > 120 {
+			return string(runes[:120]) + "…"
+		}
+		return s
+	}
+	// 尝试通用 message 字段
+	var msgResp struct {
+		Message string `json:"message"`
+	}
+	if json.Unmarshal([]byte(body), &msgResp) == nil && msgResp.Message != "" {
+		s := strings.TrimSpace(msgResp.Message)
+		runes := []rune(s)
+		if len(runes) > 120 {
+			return string(runes[:120]) + "…"
+		}
+		return s
+	}
+	// 尝试 "msg" 字段
+	var msg2Resp struct {
+		Msg string `json:"msg"`
+	}
+	if json.Unmarshal([]byte(body), &msg2Resp) == nil && msg2Resp.Msg != "" {
+		s := strings.TrimSpace(msg2Resp.Msg)
+		runes := []rune(s)
+		if len(runes) > 120 {
+			return string(runes[:120]) + "…"
+		}
+		return s
+	}
+	// 回退：取 body 前 120 字
+	trimmed := strings.TrimSpace(body)
+	runes := []rune(trimmed)
+	if len(runes) > 120 {
+		return string(runes[:120]) + "…"
+	}
+	return trimmed
 }

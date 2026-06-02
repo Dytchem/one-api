@@ -74,9 +74,13 @@ const FailLog = () => {
   // 解析 status code 徽章
   const extractBadge = (content) => {
     if (!content) return null;
+    // dyt-37: 先匹配 [code] 或 [code:msg]
     const m = content.match(/\[(\d+):?([^\]]*)\]/);
-    if (!m) return null;
-    return { code: m[1], msg: m[2] || null };
+    if (m) return { code: m[1], msg: m[2] || null };
+    // dyt-37: 回退匹配 HTTP xxx（如 "HTTP 400"）
+    const httpM = content.match(/HTTP\s+(\d{3})/);
+    if (httpM) return { code: httpM[1], msg: null };
+    return null;
   };
 
   // 截取预览
