@@ -357,19 +357,55 @@ func getRequestBody(c *gin.Context, meta *meta.Meta, textRequest *model.GeneralO
 	return requestBody, nil
 }
 
-// classifyEmptyResponse 改进1：根据上游响应特征生成可读原因
-// 用于探测失败日志和 empty_response 错误信息
+// extractStatusCode 改进B：从上游响应的 lastLine JSON 中提取 status_code，用于日志徽章
+// 例如 lastLine = `{"choices":null,"usage":null,"base_resp":{"status_code":2013,"status_msg":"xxx"}}`
+func extractStatusCode(lastLine string) (code int, msg string) {
+	if lastLine == "" {
+		return 0, ""
+	}
+	// 尝试解析 base_resp.status_code
+	var raw map[string]json.RawMessage
+	if json.Unmarshal([]byte(lastLine), &raw) != nil {
+		return 0, ""
+	}
+	baseResp, ok := raw["base_resp"]
+	if !ok {
+		return 0, ""
+	}
+	var br struct {
+		StatusCode int    `json:"status_code"`
+		StatusMsg  string `json:"status_msg"`
+	}
+	if json.Unmarshal(baseResp, &br) != nil {
+		return 0, ""
+	}
+	return br.StatusCode, br.StatusMsg
+}
+
+// classifyEmptyResponse 改进AB：根据上游响应特征生成可读原因
+// B: 附加 base_resp.status_code 徽章（如 [2013]）；A: 末行预览放宽到 200 字节
 func classifyEmptyResponse(lineCount, bytesRead int, sawDone bool, lastLine string, statusCode int) string {
+	// 改进B: 优先提取业务码
+	bizCode, bizMsg := extractStatusCode(lastLine)
+	var codeTag string
+	if bizCode != 0 {
+		if bizMsg != "" {
+			codeTag = fmt.Sprintf(" [%d:%s]", bizCode, bizMsg)
+		} else {
+			codeTag = fmt.Sprintf(" [%d]", bizCode)
+		}
+	}
+
 	if lineCount == 0 {
-		return fmt.Sprintf("空body (HTTP %d, 0字节)", statusCode)
+		return fmt.Sprintf("空body (HTTP %d, 0字节)%s", statusCode, codeTag)
 	}
 	if sawDone {
-		return fmt.Sprintf("[DONE]空流 (HTTP %d, %d行/%d字节, 无content token)", statusCode, lineCount, bytesRead)
+		return fmt.Sprintf("[DONE]空流 (HTTP %d, %d行/%d字节, 无content token)%s", statusCode, lineCount, bytesRead, codeTag)
 	}
-	// 截断 lastLine 到 60 字节
+	// 改进A: 末行预览放宽到 200 字节
 	preview := lastLine
-	if len(preview) > 60 {
-		preview = preview[:60] + "…"
+	if len(preview) > 200 {
+		preview = preview[:200] + "…"
 	}
-	return fmt.Sprintf("连接断/异常结束 (HTTP %d, %d行/%d字节, 末行: %q)", statusCode, lineCount, bytesRead, preview)
+	return fmt.Sprintf("连接断/异常结束 (HTTP %d, %d行/%d字节, 末行: %q)%s", statusCode, lineCount, bytesRead, preview, codeTag)
 }

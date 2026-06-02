@@ -121,13 +121,40 @@ func getRequestPreview(textRequest *relaymodel.GeneralOpenAIRequest) string {
 			// Clean: replace newlines with spaces, trim
 			cleaned := strings.TrimSpace(strings.ReplaceAll(text, "\n", " "))
 			runes := []rune(cleaned)
+			preview := cleaned
 			if len(runes) > 30 {
-				return string(runes[:30]) + "…"
+				preview = string(runes[:30]) + "…"
 			}
-			return cleaned
+			// 改进C: 附加 tools 摘要（[] 表示无，N 表示有 N 个）
+			return preview + formatToolsSummary(textRequest.Tools)
 		}
 	}
+	// 所有消息都是 system 或 content 为空 — 退到检 tools
+	if len(textRequest.Tools) > 0 {
+		return "[空消息+tools]" + formatToolsSummary(textRequest.Tools)
+	}
 	return ""
+}
+
+// formatToolsSummary 改进C: 返回 tools 数组的紧凑摘要，如 [tools×3:Read,Bash,Edit]
+func formatToolsSummary(tools []relaymodel.Tool) string {
+	if len(tools) == 0 {
+		return ""
+	}
+	names := make([]string, 0, len(tools))
+	for _, t := range tools {
+		name := strings.TrimSpace(t.Function.Name)
+		if name == "" {
+			name = "?"
+		}
+		names = append(names, name)
+	}
+	s := strings.Join(names, ",")
+	// 限制总长，避免日志过长
+	if len(s) > 80 {
+		s = s[:80] + "…"
+	}
+	return fmt.Sprintf(" [tools×%d:%s]", len(tools), s)
 }
 
 func postConsumeQuota(ctx context.Context, usage *relaymodel.Usage, meta *meta.Meta, textRequest *relaymodel.GeneralOpenAIRequest, ratio float64, preConsumedQuota int64, modelRatio float64, groupRatio float64, systemPromptReset bool, responseSnippet string) {
