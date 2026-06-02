@@ -156,6 +156,7 @@ dyt-30 代码改动 = 1 行（zhipu adaptor 的 import path），零回归风险
 | `SESSION_SECRET` | Session 加密密钥（≥32 字符随机串）；留空=每次启动 uuid 随机（重启后所有用户登出）| 留空 |
 | `RELAY_TIMEOUT` | 转发请求超时（秒）| 300 |
 | `PANIC_LOG_BODY` | panic 时是否打请求 body 到日志（设 true 时打）| false |
+| `LOG_PAYLOAD_TTL_HOURS` | log_payloads 保留小时数；设 -1 禁用清理 | 168 (7天) |
 
 完整变更记录 → [GitHub Releases](https://github.com/Dytchem/one-api/releases)
 
