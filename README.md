@@ -104,6 +104,16 @@ _Fork 自 [songquanpeng/one-api](https://github.com/songquanpeng/one-api)，自�
 
 dyt-28 代码改动 = 0，纯依赖版本号升级，零回归风险。
 
+### 镜像基础版本（dyt-29）
+
+| 改进 | 说明 |
+|------|------|
+| Node 16 → 20 | Node 16 已 EOL（2023-09），升至 Node 20 LTS |
+| `golang:alpine` → `golang:1.22-alpine3.20` | pin Go 1.22 + Alpine 3.20 |
+| `alpine:latest` → `alpine:3.20` | pin Alpine 3.20 运行时 |
+
+dyt-29 代码改动 = 0（仅 Dockerfile），运行时改为可复现的已知安全版本。
+
 完整变更记录 → [GitHub Releases](https://github.com/Dytchem/one-api/releases)
 
 ## 快速部署
