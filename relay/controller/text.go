@@ -13,6 +13,7 @@ import (
 	"github.com/songquanpeng/one-api/common"
 	"github.com/songquanpeng/one-api/common/config"
 	"github.com/songquanpeng/one-api/common/ctxkey"
+	"github.com/songquanpeng/one-api/common/env"
 	"github.com/songquanpeng/one-api/common/helper"
 	"github.com/songquanpeng/one-api/common/logger"
 	"github.com/songquanpeng/one-api/common/render"
@@ -83,274 +84,285 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 		// 重置 c.Request.Body 让后续 getRequestBody 调用走原 body 路径
 		c.Request.Body = io.NopCloser(bytes.NewBuffer(probeBodyBytes))
 
-		// dyt-23: 每次 doProbe 从同一份 bytes 创建新 reader，保证 body 完全相同
-		if true {
-			// 改进2：探测 empty response 时同渠道重试 1 次
-			// 抽成闭包便于复用
-			doProbe := func(retryLabel string) (success bool, probeUsage *model.Usage, responseSnippet string, buf *bytes.Buffer, scanner *bufio.Scanner, statusCode int, errReason string, respBody string) {
-				// dyt-23: 每次重试都从原 bytes 重新创建 reader，确保 body 完全一致
-				resp, doErr := adaptor.DoRequest(c, meta, bytes.NewReader(probeBodyBytes))
-				if doErr != nil || resp == nil || resp.StatusCode/100 != 2 {
-					code := 0
-					if resp != nil {
-						code = resp.StatusCode
-					}
-					if doErr != nil {
-						return false, nil, "", nil, nil, code, "请求错误: " + doErr.Error(), ""
-					}
-					return false, nil, "", nil, nil, code, fmt.Sprintf("HTTP %d 非 2xx", code), ""
+		// dyt-24: 同渠道重试次数由 CHANNEL_RETRY_COUNT 控制（默认 1）
+		retryCount := env.Int("CHANNEL_RETRY_COUNT", 1)
+		doProbe := func(attemptNum int) (success bool, probeUsage *model.Usage, responseSnippet string, buf *bytes.Buffer, scanner *bufio.Scanner, statusCode int, errReason string, respBody string) {
+			// dyt-23: 每次重试都从原 bytes 重新创建 reader，确保 body 完全一致
+			resp, doErr := adaptor.DoRequest(c, meta, bytes.NewReader(probeBodyBytes))
+			if doErr != nil || resp == nil || resp.StatusCode/100 != 2 {
+				code := 0
+				if resp != nil {
+					code = resp.StatusCode
 				}
-				defer resp.Body.Close()
+				if doErr != nil {
+					return false, nil, "", nil, nil, code, "请求错误: " + doErr.Error(), ""
+				}
+				return false, nil, "", nil, nil, code, fmt.Sprintf("HTTP %d 非 2xx", code), ""
+			}
+			defer resp.Body.Close()
 
-				var localBuf bytes.Buffer
-				localBuf.Grow(4096)
-				localScanner := bufio.NewScanner(resp.Body)
-				localScanner.Split(bufio.ScanLines)
-				var localUsage *model.Usage
-				localConfirmed := false
-				var localSnippet string
+			var localBuf bytes.Buffer
+			localBuf.Grow(4096)
+			localScanner := bufio.NewScanner(resp.Body)
+			localScanner.Split(bufio.ScanLines)
+			var localUsage *model.Usage
+			localConfirmed := false
+			var localSnippet string
 
-				// 改进1：追踪上游返回细节
-				lineCount := 0
-				bytesRead := 0
-				sawDone := false
-				lastLine := ""
+			// 改进1：追踪上游返回细节
+			lineCount := 0
+			bytesRead := 0
+			sawDone := false
+			lastLine := ""
 
-				// dyt-20: 异常检测 — finish_reason 出现但缺 usage
-				sawFinishReason := false
-				finishReasonValue := ""
+			// dyt-20: 异常检测 — finish_reason 出现但缺 usage
+			sawFinishReason := false
+			finishReasonValue := ""
 
-				// dyt-20: 完整响应 body 累积（限 100KB）
-				var respBodyBuf bytes.Buffer
-				const maxRespBodySize = 100 * 1024
-				respBodyTruncated := false
+			// dyt-20: 完整响应 body 累积（限 100KB）
+			var respBodyBuf bytes.Buffer
+			const maxRespBodySize = 100 * 1024
+			respBodyTruncated := false
 
-				for localScanner.Scan() {
-					data := localScanner.Text()
-					lineCount++
-					bytesRead += len(data)
-					if len(data) > 0 {
-						lastLine = data
+			for localScanner.Scan() {
+				data := localScanner.Text()
+				lineCount++
+				bytesRead += len(data)
+				if len(data) > 0 {
+					lastLine = data
+				}
+
+				// dyt-20: 累积响应 body
+				if !respBodyTruncated {
+					if respBodyBuf.Len()+len(data)+1 > maxRespBodySize {
+						respBodyTruncated = true
+						// 写一个标记
+						respBodyBuf.WriteString("\n...[truncated at 100KB]")
+					} else {
+						respBodyBuf.WriteString(data)
+						respBodyBuf.WriteString("\n")
 					}
+				}
 
-					// dyt-20: 累积响应 body
-					if !respBodyTruncated {
-						if respBodyBuf.Len()+len(data)+1 > maxRespBodySize {
-							respBodyTruncated = true
-							// 写一个标记
-							respBodyBuf.WriteString("\n...[truncated at 100KB]")
+				if !localConfirmed {
+					// Probe phase: write to buffer, check for first content
+					localBuf.WriteString(data)
+					localBuf.WriteString("\n")
+
+					// Check for first meaningful content token
+					if len(data) > 6 && data[:6] == "data: " {
+						// 检测 [DONE] 哨兵
+						if data == "data: [DONE]" || data == "data:[DONE]" {
+							sawDone = true
 						} else {
-							respBodyBuf.WriteString(data)
-							respBodyBuf.WriteString("\n")
+							var streamResp openai.ChatCompletionsStreamResponse
+							if jsonErr := json.Unmarshal([]byte(data[6:]), &streamResp); jsonErr == nil {
+								// Content detected via delta.content or reasoning_content
+								if len(streamResp.Choices) > 0 {
+									delta := &streamResp.Choices[0].Delta
+									if content, ok := delta.Content.(string); ok && content != "" {
+										localConfirmed = true
+									} else if rc, ok := delta.ReasoningContent.(string); ok && rc != "" {
+										localConfirmed = true
+									}
+									// dyt-20: 记录 finish_reason 出现
+									if fr := streamResp.Choices[0].FinishReason; fr != nil && *fr != "" {
+										sawFinishReason = true
+										finishReasonValue = *fr
+									}
+								}
+								// Also capture usage whenever available
+								if streamResp.Usage != nil {
+									localUsage = streamResp.Usage
+								}
+							}
 						}
 					}
 
-					if !localConfirmed {
-						// Probe phase: write to buffer, check for first content
-						localBuf.WriteString(data)
-						localBuf.WriteString("\n")
+					if localConfirmed {
+						// First content token found: set headers, replay buffer, then passthrough
+						logger.Infof(ctx, "stream confirmed with first content token (attempt-%d), replaying %d buffered bytes", attemptNum, localBuf.Len())
 
-						// Check for first meaningful content token
-						if len(data) > 6 && data[:6] == "data: " {
-							// 检测 [DONE] 哨兵
-							if data == "data: [DONE]" || data == "data:[DONE]" {
-								sawDone = true
-							} else {
-								var streamResp openai.ChatCompletionsStreamResponse
-								if jsonErr := json.Unmarshal([]byte(data[6:]), &streamResp); jsonErr == nil {
-									// Content detected via delta.content or reasoning_content
-									if len(streamResp.Choices) > 0 {
-										delta := &streamResp.Choices[0].Delta
-										if content, ok := delta.Content.(string); ok && content != "" {
-											localConfirmed = true
-										} else if rc, ok := delta.ReasoningContent.(string); ok && rc != "" {
-											localConfirmed = true
-										}
-										// dyt-20: 记录 finish_reason 出现
-										if fr := streamResp.Choices[0].FinishReason; fr != nil && *fr != "" {
-											sawFinishReason = true
-											finishReasonValue = *fr
-										}
-									}
-									// Also capture usage whenever available
-									if streamResp.Usage != nil {
-										localUsage = streamResp.Usage
-									}
+						// Write probe confirm log immediately for visibility
+						chName := c.GetString(ctxkey.ChannelName)
+						chId := c.GetInt(ctxkey.ChannelId)
+						probeTTFT := helper.CalcElapsedTime(meta.StartTime)
+						probeLogContent := getRequestPreview(textRequest)
+						if probeLogContent != "" {
+							probeLogContent = fmt.Sprintf("探测成功，渠道：%s(#%d)，模型：%s→%s，请求内容：%s", chName, chId, meta.OriginModelName, meta.ActualModelName, probeLogContent)
+						} else {
+							probeLogContent = fmt.Sprintf("探测成功，渠道：%s(#%d)，模型：%s→%s，%s | %dms", chName, chId, meta.OriginModelName, meta.ActualModelName, chName, probeTTFT)
+						}
+						dbmodel.RecordConsumeLog(ctx, &dbmodel.Log{
+							UserId:            meta.UserId,
+							TokenName:         meta.TokenName,
+							ModelName:         meta.OriginModelName,
+							ChannelId:         chId,
+							PromptTokens:      promptTokens,
+							CompletionTokens:  0,
+							Quota:             0,
+							Content:           probeLogContent,
+							IsStream:          true,
+							ElapsedTime:       probeTTFT,
+							SystemPromptReset: systemPromptReset,
+						})
+
+						// 记录 TTFT 到滑动窗口（后续 postConsumeQuota 会记录完整 tok/s）
+						monitor.GlobalPerformanceStore.RecordRequest(
+							chId,
+							promptTokens,
+							0, // 完成 tokens 未知
+							probeTTFT,
+							probeTTFT, // TTFT = 从开始到首次 content 的耗时
+						)
+
+						common.SetEventStreamHeaders(c)
+
+						bufReader := bytes.NewReader(localBuf.Bytes())
+						lineScanner := bufio.NewScanner(bufReader)
+						lineScanner.Split(bufio.ScanLines)
+						for lineScanner.Scan() {
+							line := lineScanner.Text()
+							if len(line) > 0 {
+								render.StringData(c, line)
+							}
+						}
+						localBuf.Reset()
+					}
+				} else {
+					// Passthrough mode: forward directly
+					if len(data) > 0 {
+						render.StringData(c, data)
+					}
+
+					// Accumulate response content snippet from passthrough
+					if localSnippet == "" && len(data) > 6 && data[:6] == "data: " && data != "data: [DONE]" {
+						var streamResp openai.ChatCompletionsStreamResponse
+						if json.Unmarshal([]byte(data[6:]), &streamResp) == nil && len(streamResp.Choices) > 0 {
+							delta := &streamResp.Choices[0].Delta
+							if c, ok := delta.Content.(string); ok && c != "" {
+								runes := []rune(c)
+								if len(runes) > 30 {
+									localSnippet = string(runes[:30]) + "…"
+								} else {
+									localSnippet = c
 								}
 							}
 						}
+					}
 
-						if localConfirmed {
-							// First content token found: set headers, replay buffer, then passthrough
-							logger.Infof(ctx, "stream confirmed with first content token (retry=%s), replaying %d buffered bytes", retryLabel, localBuf.Len())
-
-							// Write probe confirm log immediately for visibility
-							chName := c.GetString(ctxkey.ChannelName)
-							chId := c.GetInt(ctxkey.ChannelId)
-							probeTTFT := helper.CalcElapsedTime(meta.StartTime)
-							probeLogContent := getRequestPreview(textRequest)
-							if probeLogContent != "" {
-								probeLogContent = fmt.Sprintf("探测成功，渠道：%s(#%d)，模型：%s→%s，请求内容：%s", chName, chId, meta.OriginModelName, meta.ActualModelName, probeLogContent)
-							} else {
-								probeLogContent = fmt.Sprintf("探测成功，渠道：%s(#%d)，模型：%s→%s，%s | %dms", chName, chId, meta.OriginModelName, meta.ActualModelName, chName, probeTTFT)
-							}
-							dbmodel.RecordConsumeLog(ctx, &dbmodel.Log{
-								UserId:            meta.UserId,
-								TokenName:         meta.TokenName,
-								ModelName:         meta.OriginModelName,
-								ChannelId:         chId,
-								PromptTokens:      promptTokens,
-								CompletionTokens:  0,
-								Quota:             0,
-								Content:           probeLogContent,
-								IsStream:          true,
-								ElapsedTime:       probeTTFT,
-								SystemPromptReset: systemPromptReset,
-							})
-
-							// 记录 TTFT 到滑动窗口（后续 postConsumeQuota 会记录完整 tok/s）
-							monitor.GlobalPerformanceStore.RecordRequest(
-								chId,
-								promptTokens,
-								0, // 完成 tokens 未知
-								probeTTFT,
-								probeTTFT, // TTFT = 从开始到首次 content 的耗时
-							)
-
-							common.SetEventStreamHeaders(c)
-
-							bufReader := bytes.NewReader(localBuf.Bytes())
-							lineScanner := bufio.NewScanner(bufReader)
-							lineScanner.Split(bufio.ScanLines)
-							for lineScanner.Scan() {
-								line := lineScanner.Text()
-								if len(line) > 0 {
-									render.StringData(c, line)
-								}
-							}
-							localBuf.Reset()
-						}
-					} else {
-						// Passthrough mode: forward directly
-						if len(data) > 0 {
-							render.StringData(c, data)
-						}
-
-						// Accumulate response content snippet from passthrough
-						if localSnippet == "" && len(data) > 6 && data[:6] == "data: " && data != "data: [DONE]" {
-							var streamResp openai.ChatCompletionsStreamResponse
-							if json.Unmarshal([]byte(data[6:]), &streamResp) == nil && len(streamResp.Choices) > 0 {
-								delta := &streamResp.Choices[0].Delta
-								if c, ok := delta.Content.(string); ok && c != "" {
-									runes := []rune(c)
-									if len(runes) > 30 {
-										localSnippet = string(runes[:30]) + "…"
-									} else {
-										localSnippet = c
-									}
-								}
-							}
-						}
-
-						// Still extract usage from passthrough
-						if len(data) > 6 && data[:6] == "data: " && data != "data: [DONE]" {
-							var streamResp openai.ChatCompletionsStreamResponse
-							if json.Unmarshal([]byte(data[6:]), &streamResp) == nil && streamResp.Usage != nil {
-								localUsage = streamResp.Usage
-							}
+					// Still extract usage from passthrough
+					if len(data) > 6 && data[:6] == "data: " && data != "data: [DONE]" {
+						var streamResp openai.ChatCompletionsStreamResponse
+						if json.Unmarshal([]byte(data[6:]), &streamResp) == nil && streamResp.Usage != nil {
+							localUsage = streamResp.Usage
 						}
 					}
 				}
-
-				// dyt-20: 失败判定。考虑 3 种情况：
-				// 1) 未收到 content/reasoning token → empty response
-				// 2) 收到 finish_reason 但缺 usage 且流末尾不是 [DONE] → 异常断流
-				// 3) 正常空流（仅 [DONE]）→ 成功
-				streamAbnormal := sawFinishReason && localUsage == nil && !sawDone
-				if !localConfirmed || streamAbnormal {
-					// Stream ended without content or with abnormal truncation
-					reason := classifyEmptyResponse(lineCount, bytesRead, sawDone, lastLine, resp.StatusCode)
-					// dyt-20: 附加 finish_reason 异常提示
-					if streamAbnormal {
-						reason = fmt.Sprintf("%s | 异常：finish_reason=%s 出现但缺 usage（疑似流中断）", reason, finishReasonValue)
-					}
-					return false, nil, "", nil, nil, resp.StatusCode, reason, respBodyBuf.String()
-				}
-
-				return true, localUsage, localSnippet, &localBuf, localScanner, resp.StatusCode, "", respBodyBuf.String()
 			}
 
-			// 改进2：第一次探测
-			success, probeUsage, responseSnippet, _, _, _, errReason, _ := doProbe("first")
-			if !success {
-				logger.Warnf(ctx, "stream probe returned empty response on first try: %s, retrying once on same channel", errReason)
+			// dyt-20: 失败判定。考虑 3 种情况：
+			// 1) 未收到 content/reasoning token → empty response
+			// 2) 收到 finish_reason 但缺 usage 且流末尾不是 [DONE] → 异常断流
+			// 3) 正常空流（仅 [DONE]）→ 成功
+			streamAbnormal := sawFinishReason && localUsage == nil && !sawDone
+			if !localConfirmed || streamAbnormal {
+				// Stream ended without content or with abnormal truncation
+				reason := classifyEmptyResponse(lineCount, bytesRead, sawDone, lastLine, resp.StatusCode)
+				// dyt-20: 附加 finish_reason 异常提示
+				if streamAbnormal {
+					reason = fmt.Sprintf("%s | 异常：finish_reason=%s 出现但缺 usage（疑似流中断）", reason, finishReasonValue)
+				}
+				return false, nil, "", nil, nil, resp.StatusCode, reason, respBodyBuf.String()
+			}
 
-				// 第二次（重试）
-				success, probeUsage2, responseSnippet2, _, _, _, errReason2, _ := doProbe("retry-1")
-				if !success {
-					// 两次都空 → 记录失败日志，触发 fallback
-					combinedReason := errReason
-					if errReason2 != "" && errReason2 != errReason {
-						combinedReason = errReason + "；重试1次仍空: " + errReason2
-					} else if errReason2 != "" {
-						combinedReason = errReason + "；重试1次仍空"
-					}
+			return true, localUsage, localSnippet, &localBuf, localScanner, resp.StatusCode, "", respBodyBuf.String()
+			}
 
-					logger.Warnf(ctx, "stream probe returned empty response after retry: %s, triggering fallback", combinedReason)
+		// dyt-24: 探测循环（attempt-0 是原始请求，attempt-1..N 是重试）
+		totalAttempts := retryCount + 1
+		var lastSuccess bool
+		var lastProbeUsage *model.Usage
+		var lastResponseSnippet string
+		var lastBuf *bytes.Buffer
+		var lastScanner *bufio.Scanner
 
-					chName := c.GetString(ctxkey.ChannelName)
-					chId := c.GetInt(ctxkey.ChannelId)
-					probeFailLogContent := getRequestPreview(textRequest)
-					if probeFailLogContent != "" {
-						probeFailLogContent = fmt.Sprintf("探测失败，渠道：%s(#%d)，模型：%s→%s，请求内容：%s | 上游：%s", chName, chId, meta.OriginModelName, meta.ActualModelName, probeFailLogContent, combinedReason)
-					} else {
-						probeFailLogContent = fmt.Sprintf("探测失败，渠道：%s(#%d)，模型：%s→%s，%s | 空响应 | 上游：%s", chName, chId, meta.OriginModelName, meta.ActualModelName, chName, combinedReason)
-					}
-					failLogId := dbmodel.RecordConsumeLogWithId(ctx, &dbmodel.Log{
-						UserId:            meta.UserId,
-						TokenName:         meta.TokenName,
-						ModelName:         meta.OriginModelName,
-						ChannelId:         chId,
-						PromptTokens:      promptTokens,
-						CompletionTokens:  0,
-						Quota:             0,
-						Content:           probeFailLogContent,
-						IsStream:          true,
-						ElapsedTime:       helper.CalcElapsedTime(meta.StartTime),
-						SystemPromptReset: systemPromptReset,
+		for attempt := 0; attempt < totalAttempts; attempt++ {
+			success, probeUsage, responseSnippet, buf, scanner, _, errReason, respBody := doProbe(attempt)
+
+			if success {
+				lastSuccess = true
+				lastProbeUsage = probeUsage
+				lastResponseSnippet = responseSnippet
+				lastBuf = buf
+				lastScanner = scanner
+				break
+			}
+
+			// 失败：写独立错误日志（含完整响应体）
+			attemptLabel := "原始请求"
+			if attempt > 0 {
+				attemptLabel = fmt.Sprintf("重试-%d", attempt)
+			}
+
+			chName := c.GetString(ctxkey.ChannelName)
+			chId := c.GetInt(ctxkey.ChannelId)
+			probeFailLogContent := getRequestPreview(textRequest)
+			if probeFailLogContent != "" {
+				probeFailLogContent = fmt.Sprintf("[%s] 探测失败，渠道：%s(#%d)，模型：%s→%s，请求内容：%s | 上游：%s",
+					attemptLabel, chName, chId, meta.OriginModelName, meta.ActualModelName, probeFailLogContent, errReason)
+			} else {
+				probeFailLogContent = fmt.Sprintf("[%s] 探测失败，渠道：%s(#%d)，模型：%s→%s | 上游：%s",
+					attemptLabel, chName, chId, meta.OriginModelName, meta.ActualModelName, errReason)
+			}
+
+			failLogId := dbmodel.RecordConsumeLogWithId(ctx, &dbmodel.Log{
+				UserId:            meta.UserId,
+				TokenName:         meta.TokenName,
+				ModelName:         meta.OriginModelName,
+				ChannelId:         chId,
+				PromptTokens:      promptTokens,
+				CompletionTokens:  0,
+				Quota:             0,
+				Content:           probeFailLogContent,
+				IsStream:          true,
+				ElapsedTime:       helper.CalcElapsedTime(meta.StartTime),
+				SystemPromptReset: systemPromptReset,
+			})
+
+			// dyt-24: 异步写 payload — 响应体写 respBody（完整上游响应）
+			if failLogId > 0 {
+				if reqJSON, ok := c.Get("dyt20_request_json"); ok {
+					reqStr, _ := reqJSON.(string)
+					dbmodel.RecordLogPayloadAsync(&dbmodel.LogPayload{
+						LogId:     failLogId,
+						Request:   reqStr,
+						Response:  respBody,
+						Error:     errReason,
+						CreatedAt: meta.StartTime.Unix(),
 					})
-
-					// dyt-20: 异步写 payload（包含原始请求/响应/错误）
-					if failLogId > 0 {
-						if reqJSON, ok := c.Get("dyt20_request_json"); ok {
-							reqStr, _ := reqJSON.(string)
-							dbmodel.RecordLogPayloadAsync(&dbmodel.LogPayload{
-								LogId:     failLogId,
-								Request:   reqStr,
-								Response:  "", // 探测阶段响应被丢掉，保留空
-								Error:     combinedReason,
-								CreatedAt: meta.StartTime.Unix(),
-							})
-						}
-					}
-
-					billing.ReturnPreConsumedQuota(ctx, preConsumedQuota, meta.TokenId)
-					return openai.ErrorWrapper(fmt.Errorf("empty response from channel during probe: %s", combinedReason), "empty_response", http.StatusBadGateway)
 				}
-
-				logger.Infof(ctx, "stream probe succeeded on retry-1 after first empty response")
-				probeUsage = probeUsage2
-				responseSnippet = responseSnippet2
 			}
 
-			logger.Infof(ctx, "stream finished with passthrough, usage: %+v", probeUsage)
+			logger.Warnf(ctx, "[%s] stream probe returned empty response (attempt %d/%d): %s",
+				attemptLabel, attempt+1, totalAttempts, errReason)
+		}
+
+		if lastSuccess {
+				_ = lastBuf
+				_ = lastScanner
+			_ = lastBuf
+			_ = lastScanner
+
+			logger.Infof(ctx, "stream finished with passthrough, usage: %+v", lastProbeUsage)
 			render.Done(c)
 
-			go postConsumeQuota(ctx, probeUsage, meta, textRequest, ratio, preConsumedQuota, modelRatio, groupRatio, systemPromptReset, responseSnippet)
+			go postConsumeQuota(ctx, lastProbeUsage, meta, textRequest, ratio, preConsumedQuota, modelRatio, groupRatio, systemPromptReset, lastResponseSnippet)
 			return nil
-		} else {
-			logger.Warnf(ctx, "probe request body failed: %s", err.Error())
 		}
+
+		billing.ReturnPreConsumedQuota(ctx, preConsumedQuota, meta.TokenId)
+		return openai.ErrorWrapper(fmt.Errorf("all %d probe attempts returned empty response from channel", totalAttempts), "empty_response", http.StatusBadGateway)
 	}
 
 	// Normal flow (non-stream or probe failed)
