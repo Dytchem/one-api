@@ -1,4 +1,6 @@
-FROM node:16 AS builder
+# syntax=docker/dockerfile:1
+# dyt-29: pin base images to known-good versions (was node:16, golang:alpine, alpine:latest)
+FROM node:20-alpine AS builder
 
 WORKDIR /web
 COPY ./VERSION .
@@ -14,7 +16,7 @@ RUN DISABLE_ESLINT_PLUGIN='true' REACT_APP_VERSION=$(cat ./VERSION) npm run buil
     DISABLE_ESLINT_PLUGIN='true' REACT_APP_VERSION=$(cat ./VERSION) echo "air disabled" & \
     wait
 
-FROM golang:alpine AS builder2
+FROM golang:1.22-alpine3.20 AS builder2
 
 RUN apk add --no-cache \
     gcc \
@@ -36,7 +38,7 @@ COPY --from=builder /web/build ./web/build
 
 RUN go build -trimpath -ldflags "-s -w -X 'github.com/songquanpeng/one-api/common.Version=$(cat VERSION)' -linkmode external -extldflags '-static'" -o one-api
 
-FROM alpine:latest
+FROM alpine:3.20
 
 RUN apk add --no-cache ca-certificates tzdata
 
