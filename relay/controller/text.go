@@ -73,20 +73,23 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 
 	// Stream probe: buffer until first content token, then replay + passthrough
 	if meta.IsStream {
-		// Create a clone for probe
-		probeRequest := &model.GeneralOpenAIRequest{}
-		probeBytes, _ := json.Marshal(textRequest)
-		json.Unmarshal(probeBytes, probeRequest)
-		// Use streaming for probe
-		probeRequest.Stream = true
+		// dyt-23: 探测不再克隆请求，直接用 textRequest 的 JSON 作为 body
+		// 这样两次 doProbe 发送完全相同的 body 给上游
+		textRequest.Stream = true // 探测总是流式
 
-		// Get probe request body
-		probeRequestBody, err := getRequestBody(c, meta, probeRequest, adaptor)
-		if err == nil {
+		// 序列化 textRequest 作为 body（保持与原请求字段完全一致）
+		probeBodyBytes, _ := json.Marshal(textRequest)
+
+		// 重置 c.Request.Body 让后续 getRequestBody 调用走原 body 路径
+		c.Request.Body = io.NopCloser(bytes.NewBuffer(probeBodyBytes))
+
+		// dyt-23: 每次 doProbe 从同一份 bytes 创建新 reader，保证 body 完全相同
+		if true {
 			// 改进2：探测 empty response 时同渠道重试 1 次
 			// 抽成闭包便于复用
 			doProbe := func(retryLabel string) (success bool, probeUsage *model.Usage, responseSnippet string, buf *bytes.Buffer, scanner *bufio.Scanner, statusCode int, errReason string, respBody string) {
-				resp, doErr := adaptor.DoRequest(c, meta, probeRequestBody)
+				// dyt-23: 每次重试都从原 bytes 重新创建 reader，确保 body 完全一致
+				resp, doErr := adaptor.DoRequest(c, meta, bytes.NewReader(probeBodyBytes))
 				if doErr != nil || resp == nil || resp.StatusCode/100 != 2 {
 					code := 0
 					if resp != nil {
