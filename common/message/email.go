@@ -58,9 +58,10 @@ func SendEmail(subject string, receiver string, content string) error {
 		var conn net.Conn
 		var err error
 		if config.SMTPPort == 465 {
+			// dyt-27: 移除 InsecureSkipVerify，强制 TLS 证书校验
+			// 紧急回滚：主人如需临时跳过证书校验，编辑此行加 InsecureSkipVerify: true
 			tlsConfig := &tls.Config{
-				InsecureSkipVerify: true,
-				ServerName:         config.SMTPServer,
+				ServerName: config.SMTPServer,
 			}
 			conn, err = tls.Dial("tcp", fmt.Sprintf("%s:%d", config.SMTPServer, config.SMTPPort), tlsConfig)
 		} else {

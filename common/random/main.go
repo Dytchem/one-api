@@ -1,10 +1,12 @@
 package random
 
 import (
+	"crypto/rand"
+	"encoding/binary"
+	"math/big"
+
 	"github.com/google/uuid"
-	"math/rand"
 	"strings"
-	"time"
 )
 
 func GetUUID() string {
@@ -16,17 +18,49 @@ func GetUUID() string {
 const keyChars = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 const keyNumbers = "0123456789"
 
-func init() {
-	rand.Seed(time.Now().UnixNano())
+// cryptoRandInt 返回 [0, n) 范围的加密随机整数
+func cryptoRandInt(n int) (int, error) {
+	if n <= 0 {
+		return 0, nil
+	}
+	bi := big.NewInt(int64(n))
+	r, err := rand.Int(rand.Reader, bi)
+	if err != nil {
+		return 0, err
+	}
+	return int(r.Int64()), nil
 }
 
+// readCharset 用 crypto/rand 填充 n 字节的字符集随机
+// dyt-27: 替代原 math/rand 实现，确保 API key 不可预测
+func readCharset(charset string, n int) (string, error) {
+	cs := []byte(charset)
+	csLen := len(cs)
+	if csLen == 0 || n <= 0 {
+		return "", nil
+	}
+	out := make([]byte, n)
+	for i := 0; i < n; i++ {
+		idx, err := cryptoRandInt(csLen)
+		if err != nil {
+			return "", err
+		}
+		out[i] = cs[idx]
+	}
+	return string(out), nil
+}
+
+// GenerateKey 完全等价旧实现：48 字符，前 16 字符真随机 + 后 32 字符 UUID 转大写小写交替
+// 行为兼容：旧 token 仍然有效
 func GenerateKey() string {
-	rand.Seed(time.Now().UnixNano())
-	key := make([]byte, 48)
-	for i := 0; i < 16; i++ {
-		key[i] = keyChars[rand.Intn(len(keyChars))]
+	prefix, err := readCharset(keyChars, 16)
+	if err != nil {
+		// 极端情况：crypto/rand 失败时降级为 UUID 段
+		prefix = GetUUID()[:16]
 	}
 	uuid_ := GetUUID()
+	key := make([]byte, 48)
+	copy(key[:16], prefix)
 	for i := 0; i < 32; i++ {
 		c := uuid_[i]
 		if i%2 == 0 && c >= 'a' && c <= 'z' {
@@ -38,24 +72,39 @@ func GenerateKey() string {
 }
 
 func GetRandomString(length int) string {
-	rand.Seed(time.Now().UnixNano())
-	key := make([]byte, length)
-	for i := 0; i < length; i++ {
-		key[i] = keyChars[rand.Intn(len(keyChars))]
+	s, err := readCharset(keyChars, length)
+	if err != nil {
+		return GetUUID()[:min(length, 32)]
 	}
-	return string(key)
+	return s
 }
 
 func GetRandomNumberString(length int) string {
-	rand.Seed(time.Now().UnixNano())
-	key := make([]byte, length)
-	for i := 0; i < length; i++ {
-		key[i] = keyNumbers[rand.Intn(len(keyNumbers))]
+	s, err := readCharset(keyNumbers, length)
+	if err != nil {
+		return GetUUID()[:min(length, 32)]
 	}
-	return string(key)
+	return s
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // RandRange returns a random number between min and max (max is not included)
+// dyt-27: 升级为 crypto/rand，避免渠道选择可被预测
 func RandRange(min, max int) int {
-	return min + rand.Intn(max-min)
+	if max <= min {
+		return min
+	}
+	span := max - min
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return min // 失败回退
+	}
+	n := binary.BigEndian.Uint64(b[:])
+	return min + int(n%uint64(span))
 }

@@ -76,6 +76,23 @@ _Fork 自 [songquanpeng/one-api](https://github.com/songquanpeng/one-api)，自�
 | 构建优化 | 移除 QEMU 多架构、启用 Docker 层缓存，构建时间从 6min→~3min |
 | 仅 tag 触发 | 推送 tag 才构建，普通 commit 不触发 |
 
+### 安全加固（dyt-27）
+
+| 改进 | 说明 |
+|------|------|
+| CORS 白名单 | 移除 `AllowAllOrigins + AllowCredentials` 同开的 CSRF 风险，通过 `ALLOWED_ORIGINS` 环境变量配置（逗号分隔），未配置时降级为任意 origin 不带 cookie |
+| SMTP TLS 严格校验 | 移除 `InsecureSkipVerify: true`，强制 TLS 证书校验（主人自部署 SMTP 应有合规证书）|
+| 加密随机数 | `common/random` 从 `math/rand` 升级为 `crypto/rand`，所有 token/key 不可预测（旧 token 仍有效）|
+
+#### 安全环境变量（dyt-27 新增）
+
+| 变量 | 含义 | 默认 |
+|------|------|------|
+| `ALLOWED_ORIGINS` | CORS 白名单 origin，逗号分隔（如 `https://one.example.com,https://two.example.com`）；**留空** = 任意 origin 跨域（不带 cookie，安全降级） | 留空 |
+| `SMTP_SKIP_VERIFY` | （未启用）SMTP TLS 跳过证书校验；如需临时回退请编辑 `common/message/email.go` | — |
+
+> dyt-27 是安全修复版本，**不影响**任何 token 兼容性、API 接口、日志格式。
+
 完整变更记录 → [GitHub Releases](https://github.com/Dytchem/one-api/releases)
 
 ## 快速部署
