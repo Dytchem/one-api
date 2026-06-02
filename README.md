@@ -160,6 +160,23 @@ dyt-30 代码改动 = 1 行（zhipu adaptor 的 import path），零回归风险
 
 完整变更记录 → [GitHub Releases](https://github.com/Dytchem/one-api/releases)
 
+### Round 3 安全加固（dyt-34~dyt-35）
+
+| ID | 严重度 | 修复 | dyt |
+|----|--------|------|-----|
+| R3-S1 | 🟠 中 | cookie 显式 HttpOnly+SameSite+MaxAge、新增 `SESSION_COOKIE_SECURE` 环境变量 | dyt-34 |
+| R3-S2 | 🟠 中 | SendPasswordResetEmail 防邮箱 oracle（存在/不存在都返回 success） | dyt-34 |
+| R3-S3 | 🟠 中 | 禁用用户时主动清 Redis `user_enabled` 缓存，不再等 SyncFrequency（默认 10 分钟） | dyt-35 |
+| R3-S6 | 🟡 低 | 启动日志 `password is 123456` → `default password is shown in README` | dyt-35 |
+
+#### 更多环境变量（dyt-34）
+
+| 变量 | 含义 | 默认 |
+|------|------|------|
+| `SESSION_COOKIE_SECURE` | cookie Secure 标记（主人用 HTTPS 时设 true）| false |
+
+完整变更记录 → [GitHub Releases](https://github.com/Dytchem/one-api/releases)
+
 ## 快速部署
 
 ```bash
