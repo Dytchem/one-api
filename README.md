@@ -140,6 +140,23 @@ dyt-30 代码改动 = 1 行（zhipu adaptor 的 import path），零回归风险
 
 **所有 8 个安全问题已修复**。4 个 dyt tag，累计代码改动 ~10 行，**0 业务行为变化**。
 
+### Round 2 安全加固（dyt-31~dyt-33）
+
+| ID | 严重度 | 修复 | dyt |
+|----|--------|------|-----|
+| R2-S1 | 🟡 低 | SessionSecret 环境变量支持（已在 common/init.go 原有，加 README 说明） | dyt-31 |
+| R2-S2 | 🟠 中 | RelayTimeout 默认 0→300s（防恶意上游卡死 worker）| dyt-31 |
+| R2-S3 | 🟠 中 | panic 时请求 body 不再打到日志（防敏感信息泄露）| dyt-32 |
+| R2-S6 | 🟡 低 | log_payloads 清理 + README 说明 | dyt-33 |
+
+#### 新增环境变量（dyt-31~dyt-32）
+
+| 变量 | 含义 | 默认 |
+|------|------|------|
+| `SESSION_SECRET` | Session 加密密钥（≥32 字符随机串）；留空=每次启动 uuid 随机（重启后所有用户登出）| 留空 |
+| `RELAY_TIMEOUT` | 转发请求超时（秒）| 300 |
+| `PANIC_LOG_BODY` | panic 时是否打请求 body 到日志（设 true 时打）| false |
+
 完整变更记录 → [GitHub Releases](https://github.com/Dytchem/one-api/releases)
 
 ## 快速部署
