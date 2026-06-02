@@ -93,6 +93,17 @@ _Fork 自 [songquanpeng/one-api](https://github.com/songquanpeng/one-api)，自�
 
 > dyt-27 是安全修复版本，**不影响**任何 token 兼容性、API 接口、日志格式。
 
+### 依赖升级（dyt-28）
+
+| 改进 | 说明 |
+|------|------|
+| Go 1.20 → 1.22 | Go 1.20 已 EOL（2024-08），升至 1.22 LTS |
+| gin 1.10.0 → 1.10.1 | patch 版本，零 API 变化 |
+| sonic 1.11.6 → 1.12.5 | 修 GHSA-8633-2w75-77qx ReDoS（sonic 是 gin 的间接依赖）|
+| Dockerfile pin | 留待 dyt-29：pin base image 为 `golang:1.22-alpine3.20` / `alpine:3.20` / `node:20-alpine` |
+
+dyt-28 代码改动 = 0，纯依赖版本号升级，零回归风险。
+
 完整变更记录 → [GitHub Releases](https://github.com/Dytchem/one-api/releases)
 
 ## 快速部署
