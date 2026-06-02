@@ -40,6 +40,7 @@ const (
 	LogTypeManage
 	LogTypeSystem
 	LogTypeTest
+	LogTypeCancel
 )
 
 func recordLogHelper(ctx context.Context, log *Log) {
@@ -137,6 +138,13 @@ func RecordChannelAttemptLog(ctx context.Context, userId int, channelId int, cha
 			errorMessage),
 		Quota: 0,
 	}
+	recordLogHelper(ctx, log)
+}
+
+func RecordCancelLog(ctx context.Context, log *Log) {
+	log.CreatedAt = helper.GetTimestamp()
+	log.Type = LogTypeCancel
+	log.Username = GetUsernameById(log.UserId)
 	recordLogHelper(ctx, log)
 }
 

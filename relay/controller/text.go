@@ -3,7 +3,9 @@ package controller
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -89,8 +91,17 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 		retryCount := env.Int("CHANNEL_RETRY_COUNT", 1)
 		doProbe := func(attemptNum int) (success bool, probeUsage *model.Usage, responseSnippet string, buf *bytes.Buffer, scanner *bufio.Scanner, statusCode int, errReason string, respBody string) {
 			// dyt-23: 每次重试都从原 bytes 重新创建 reader，确保 body 完全一致
+			// dyt-39: 用户断开连接时立即停止
+			if ctx.Err() != nil {
+				return false, nil, "", nil, nil, 499, "__CANCEL__用户已断开连接", ""
+			}
+
 			resp, doErr := adaptor.DoRequest(c, meta, bytes.NewReader(probeBodyBytes))
 			if doErr != nil || resp == nil || resp.StatusCode/100 != 2 {
+				// dyt-39: 检测 context 取消
+				if errors.Is(doErr, context.Canceled) || errors.Is(doErr, context.DeadlineExceeded) || ctx.Err() != nil {
+					return false, nil, "", nil, nil, 499, "__CANCEL__用户已断开连接", ""
+				}
 				code := 0
 				bodyStr := ""
 				if resp != nil {
@@ -136,6 +147,10 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 
 			for localScanner.Scan() {
 				data := localScanner.Text()
+				// dyt-39: 用户断开连接时立即停止读取上游
+				if ctx.Err() != nil {
+					return false, nil, "", nil, nil, 499, "__CANCEL__用户已断开连接", respBodyBuf.String()
+				}
 				lineCount++
 				bytesRead += len(data)
 				if len(data) > 0 {
@@ -301,7 +316,33 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 		var lastScanner *bufio.Scanner
 
 		for attempt := 0; attempt < totalAttempts; attempt++ {
+			// dyt-39: 用户已断开，跳过后续所有重试
+			if ctx.Err() != nil {
+				billing.ReturnPreConsumedQuota(ctx, preConsumedQuota, meta.TokenId)
+				dbmodel.RecordCancelLog(ctx, &dbmodel.Log{
+					UserId:    meta.UserId,
+					TokenName: meta.TokenName,
+					ModelName: meta.OriginModelName,
+					ChannelId: c.GetInt(ctxkey.ChannelId),
+					Content:   "用户断开连接（流式探测中）",
+				})
+				return openai.ErrorWrapper(ctx.Err(), "request_cancelled", 499)
+			}
+
 			success, probeUsage, responseSnippet, buf, scanner, _, errReason, respBody := doProbe(attempt)
+
+			// dyt-39: 检测取消
+			if strings.HasPrefix(errReason, "__CANCEL__") {
+				billing.ReturnPreConsumedQuota(ctx, preConsumedQuota, meta.TokenId)
+				dbmodel.RecordCancelLog(ctx, &dbmodel.Log{
+					UserId:    meta.UserId,
+					TokenName: meta.TokenName,
+					ModelName: meta.OriginModelName,
+					ChannelId: c.GetInt(ctxkey.ChannelId),
+					Content:   "用户断开连接（流式探测上游时）",
+				})
+				return openai.ErrorWrapper(context.Canceled, "request_cancelled", 499)
+			}
 
 			if success {
 				lastSuccess = true
@@ -386,6 +427,18 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 
 	resp, err := adaptor.DoRequest(c, meta, requestBody)
 	if err != nil {
+		// dyt-39: 用户断开 → 退配额 + 记终止日志
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil {
+			billing.ReturnPreConsumedQuota(ctx, preConsumedQuota, meta.TokenId)
+			dbmodel.RecordCancelLog(ctx, &dbmodel.Log{
+				UserId:    meta.UserId,
+				TokenName: meta.TokenName,
+				ModelName: meta.OriginModelName,
+				ChannelId: c.GetInt(ctxkey.ChannelId),
+				Content:   "用户断开连接（非流式请求上游时）",
+			})
+			return openai.ErrorWrapper(context.Canceled, "request_cancelled", 499)
+		}
 		logger.Errorf(ctx, "DoRequest failed: %s", err.Error())
 		return openai.ErrorWrapper(err, "do_request_failed", http.StatusInternalServerError)
 	}
@@ -396,6 +449,18 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 
 	usage, respErr := adaptor.DoResponse(c, resp, meta)
 	if respErr != nil {
+		// dyt-39: 用户断开 → 退配额外记终止
+		if respErr.StatusCode == 499 || ctx.Err() != nil {
+			billing.ReturnPreConsumedQuota(ctx, preConsumedQuota, meta.TokenId)
+			dbmodel.RecordCancelLog(ctx, &dbmodel.Log{
+				UserId:    meta.UserId,
+				TokenName: meta.TokenName,
+				ModelName: meta.OriginModelName,
+				ChannelId: c.GetInt(ctxkey.ChannelId),
+				Content:   "用户断开连接（非流式处理响应时）",
+			})
+			return openai.ErrorWrapper(context.Canceled, "request_cancelled", 499)
+		}
 		logger.Errorf(ctx, "respErr is not nil: %+v", respErr)
 		billing.ReturnPreConsumedQuota(ctx, preConsumedQuota, meta.TokenId)
 		return respErr

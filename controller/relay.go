@@ -60,6 +60,11 @@ func Relay(c *gin.Context) {
 		// 首次请求成功，不记录尝试日志（消费日志已足够）
 		return
 	}
+	// dyt-39: 用户断开，不重试不记录渠道错误
+	if bizErr.StatusCode == 499 {
+		c.JSON(499, gin.H{"error": bizErr.Error})
+		return
+	}
 	// 记录首次请求失败的日志
 	actualModel := c.GetString(ctxkey.ActualModel)
 	dbmodel.RecordChannelAttemptLog(ctx, userId, channelId, channelName, originalModel, actualModel, false, bizErr.Error.Message)
@@ -102,6 +107,10 @@ func Relay(c *gin.Context) {
 		if bizErr == nil {
 			// 重试成功，不记录尝试日志（消费日志已足够）
 			return
+		}
+		// dyt-39: 重试时用户断开，停止重试
+		if bizErr.StatusCode == 499 {
+			break
 		}
 		retryChannelId := c.GetInt(ctxkey.ChannelId)
 		retryChannelName := c.GetString(ctxkey.ChannelName)
