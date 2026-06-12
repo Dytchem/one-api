@@ -27,6 +27,11 @@ import { renderColorLabel } from '../helpers/render';
 import { Link } from 'react-router-dom';
 
 function renderTimestamp(timestamp, request_id) {
+  const s = timestamp2string(timestamp);
+  // dyt-42: 两行显示 (日期 / 时间)，列宽收窄
+  const parts = s.split(' ');
+  const date = parts[0] || '';
+  const time = parts[1] || '';
   return (
     <code
       onClick={async () => {
@@ -36,9 +41,10 @@ function renderTimestamp(timestamp, request_id) {
           showWarning(`请求 ID 复制失败：${request_id}`);
         }
       }}
-      style={{ cursor: 'pointer' }}
+      style={{ cursor: 'pointer', fontSize: '11px', lineHeight: '1.2' }}
     >
-      {timestamp2string(timestamp)}
+      <div>{date}</div>
+      <div>{time}</div>
     </code>
   );
 }
@@ -125,6 +131,11 @@ function renderDetail(log) {
             wordBreak: 'break-word',
             color: '#555',
             lineHeight: '1.4',
+            // dyt-42: 详情多显示一行（后端 30→50 字 + 2.4em 高度 ≈ 2 行）
+            display: '-webkit-box',
+            WebkitLineClamp: 2,
+            WebkitBoxOrient: 'vertical',
+            overflow: 'hidden',
           }}
           title={processed}
         >
@@ -453,11 +464,11 @@ const LogsTable = () => {
         <Table.Header>
           <Table.Row>
             <Table.HeaderCell
-              style={{ cursor: 'pointer', whiteSpace: 'nowrap' }}
+              style={{ cursor: 'pointer', whiteSpace: 'nowrap', textAlign: 'right' }}
               onClick={() => {
                 sortLog('created_time');
               }}
-              width={2}
+              width={1}
             >
               {t('log.table.time')}
             </Table.HeaderCell>
@@ -513,7 +524,7 @@ const LogsTable = () => {
                   {t('log.table.token_name')}
                 </Table.HeaderCell>
                 <Table.HeaderCell
-                  style={{ cursor: 'pointer', whiteSpace: 'nowrap' }}
+                  style={{ cursor: 'pointer', whiteSpace: 'nowrap', textAlign: 'right' }}
                   onClick={() => {
                     sortLog('prompt_tokens');
                   }}
@@ -522,7 +533,7 @@ const LogsTable = () => {
                   {t('log.table.prompt_tokens')}
                 </Table.HeaderCell>
                 <Table.HeaderCell
-                  style={{ cursor: 'pointer', whiteSpace: 'nowrap' }}
+                  style={{ cursor: 'pointer', whiteSpace: 'nowrap', textAlign: 'right' }}
                   onClick={() => {
                     sortLog('cache_read_tokens');
                   }}
@@ -531,7 +542,7 @@ const LogsTable = () => {
                   {t('log.table.cache_read')}
                 </Table.HeaderCell>
                 <Table.HeaderCell
-                  style={{ cursor: 'pointer', whiteSpace: 'nowrap' }}
+                  style={{ cursor: 'pointer', whiteSpace: 'nowrap', textAlign: 'right' }}
                   onClick={() => {
                     sortLog('cache_creation_tokens');
                   }}
@@ -540,7 +551,7 @@ const LogsTable = () => {
                   {t('log.table.cache_write')}
                 </Table.HeaderCell>
                 <Table.HeaderCell
-                  style={{ cursor: 'pointer', whiteSpace: 'nowrap' }}
+                  style={{ cursor: 'pointer', whiteSpace: 'nowrap', textAlign: 'right' }}
                   onClick={() => {
                     sortLog('completion_tokens');
                   }}
@@ -549,7 +560,7 @@ const LogsTable = () => {
                   {t('log.table.completion_tokens')}
                 </Table.HeaderCell>
                 <Table.HeaderCell
-                  style={{ cursor: 'pointer', whiteSpace: 'nowrap' }}
+                  style={{ cursor: 'pointer', whiteSpace: 'nowrap', textAlign: 'right' }}
                   width={1}
                 >
                   tok/s
@@ -597,7 +608,7 @@ const LogsTable = () => {
                   {showUserTokenQuota() && (
                     <>
                       {isAdminUser && (
-                        <Table.Cell>
+                        <Table.Cell style={{ paddingRight: '10px' }}>
                           {log.username ? (
                             <Label
                               basic

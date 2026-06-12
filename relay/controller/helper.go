@@ -122,8 +122,9 @@ func getRequestPreview(textRequest *relaymodel.GeneralOpenAIRequest) string {
 			cleaned := strings.TrimSpace(strings.ReplaceAll(text, "\n", " "))
 			runes := []rune(cleaned)
 			preview := cleaned
-			if len(runes) > 30 {
-				preview = string(runes[:30]) + "…"
+			// dyt-42: 30 → 50，多显示一些详情
+			if len(runes) > 50 {
+				preview = string(runes[:50]) + "…"
 			}
 			return preview
 		}

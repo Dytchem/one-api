@@ -270,8 +270,9 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 							delta := &streamResp.Choices[0].Delta
 							if c, ok := delta.Content.(string); ok && c != "" {
 								runes := []rune(c)
-								if len(runes) > 30 {
-									localSnippet = string(runes[:30]) + "…"
+								// dyt-42: 30 → 50，多显示一些详情
+								if len(runes) > 50 {
+									localSnippet = string(runes[:50]) + "…"
 								} else {
 									localSnippet = c
 								}
