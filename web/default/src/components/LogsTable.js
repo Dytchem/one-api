@@ -638,7 +638,7 @@ const LogsTable = () => {
                       <Table.Cell style={{ whiteSpace: 'nowrap', textAlign: 'right' }}>
                         {log.completion_tokens ? log.completion_tokens : '—'}
                       </Table.Cell>
-                      <Table.Cell>
+                      <Table.Cell style={{ whiteSpace: 'nowrap', textAlign: 'right' }}>
                         {renderTokPerSec(log)}
                       </Table.Cell>
                     </>
