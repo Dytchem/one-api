@@ -31,6 +31,12 @@ type Log struct {
 	ElapsedTime       int64  `json:"elapsed_time" gorm:"default:0"` // unit is ms
 	IsStream          bool   `json:"is_stream" gorm:"default:false"`
 	SystemPromptReset bool   `json:"system_prompt_reset" gorm:"default:false"`
+
+	// dyt-40: 缓存字段（只记录，不定价）
+	CacheReadTokens       int `json:"cache_read_tokens" gorm:"default:0"`
+	CacheCreationTokens   int `json:"cache_creation_tokens" gorm:"default:0"`
+	CacheCreation5mTokens int `json:"cache_creation_5m_tokens" gorm:"default:0"`
+	CacheCreation1hTokens int `json:"cache_creation_1h_tokens" gorm:"default:0"`
 }
 
 const (

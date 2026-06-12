@@ -175,17 +175,21 @@ func postConsumeQuota(ctx context.Context, usage *relaymodel.Usage, meta *meta.M
 		}
 	}
 	model.RecordConsumeLog(ctx, &model.Log{
-		UserId:            meta.UserId,
-		ChannelId:         meta.ChannelId,
-		PromptTokens:      promptTokens,
-		CompletionTokens:  completionTokens,
-		ModelName:         textRequest.Model,
-		TokenName:         meta.TokenName,
-		Quota:             int(quota),
-		Content:           logContent,
-		IsStream:          meta.IsStream,
-		ElapsedTime:       helper.CalcElapsedTime(meta.StartTime),
-		SystemPromptReset: systemPromptReset,
+		UserId:                meta.UserId,
+		ChannelId:             meta.ChannelId,
+		PromptTokens:          promptTokens,
+		CompletionTokens:      completionTokens,
+		ModelName:             textRequest.Model,
+		TokenName:             meta.TokenName,
+		Quota:                 int(quota),
+		Content:               logContent,
+		IsStream:              meta.IsStream,
+		ElapsedTime:           helper.CalcElapsedTime(meta.StartTime),
+		SystemPromptReset:     systemPromptReset,
+		CacheReadTokens:       usage.CacheReadTokens,       // dyt-40
+		CacheCreationTokens:   usage.CacheCreationTokens,   // dyt-40
+		CacheCreation5mTokens: usage.CacheCreation5mTokens, // dyt-40
+		CacheCreation1hTokens: usage.CacheCreation1hTokens, // dyt-40
 	})
 	model.UpdateUserUsedQuotaAndRequestCount(meta.UserId, quota)
 	model.UpdateChannelUsedQuota(meta.ChannelId, quota)

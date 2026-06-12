@@ -339,8 +339,10 @@
       "channel_id": "渠道 ID",
       "channel_id_placeholder": "可选值",
       "username_placeholder": "可选值",
-      "prompt_tokens": "提示词消耗",
-      "completion_tokens": "补全消耗",
+      "prompt_tokens": "输入 ↑",
+      "completion_tokens": "输出 ↓",
+      "cache_read": "缓存读",
+      "cache_write": "缓存写",
       "quota": "额度",
       "detail": "详情"
     },

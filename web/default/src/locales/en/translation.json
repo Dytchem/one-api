@@ -339,8 +339,10 @@
       "channel_id": "Channel ID",
       "channel_id_placeholder": "Optional",
       "username_placeholder": "Optional",
-      "prompt_tokens": "Prompt Tokens",
-      "completion_tokens": "Completion Tokens",
+      "prompt_tokens": "Input ↑",
+      "completion_tokens": "Output ↓",
+      "cache_read": "Cache Read",
+      "cache_write": "Cache Write",
       "quota": "Quota",
       "detail": "Detail"
     },

@@ -128,6 +128,13 @@ func StreamHandler(c *gin.Context, resp *http.Response, relayMode int) (*model.E
 			}
 			if streamResponse.Usage != nil {
 				usage = streamResponse.Usage
+				// dyt-40: 提取 cached_tokens 到顶层；DeepSeek prompt_cache_hit_tokens 也取
+				if usage.PromptTokensDetails != nil && usage.CacheReadTokens == 0 {
+					usage.CacheReadTokens = usage.PromptTokensDetails.CachedTokens
+				}
+				if usage.PromptCacheHitTokens > 0 && usage.CacheReadTokens == 0 {
+					usage.CacheReadTokens = usage.PromptCacheHitTokens
+				}
 			}
 		case relaymode.Completions:
 			render.StringData(c, data)
@@ -216,6 +223,13 @@ func Handler(c *gin.Context, resp *http.Response, promptTokens int, modelName st
 			CompletionTokens: completionTokens,
 			TotalTokens:      promptTokens + completionTokens,
 		}
+	}
+	// dyt-40: 从嵌套字段提取 OpenAI cached_tokens 到顶层；DeepSeek prompt_cache_hit_tokens 也取
+	if textResponse.Usage.PromptTokensDetails != nil && textResponse.Usage.CacheReadTokens == 0 {
+		textResponse.Usage.CacheReadTokens = textResponse.Usage.PromptTokensDetails.CachedTokens
+	}
+	if textResponse.Usage.PromptCacheHitTokens > 0 && textResponse.Usage.CacheReadTokens == 0 {
+		textResponse.Usage.CacheReadTokens = textResponse.Usage.PromptCacheHitTokens
 	}
 	return nil, &textResponse.Usage
 }

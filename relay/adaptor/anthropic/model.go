@@ -57,8 +57,18 @@ type Request struct {
 }
 
 type Usage struct {
-	InputTokens  int `json:"input_tokens"`
-	OutputTokens int `json:"output_tokens"`
+	InputTokens              int `json:"input_tokens"`
+	OutputTokens             int `json:"output_tokens"`
+	CacheReadInputTokens     int `json:"cache_read_input_tokens,omitempty"`     // dyt-40
+	CacheCreationInputTokens int `json:"cache_creation_input_tokens,omitempty"` // dyt-40
+	// dyt-40: 新版 Anthropic 区分 5min / 1h TTL
+	CacheCreation            *CacheCreation `json:"cache_creation,omitempty"`
+}
+
+// dyt-40: Anthropic 5min / 1h 区分
+type CacheCreation struct {
+	Ephemeral5mInputTokens int `json:"ephemeral_5m_input_tokens,omitempty"`
+	Ephemeral1hInputTokens int `json:"ephemeral_1h_input_tokens,omitempty"`
 }
 
 type Error struct {

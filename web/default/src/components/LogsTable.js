@@ -453,7 +453,7 @@ const LogsTable = () => {
         <Table.Header>
           <Table.Row>
             <Table.HeaderCell
-              style={{ cursor: 'pointer' }}
+              style={{ cursor: 'pointer', whiteSpace: 'nowrap' }}
               onClick={() => {
                 sortLog('created_time');
               }}
@@ -463,7 +463,7 @@ const LogsTable = () => {
             </Table.HeaderCell>
             {isAdminUser && (
               <Table.HeaderCell
-                style={{ cursor: 'pointer' }}
+                style={{ cursor: 'pointer', whiteSpace: 'nowrap' }}
                 onClick={() => {
                   sortLog('channel');
                 }}
@@ -473,7 +473,7 @@ const LogsTable = () => {
               </Table.HeaderCell>
             )}
             <Table.HeaderCell
-              style={{ cursor: 'pointer' }}
+              style={{ cursor: 'pointer', whiteSpace: 'nowrap' }}
               onClick={() => {
                 sortLog('type');
               }}
@@ -482,7 +482,7 @@ const LogsTable = () => {
               {t('log.table.type')}
             </Table.HeaderCell>
             <Table.HeaderCell
-              style={{ cursor: 'pointer' }}
+              style={{ cursor: 'pointer', whiteSpace: 'nowrap' }}
               onClick={() => {
                 sortLog('model_name');
               }}
@@ -494,26 +494,26 @@ const LogsTable = () => {
               <>
                 {isAdminUser && (
                   <Table.HeaderCell
-                    style={{ cursor: 'pointer' }}
+                    style={{ cursor: 'pointer', whiteSpace: 'nowrap' }}
                     onClick={() => {
                       sortLog('username');
                     }}
-                    width={2}
+                    width={1}
                   >
                     {t('log.table.username')}
                   </Table.HeaderCell>
                 )}
                 <Table.HeaderCell
-                  style={{ cursor: 'pointer' }}
+                  style={{ cursor: 'pointer', whiteSpace: 'nowrap' }}
                   onClick={() => {
                     sortLog('token_name');
                   }}
-                  width={2}
+                  width={1}
                 >
                   {t('log.table.token_name')}
                 </Table.HeaderCell>
                 <Table.HeaderCell
-                  style={{ cursor: 'pointer' }}
+                  style={{ cursor: 'pointer', whiteSpace: 'nowrap' }}
                   onClick={() => {
                     sortLog('prompt_tokens');
                   }}
@@ -522,7 +522,25 @@ const LogsTable = () => {
                   {t('log.table.prompt_tokens')}
                 </Table.HeaderCell>
                 <Table.HeaderCell
-                  style={{ cursor: 'pointer' }}
+                  style={{ cursor: 'pointer', whiteSpace: 'nowrap' }}
+                  onClick={() => {
+                    sortLog('cache_read_tokens');
+                  }}
+                  width={1}
+                >
+                  {t('log.table.cache_read')}
+                </Table.HeaderCell>
+                <Table.HeaderCell
+                  style={{ cursor: 'pointer', whiteSpace: 'nowrap' }}
+                  onClick={() => {
+                    sortLog('cache_creation_tokens');
+                  }}
+                  width={1}
+                >
+                  {t('log.table.cache_write')}
+                </Table.HeaderCell>
+                <Table.HeaderCell
+                  style={{ cursor: 'pointer', whiteSpace: 'nowrap' }}
                   onClick={() => {
                     sortLog('completion_tokens');
                   }}
@@ -531,14 +549,16 @@ const LogsTable = () => {
                   {t('log.table.completion_tokens')}
                 </Table.HeaderCell>
                 <Table.HeaderCell
-                  style={{ cursor: 'pointer' }}
+                  style={{ cursor: 'pointer', whiteSpace: 'nowrap' }}
                   width={1}
                 >
                   tok/s
                 </Table.HeaderCell>
               </>
             )}
-            <Table.HeaderCell>{t('log.table.detail')}</Table.HeaderCell>
+            <Table.HeaderCell style={{ whiteSpace: 'nowrap' }}>
+              {t('log.table.detail')}
+            </Table.HeaderCell>
           </Table.Row>
         </Table.Header>
 
@@ -595,10 +615,16 @@ const LogsTable = () => {
                         {log.token_name ? renderColorLabel(log.token_name) : ''}
                       </Table.Cell>
 
-                      <Table.Cell>
+                      <Table.Cell style={{ whiteSpace: 'nowrap' }}>
                         {log.prompt_tokens ? log.prompt_tokens : ''}
                       </Table.Cell>
-                      <Table.Cell>
+                      <Table.Cell style={{ whiteSpace: 'nowrap' }}>
+                        {log.cache_read_tokens ? log.cache_read_tokens : ''}
+                      </Table.Cell>
+                      <Table.Cell style={{ whiteSpace: 'nowrap' }}>
+                        {log.cache_creation_tokens ? log.cache_creation_tokens : ''}
+                      </Table.Cell>
+                      <Table.Cell style={{ whiteSpace: 'nowrap' }}>
                         {log.completion_tokens ? log.completion_tokens : ''}
                       </Table.Cell>
                       <Table.Cell>
