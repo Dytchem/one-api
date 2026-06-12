@@ -615,17 +615,17 @@ const LogsTable = () => {
                         {log.token_name ? renderColorLabel(log.token_name) : ''}
                       </Table.Cell>
 
-                      <Table.Cell style={{ whiteSpace: 'nowrap' }}>
-                        {log.prompt_tokens ? log.prompt_tokens : ''}
+                      <Table.Cell style={{ whiteSpace: 'nowrap', textAlign: 'right' }}>
+                        {log.prompt_tokens ? log.prompt_tokens : '—'}
                       </Table.Cell>
-                      <Table.Cell style={{ whiteSpace: 'nowrap' }}>
-                        {log.cache_read_tokens ? log.cache_read_tokens : ''}
+                      <Table.Cell style={{ whiteSpace: 'nowrap', textAlign: 'right' }}>
+                        {log.cache_read_tokens ? log.cache_read_tokens : '—'}
                       </Table.Cell>
-                      <Table.Cell style={{ whiteSpace: 'nowrap' }}>
-                        {log.cache_creation_tokens ? log.cache_creation_tokens : ''}
+                      <Table.Cell style={{ whiteSpace: 'nowrap', textAlign: 'right' }}>
+                        {log.cache_creation_tokens ? log.cache_creation_tokens : '—'}
                       </Table.Cell>
-                      <Table.Cell style={{ whiteSpace: 'nowrap' }}>
-                        {log.completion_tokens ? log.completion_tokens : ''}
+                      <Table.Cell style={{ whiteSpace: 'nowrap', textAlign: 'right' }}>
+                        {log.completion_tokens ? log.completion_tokens : '—'}
                       </Table.Cell>
                       <Table.Cell>
                         {renderTokPerSec(log)}
