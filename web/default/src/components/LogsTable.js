@@ -41,7 +41,8 @@ function renderTimestamp(timestamp, request_id) {
           showWarning(`请求 ID 复制失败：${request_id}`);
         }
       }}
-      style={{ cursor: 'pointer', fontSize: '11px', lineHeight: '1.2' }}
+      // dyt-45: 加 nowrap 让日期 "2026-06-13" 不换行
+      style={{ cursor: 'pointer', fontSize: '11px', lineHeight: '1.2', whiteSpace: 'nowrap' }}
     >
       <div>{date}</div>
       <div>{time}</div>
@@ -131,7 +132,7 @@ function renderDetail(log) {
             wordBreak: 'break-word',
             color: '#555',
             lineHeight: '1.4',
-            // dyt-44: 详情 2→3 行
+            // dyt-45: 详情 2→3 行
             display: '-webkit-box',
             WebkitLineClamp: 3,
             WebkitBoxOrient: 'vertical',
@@ -463,13 +464,12 @@ const LogsTable = () => {
       <Table basic={'very'} compact size='small' className='logs-table'>
         <Table.Header>
           <Table.Row>
-            {/* dyt-44: 时间列 1→2 + nowrap，让 "2026-06-13" 完整不换行 */}
             <Table.HeaderCell
               style={{ cursor: 'pointer', whiteSpace: 'nowrap', textAlign: 'right' }}
               onClick={() => {
                 sortLog('created_time');
               }}
-              width={2}
+              width={1}
             >
               {t('log.table.time')}
             </Table.HeaderCell>
@@ -493,37 +493,34 @@ const LogsTable = () => {
             >
               {t('log.table.type')}
             </Table.HeaderCell>
-            {/* dyt-44: 模型列 2→1，长模型名由徽章内部换行 */}
             <Table.HeaderCell
               style={{ cursor: 'pointer', whiteSpace: 'nowrap' }}
               onClick={() => {
                 sortLog('model_name');
               }}
-              width={1}
+              width={2}
             >
               {t('log.table.model')}
             </Table.HeaderCell>
             {showUserTokenQuota() && (
               <>
                 {isAdminUser && (
-                  /* dyt-44: 用户名 1→2，居中显示更舒服 */
                   <Table.HeaderCell
                     style={{ cursor: 'pointer', whiteSpace: 'nowrap' }}
                     onClick={() => {
                       sortLog('username');
                     }}
-                    width={2}
+                    width={1}
                   >
                     {t('log.table.username')}
                   </Table.HeaderCell>
                 )}
-                {/* dyt-44: 令牌名 1→2 */}
                 <Table.HeaderCell
                   style={{ cursor: 'pointer', whiteSpace: 'nowrap' }}
                   onClick={() => {
                     sortLog('token_name');
                   }}
-                  width={2}
+                  width={1}
                 >
                   {t('log.table.token_name')}
                 </Table.HeaderCell>
@@ -656,8 +653,7 @@ const LogsTable = () => {
 
         <Table.Footer>
           <Table.Row>
-            {/* dyt-44: 总列数 admin 12, non-admin 11 */}
-            <Table.HeaderCell colSpan={isAdminUser ? '12' : '11'}>
+            <Table.HeaderCell colSpan={isAdminUser ? '10' : '9'}>
               <Select
                 placeholder={t('log.type.select')}
                 options={LOG_OPTIONS}
