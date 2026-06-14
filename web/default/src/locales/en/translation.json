@@ -817,7 +817,9 @@
         "new_password": "New password",
         "button": "Submit",
         "button_disabled": "Password reset completed",
-        "notice": "New password has been generated, please click the password field or button above to copy. Please login and change your password as soon as possible!"
+        "notice": "New password has been generated, please click the password field or button above to copy. Please login and change your password as soon as possible!",
+        "copy_success": "New password copied to clipboard",
+        "copy_failed": "Copy failed, please copy the new password manually"
       }
     }
   },
@@ -868,6 +870,8 @@
     "no_payload": "No full request/response payload available (possibly old log format).",
     "payload_load_fail": "Payload load failed",
     "channel_placeholder": "Channel ID",
-    "model_placeholder": "Model Name"
+    "model_placeholder": "Model Name",
+    "copy_success": "Copied to clipboard",
+    "copy_failed": "Copy failed, please copy manually"
   }
 }

@@ -113,10 +113,13 @@ const PasswordResetConfirm = () => {
                     cursor: 'pointer',
                     backgroundColor: '#f8f9fa',
                   }}
-                  onClick={(e) => {
+                  onClick={async (e) => {
                     e.target.select();
-                    navigator.clipboard.writeText(newPassword);
-                    showNotice(t('auth.reset.confirm.notice'));
+                    if (await copy(newPassword)) {
+                      showNotice(t('auth.reset.confirm.copy_success', '新密码已复制到剪贴板'));
+                    } else {
+                      showNotice(t('auth.reset.confirm.copy_failed', '复制失败，请手动复制新密码'));
+                    }
                   }}
                 />
               )}

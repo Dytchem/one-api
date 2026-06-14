@@ -819,7 +819,9 @@
         "new_password": "新密码",
         "button": "提交",
         "button_disabled": "密码重置完成",
-        "notice": "新密码已生成，请点击密码框或上方按钮复制。请及时登录并修改密码！"
+        "notice": "新密码已生成，请点击密码框或上方按钮复制。请及时登录并修改密码！",
+        "copy_success": "新密码已复制到剪贴板",
+        "copy_failed": "复制失败，请手动复制新密码"
       }
     }
   },
@@ -864,6 +866,8 @@
     "no_payload": "该日志暂无完整请求/响应载荷（可能是旧版本日志）。",
     "payload_load_fail": "载荷加载失败",
     "channel_placeholder": "渠道ID",
-    "model_placeholder": "模型名"
+    "model_placeholder": "模型名",
+    "copy_success": "已复制到剪贴板",
+    "copy_failed": "复制失败，请手动复制"
   }
 }

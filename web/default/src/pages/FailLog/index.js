@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Card, Table, Button, Modal, Label, Input, Select, Message } from 'semantic-ui-react';
 import { useTranslation } from 'react-i18next';
-import { API, showError } from '../../helpers';
+import { API, showError, showWarning, showNotice, copy } from '../../helpers';
 
 // 渠道名缓存
 const channelCache = {};
@@ -278,7 +278,13 @@ const FailLog = () => {
                         floated='right'
                         icon='copy'
                         content={t('fail_log.copy', '复制')}
-                        onClick={() => navigator.clipboard.writeText(formatJSON(payloadData.request))}
+                        onClick={async () => {
+                          if (await copy(formatJSON(payloadData.request))) {
+                            showNotice(t('fail_log.copy_success', '已复制到剪贴板'));
+                          } else {
+                            showWarning(t('fail_log.copy_failed', '复制失败，请手动复制'));
+                          }
+                        }}
                       />
                     </Card.Header>
                     <pre style={{
@@ -301,7 +307,13 @@ const FailLog = () => {
                         floated='right'
                         icon='copy'
                         content={t('fail_log.copy', '复制')}
-                        onClick={() => navigator.clipboard.writeText(formatJSON(payloadData.response))}
+                        onClick={async () => {
+                          if (await copy(formatJSON(payloadData.response))) {
+                            showNotice(t('fail_log.copy_success', '已复制到剪贴板'));
+                          } else {
+                            showWarning(t('fail_log.copy_failed', '复制失败，请手动复制'));
+                          }
+                        }}
                       />
                     </Card.Header>
                     <pre style={{

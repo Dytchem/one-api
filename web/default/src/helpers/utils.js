@@ -39,14 +39,45 @@ export function getFooterHTML() {
 }
 
 export async function copy(text) {
-  let okay = true;
-  try {
-    await navigator.clipboard.writeText(text);
-  } catch (e) {
-    okay = false;
-    console.error(e);
+  // 1) 优先使用现代 Clipboard API（要求 secure context：HTTPS / localhost / 127.0.0.1）
+  if (typeof navigator !== 'undefined' && navigator.clipboard && window.isSecureContext) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch (e) {
+      // 权限被拒、文档失焦等 → 进入兜底
+      console.warn('navigator.clipboard.writeText failed, falling back to execCommand:', e);
+    }
   }
-  return okay;
+  // 2) 兜底：临时 textarea + execCommand（兼容 HTTP origin / 旧浏览器）
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    // 离屏但仍可被 select
+    ta.style.position = 'fixed';
+    ta.style.top = '0';
+    ta.style.left = '0';
+    ta.style.width = '1px';
+    ta.style.height = '1px';
+    ta.style.opacity = '0';
+    ta.style.pointerEvents = 'none';
+    document.body.appendChild(ta);
+    // iOS Safari 必须先 focus 再 select
+    ta.focus();
+    ta.select();
+    try {
+      ta.setSelectionRange(0, text.length);
+    } catch (_) {
+      /* 某些 input 类型不支持 setSelectionRange，忽略 */
+    }
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    return !!ok;
+  } catch (e) {
+    console.error('execCommand copy fallback failed:', e);
+    return false;
+  }
 }
 
 export function isMobile() {
