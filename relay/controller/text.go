@@ -211,10 +211,10 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 						}
 					}
 
-					// dyt-47: SSE首token超时 — 30秒内无data:内容即放弃（不等client超时）
-					if !localConfirmed && time.Since(probeStartTime) > 30*time.Second {
-						reason := fmt.Sprintf("SSE首token超时(HTTP %d, %d行/%d字节, 30s内无content)",
-							resp.StatusCode, lineCount, bytesRead)
+					// dyt-47: SSE首token超时 — config.UserContentRequestTimeout秒内无data:内容即放弃（不等client超时）
+					if !localConfirmed && time.Since(probeStartTime) > time.Duration(config.UserContentRequestTimeout)*time.Second {
+						reason := fmt.Sprintf("SSE首token超时(HTTP %d, %d行/%d字节, %ds内无content)",
+							resp.StatusCode, lineCount, bytesRead, config.UserContentRequestTimeout)
 						return false, nil, "", nil, nil, resp.StatusCode, reason, respBodyBuf.String()
 					}
 
