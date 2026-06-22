@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -145,6 +146,9 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 			const maxRespBodySize = 100 * 1024
 			respBodyTruncated := false
 
+			// dyt-47: SSE首token超时计时起点
+			probeStartTime := time.Now()
+
 			for localScanner.Scan() {
 				data := localScanner.Text()
 				// dyt-39: 用户断开连接时立即停止读取上游
@@ -205,6 +209,13 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 								}
 							}
 						}
+					}
+
+					// dyt-47: SSE首token超时 — 30秒内无data:内容即放弃（不等client超时）
+					if !localConfirmed && time.Since(probeStartTime) > 30*time.Second {
+						reason := fmt.Sprintf("SSE首token超时(HTTP %d, %d行/%d字节, 30s内无content)",
+							resp.StatusCode, lineCount, bytesRead)
+						return false, nil, "", nil, nil, resp.StatusCode, reason, respBodyBuf.String()
 					}
 
 					if localConfirmed {

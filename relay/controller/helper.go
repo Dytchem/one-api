@@ -175,6 +175,14 @@ func postConsumeQuota(ctx context.Context, usage *relaymodel.Usage, meta *meta.M
 			logContent = fmt.Sprintf("回复完成"+modelLabel+"，回复内容：%d↑ %d↓", promptTokens, completionTokens)
 		}
 	}
+	// dyt-47: 确保上游专用缓存字段映射到标准 CacheReadTokens（probe 不走 openai adaptor）
+	if usage.PromptCacheHitTokens > 0 && usage.CacheReadTokens == 0 {
+		usage.CacheReadTokens = usage.PromptCacheHitTokens
+	}
+	if usage.CachedContentTokenCount > 0 && usage.CacheReadTokens == 0 {
+		usage.CacheReadTokens = usage.CachedContentTokenCount
+	}
+
 	model.RecordConsumeLog(ctx, &model.Log{
 		UserId:                meta.UserId,
 		ChannelId:             meta.ChannelId,
