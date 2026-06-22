@@ -180,5 +180,8 @@ var RelayProxy = env.String("RELAY_PROXY", "")
 var UserContentRequestProxy = env.String("USER_CONTENT_REQUEST_PROXY", "")
 var UserContentRequestTimeout = env.Int("USER_CONTENT_REQUEST_TIMEOUT", 30)
 
+// dyt-48: SSE probe 首 token 超时（流式探测上游时等待第一个 data: 内容的最大时间）
+var ProbeTimeout = env.Int("PROBE_TIMEOUT", 120)
+
 var EnforceIncludeUsage = env.Bool("ENFORCE_INCLUDE_USAGE", false)
 var TestPrompt = env.String("TEST_PROMPT", "Output only your specific model name with no additional text.")
