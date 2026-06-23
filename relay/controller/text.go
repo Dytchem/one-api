@@ -159,6 +159,8 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 				bytesRead += len(data)
 				if len(data) > 0 {
 					lastLine = data
+					// dyt-50: 收到任何数据行都续命，防止 keep-alive 注释行被误判为超时
+					probeStartTime = time.Now()
 				}
 
 				// dyt-20: 累积响应 body
