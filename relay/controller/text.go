@@ -149,6 +149,10 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 			// dyt-47: SSE首token超时计时起点
 			probeStartTime := time.Now()
 
+			// dyt-50: keep-alive 排队超时检测
+			keepAliveLineCount := 0
+			var keepAliveDeadline time.Time
+
 			for localScanner.Scan() {
 				data := localScanner.Text()
 				// dyt-39: 用户断开连接时立即停止读取上游
@@ -159,8 +163,24 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 				bytesRead += len(data)
 				if len(data) > 0 {
 					lastLine = data
-					// dyt-50: 收到任何数据行都续命，防止 keep-alive 注释行被误判为超时
-					probeStartTime = time.Now()
+				}
+
+				// dyt-50: keep-alive 续命（DeepSeek 排队时发 : keep-alive 保活）
+				// 完全无 data: → probeStartTime 120s 超时
+				// 持续 keep-alive（排队中）→ 等 3×ProbeTimeout（默认 360s）
+				if len(data) > 0 && data[:1] == ":" {
+					keepAliveLineCount++
+					if keepAliveLineCount == 1 {
+						if keepAliveDeadline.IsZero() {
+							keepAliveDeadline = time.Now().Add(
+								time.Duration(config.ProbeTimeout) * 3 * time.Second)
+						}
+					}
+					if !localConfirmed && !keepAliveDeadline.IsZero() && time.Now().After(keepAliveDeadline) {
+						return false, nil, "", nil, nil, resp.StatusCode,
+							fmt.Sprintf("排队超时(HTTP %d, keep-alive %d行, %ds无content)", resp.StatusCode, keepAliveLineCount, config.ProbeTimeout*3),
+							respBodyBuf.String()
+					}
 				}
 
 				// dyt-20: 累积响应 body
@@ -328,6 +348,7 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 		var lastResponseSnippet string
 		var lastBuf *bytes.Buffer
 		var lastScanner *bufio.Scanner
+		var lastErrReason string
 
 		for attempt := 0; attempt < totalAttempts; attempt++ {
 			// dyt-39: 用户已断开，跳过后续所有重试
@@ -366,6 +387,8 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 				lastScanner = scanner
 				break
 			}
+
+			lastErrReason = errReason
 
 			// 失败：写独立错误日志（含完整响应体）
 			attemptLabel := "原始请求"
@@ -428,6 +451,10 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 			go postConsumeQuota(ctx, lastProbeUsage, meta, textRequest, ratio, preConsumedQuota, modelRatio, groupRatio, systemPromptReset, lastResponseSnippet)
 			return nil
 		}
+
+		chId := c.GetInt(ctxkey.ChannelId)
+		chName := c.GetString(ctxkey.ChannelName)
+		monitor.DisableChannel(chId, chName, lastErrReason)
 
 		billing.ReturnPreConsumedQuota(ctx, preConsumedQuota, meta.TokenId)
 		return openai.ErrorWrapper(fmt.Errorf("all %d probe attempts returned empty response from channel", totalAttempts), "empty_response", http.StatusBadGateway)
