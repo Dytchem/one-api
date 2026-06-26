@@ -348,8 +348,6 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 		var lastResponseSnippet string
 		var lastBuf *bytes.Buffer
 		var lastScanner *bufio.Scanner
-		var lastErrReason string
-
 		for attempt := 0; attempt < totalAttempts; attempt++ {
 			// dyt-39: 用户已断开，跳过后续所有重试
 			if ctx.Err() != nil {
@@ -387,8 +385,6 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 				lastScanner = scanner
 				break
 			}
-
-			lastErrReason = errReason
 
 			// 失败：写独立错误日志（含完整响应体）
 			attemptLabel := "原始请求"
@@ -451,10 +447,6 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 			go postConsumeQuota(ctx, lastProbeUsage, meta, textRequest, ratio, preConsumedQuota, modelRatio, groupRatio, systemPromptReset, lastResponseSnippet)
 			return nil
 		}
-
-		chId := c.GetInt(ctxkey.ChannelId)
-		chName := c.GetString(ctxkey.ChannelName)
-		monitor.DisableChannel(chId, chName, lastErrReason)
 
 		billing.ReturnPreConsumedQuota(ctx, preConsumedQuota, meta.TokenId)
 		return openai.ErrorWrapper(fmt.Errorf("all %d probe attempts returned empty response from channel", totalAttempts), "empty_response", http.StatusBadGateway)
