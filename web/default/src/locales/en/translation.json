@@ -746,15 +746,15 @@
   },
   "footer": {
     "built_by": "built by",
-    "built_by_name": "JustSong",
+    "built_by_name": "Dytchem fork",
     "license": ", source code is licensed under the",
     "mit": "MIT License"
   },
   "home": {
     "welcome": {
-      "title": "Welcome to One API",
-      "description": "One API is a LLM API management and distribution system that helps you better manage and use LLM APIs from various providers.",
-      "login_notice": "To use the service, please login or register first."
+      "title": "Welcome to LLM Gateway",
+      "description": "Personal LLM API gateway: one endpoint for all models, with stream probing, channel health and fail-log debugging.",
+      "login_notice": "Please login or register to continue."
     },
     "system_status": {
       "title": "System Status",
@@ -825,9 +825,9 @@
   },
   "about": {
     "title": "About",
-    "description": "One API is an open-source API management and proxy platform.",
-    "repository": "Repository: ",
-    "loading_failed": "Loading failed"
+    "description": "Self-hosted One API: unified LLM API gateway. Fork of one-api with stream probe, channel health, fail-log browser; billing removed for personal use.",
+    "repository": "Fork repository:",
+    "loading_failed": "Failed to load"
   },
   "messages": {
     "success": {

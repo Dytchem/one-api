@@ -53,5 +53,15 @@ const (
 	AliBailian
 	OpenAICompatible
 	GeminiOpenAICompatible
+	// dyt-53: 新增 OpenAI 兼容提供商
+	Perplexity
+	MokaAI
+	Xinference
+	Cerebras
+	Hyperbolic
+	Fireworks
+	Lambda
+	ZhipuV4
+	Jina
 	Dummy
 )

@@ -63,7 +63,12 @@ func (a *Adaptor) GetRequestURL(meta *meta.Meta) (string, error) {
 	case channeltype.GeminiOpenAICompatible:
 		return geminiv2.GetRequestURL(meta)
 	default:
-		return GetFullRequestURL(meta.BaseURL, meta.RequestURLPath, meta.ChannelType), nil
+		// dyt-53: Responses 模式——上游是 chat API，URL 改写为 /chat/completions
+		requestURLPath := meta.RequestURLPath
+		if meta.Mode == relaymode.Responses {
+			requestURLPath = strings.Replace(requestURLPath, "/v1/responses", "/v1/chat/completions", 1)
+		}
+		return GetFullRequestURL(meta.BaseURL, requestURLPath, meta.ChannelType), nil
 	}
 }
 

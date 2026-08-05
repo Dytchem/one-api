@@ -56,6 +56,10 @@ type CustomEvent struct {
 
 func encode(writer io.Writer, event CustomEvent) error {
 	w := checkWriter(writer)
+	// dyt-53: 支持 SSE event: 行（OpenAI Responses API 流式需要）
+	if event.Event != "" {
+		w.writeString("event: " + event.Event + "\n")
+	}
 	return writeData(w, event.Data)
 }
 

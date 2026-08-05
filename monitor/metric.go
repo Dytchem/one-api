@@ -1,14 +1,19 @@
 package monitor
 
 import (
+	"sync"
+
 	"github.com/songquanpeng/one-api/common/config"
 )
 
 var store = make(map[int][]bool)
+var storeMu sync.Mutex // dyt-53: store 由两个 consumer goroutine 并发访问，需要加锁
 var metricSuccessChan = make(chan int, config.MetricSuccessChanSize)
 var metricFailChan = make(chan int, config.MetricFailChanSize)
 
 func consumeSuccess(channelId int) {
+	storeMu.Lock()
+	defer storeMu.Unlock()
 	if len(store[channelId]) > config.MetricQueueSize {
 		store[channelId] = store[channelId][1:]
 	}
@@ -16,6 +21,8 @@ func consumeSuccess(channelId int) {
 }
 
 func consumeFail(channelId int) (bool, float64) {
+	storeMu.Lock()
+	defer storeMu.Unlock()
 	if len(store[channelId]) > config.MetricQueueSize {
 		store[channelId] = store[channelId][1:]
 	}

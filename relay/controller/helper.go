@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -24,6 +25,21 @@ import (
 )
 
 func getAndValidateTextRequest(c *gin.Context, relayMode int) (*relaymodel.GeneralOpenAIRequest, error) {
+	// dyt-53: Responses API 请求先解析为 Responses 结构，再转换为 chat 请求
+	if relayMode == relaymode.Responses {
+		var responsesReq OpenAIResponsesRequest
+		if err := common.UnmarshalBodyReusable(c, &responsesReq); err != nil {
+			return nil, err
+		}
+		chatReq := responsesToChatRequest(&responsesReq)
+		if chatReq.Model == "" {
+			return nil, errors.New("model is required")
+		}
+		if err := validator.ValidateTextRequest(chatReq, relaymode.ChatCompletions); err != nil {
+			return nil, err
+		}
+		return chatReq, nil
+	}
 	textRequest := &relaymodel.GeneralOpenAIRequest{}
 	err := common.UnmarshalBodyReusable(c, textRequest)
 	if err != nil {
@@ -45,6 +61,9 @@ func getAndValidateTextRequest(c *gin.Context, relayMode int) (*relaymodel.Gener
 func getPromptTokens(textRequest *relaymodel.GeneralOpenAIRequest, relayMode int) int {
 	switch relayMode {
 	case relaymode.ChatCompletions:
+		return openai.CountTokenMessages(textRequest.Messages, textRequest.Model)
+	case relaymode.Responses:
+		// dyt-53: Responses 请求已转换为 chat 格式，按 chat 统计
 		return openai.CountTokenMessages(textRequest.Messages, textRequest.Model)
 	case relaymode.Completions:
 		return openai.CountTokenInput(textRequest.Prompt, textRequest.Model)

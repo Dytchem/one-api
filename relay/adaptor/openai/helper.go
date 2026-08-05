@@ -17,7 +17,17 @@ func ResponseText2Usage(responseText string, modelName string, promptTokens int)
 }
 
 func GetFullRequestURL(baseURL string, requestURL string, channelType int) string {
-	if channelType == channeltype.OpenAICompatible {
+	// dyt-53: base URL 以版本段结尾的渠道（如 api.cerebras.ai/v1、api.hunyuan.cloud.tencent.com/v1、
+	// open.bigmodel.cn/api/paas/v4），拼接时去掉请求路径里的 /v1，避免 /v1/v1/... 双重版本
+	switch channelType {
+	case channeltype.OpenAICompatible,
+		channeltype.Cerebras,
+		channeltype.Hyperbolic,
+		channeltype.Fireworks,
+		channeltype.Lambda,
+		channeltype.ZhipuV4,
+		channeltype.Tencent,
+		channeltype.GeminiOpenAICompatible:
 		return fmt.Sprintf("%s%s", strings.TrimSuffix(baseURL, "/"), strings.TrimPrefix(requestURL, "/v1"))
 	}
 	fullRequestURL := fmt.Sprintf("%s%s", baseURL, requestURL)

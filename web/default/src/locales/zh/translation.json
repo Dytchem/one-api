@@ -742,20 +742,20 @@
   },
   "about": {
     "title": "关于",
-    "description": "One API 是一个开源的接口管理和代理平台。",
-    "repository": "项目地址：",
+    "description": "自用版 One API：LLM API 统一管理网关。基于上游 one-api 深度定制：流式探测、渠道健康度、失败日志浏览器；已移除计费功能，专注自用。",
+    "repository": "本 Fork 项目地址：",
     "loading_failed": "加载失败"
   },
   "footer": {
     "built_by": "由",
-    "built_by_name": "JustSong",
+    "built_by_name": "Dytchem fork",
     "license": "构建，源代码遵循",
     "mit": "MIT 协议"
   },
   "home": {
     "welcome": {
-      "title": "欢迎使用 One API",
-      "description": "One API 是一个 LLM API 接口管理和分发系统，可以帮助您更好地管理和使用各大厂商的 LLM API。",
+      "title": "欢迎使用 LLM 网关",
+      "description": "自用 LLM API 统一管理网关：一套接口接入所有模型，支持流式探测、渠道健康度与失败日志调试。",
       "login_notice": "如需使用，请先登录或注册。"
     },
     "system_status": {

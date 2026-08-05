@@ -20,7 +20,8 @@ func ToAPIType(channelType int) int {
 	case AIProxyLibrary:
 		apiType = apitype.AIProxyLibrary
 	case Tencent:
-		apiType = apitype.Tencent
+		// dyt-53: 腾讯混元已停售 TC3 签名协议，官方仅保留 OpenAI 兼容端点
+		apiType = apitype.OpenAI
 	case Gemini:
 		apiType = apitype.Gemini
 	case Ollama:

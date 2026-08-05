@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -30,6 +31,7 @@ import (
 	"github.com/songquanpeng/one-api/relay/channeltype"
 	"github.com/songquanpeng/one-api/relay/meta"
 	"github.com/songquanpeng/one-api/relay/model"
+	"github.com/songquanpeng/one-api/relay/relaymode"
 )
 
 // isProbeCompatible 探测只对 OpenAI 兼容 SSE 渠道启用。
@@ -57,6 +59,13 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 		return openai.ErrorWrapper(err, "invalid_text_request", http.StatusBadRequest)
 	}
 	meta.IsStream = textRequest.Stream
+
+	// dyt-53: Responses 协议仅支持 OpenAI 兼容渠道（请求/响应都按 chat 格式转换）
+	if meta.Mode == relaymode.Responses && meta.APIType != apitype.OpenAI {
+		return openai.ErrorWrapper(
+			fmt.Errorf("Responses API is not supported by channel type %d, use OpenAI compatible channel", meta.ChannelType),
+			"unsupported_channel_for_responses", http.StatusBadRequest)
+	}
 
 	// dyt-20: 缓存请求 JSON 副本，供 payload 存储
 	requestJSON, _ := json.Marshal(textRequest)
@@ -94,6 +103,11 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 		// dyt-23: 探测不再克隆请求，直接用 textRequest 的 JSON 作为 body
 		// 这样两次 doProbe 发送完全相同的 body 给上游
 		textRequest.Stream = true // 探测总是流式
+		// dyt-53: 探测请求强制 include_usage，让上游在流里返回 usage
+		if textRequest.StreamOptions == nil {
+			textRequest.StreamOptions = &model.StreamOptions{}
+		}
+		textRequest.StreamOptions.IncludeUsage = true
 
 		// 序列化 textRequest 作为 body（保持与原请求字段完全一致）
 		probeBodyBytes, _ := json.Marshal(textRequest)
@@ -103,8 +117,12 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 
 		// dyt-24: 同渠道重试次数由 CHANNEL_RETRY_COUNT 控制（默认 1）
 		retryCount := env.Int("CHANNEL_RETRY_COUNT", 1)
-		var sawDone bool // 上游是否已发 [DONE]（探测阶段记录/透传阶段转发后置位）
+		var attemptSawDone bool   // 最后一次 attempt 的上游 [DONE] 状态（由 doProbe 写入）
+		var respStreamState *responsesStreamState // dyt-53: Responses 流式状态机（跨 attempt 共享最后一次的）
 		doProbe := func(attemptNum int) (success bool, probeUsage *model.Usage, responseSnippet string, buf *bytes.Buffer, scanner *bufio.Scanner, statusCode int, errReason string, respBody string) {
+			// dyt-53: 每个 attempt 独立的 [DONE] 状态，避免跨 attempt 泄漏
+			var sawDone bool
+			defer func() { attemptSawDone = sawDone }()
 			// dyt-23: 每次重试都从原 bytes 重新创建 reader，确保 body 完全一致
 			// dyt-39: 用户断开连接时立即停止
 			if ctx.Err() != nil {
@@ -144,6 +162,11 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 			localConfirmed := false
 			var localSnippet string
 
+			// dyt-53: Responses 模式流式状态机（chat SSE → responses SSE）
+			if meta.Mode == relaymode.Responses {
+				respStreamState = newResponsesStreamState(meta.ActualModelName)
+			}
+
 			// 改进1：追踪上游返回细节
 			lineCount := 0
 			bytesRead := 0
@@ -165,6 +188,18 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 			probeStartTime := time.Now()
 			// 首个 data: 行到达后，切换为流式整体超时（STREAMING_TIMEOUT，默认 0=跟随 HTTPClient 300s）
 			streamingDeadline := time.Time{}
+
+			// dyt-53: 静默超时守卫——上游 0 字节时 Scan 会阻塞，
+			// timer 到点后关闭 resp.Body 强制唤醒，避免只能等 HTTPClient 300s
+			var confirmedFlag atomic.Bool
+			var probeTimedOut atomic.Bool
+			probeTimer := time.AfterFunc(time.Duration(config.ProbeTimeout)*time.Second, func() {
+				if !confirmedFlag.Load() {
+					probeTimedOut.Store(true)
+					resp.Body.Close()
+				}
+			})
+			defer probeTimer.Stop()
 
 			// dyt-50: keep-alive 排队超时检测
 			keepAliveLineCount := 0
@@ -190,6 +225,8 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 					if keepAliveDeadline.IsZero() {
 						keepAliveDeadline = time.Now().Add(
 							time.Duration(config.ProbeTimeout) * 3 * time.Second)
+						// 排队中：静默守卫延长到 3×ProbeTimeout
+						probeTimer.Reset(time.Duration(config.ProbeTimeout) * 3 * time.Second)
 					}
 					if !localConfirmed && !keepAliveDeadline.IsZero() && time.Now().After(keepAliveDeadline) {
 						return false, nil, "", nil, nil, resp.StatusCode,
@@ -216,13 +253,18 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 					localBuf.WriteString("\n")
 
 					// Check for first meaningful content token
-					if len(data) > 6 && data[:6] == "data: " {
-						// 检测 [DONE] 哨兵
+					// 兼容 data: xxx 与 data:xxx（无空格）
+					if len(data) > 6 && (data[:6] == "data: " || strings.HasPrefix(data, "data:")) {
+						// 检测 [DONE] 哨兵（兼容 data: [DONE] 与 data:[DONE]）
 						if data == "data: [DONE]" || data == "data:[DONE]" {
 							sawDone = true
 						} else {
 							var streamResp openai.ChatCompletionsStreamResponse
-							if jsonErr := json.Unmarshal([]byte(data[6:]), &streamResp); jsonErr == nil {
+							jsonStart := 6
+							if !strings.HasPrefix(data, "data: ") {
+								jsonStart = 5
+							}
+							if jsonErr := json.Unmarshal([]byte(data[jsonStart:]), &streamResp); jsonErr == nil {
 								// Content detected via delta.content or reasoning_content
 								if len(streamResp.Choices) > 0 {
 									delta := &streamResp.Choices[0].Delta
@@ -263,6 +305,8 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 					if localConfirmed {
 						// First content token found: set headers, replay buffer, then passthrough
 						logger.Infof(ctx, "stream confirmed with first content token (attempt-%d), replaying %d buffered bytes", attemptNum, localBuf.Len())
+						confirmedFlag.Store(true)
+						probeTimer.Stop()
 
 						// Write probe confirm log immediately for visibility（异步，不阻塞首 token 关键路径）
 						chName := c.GetString(ctxkey.ChannelName)
@@ -303,12 +347,17 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 
 						common.SetEventStreamHeaders(c)
 
+						// dyt-53: Responses 模式回放 buffered chat SSE 时同步转成 responses SSE
 						bufReader := bytes.NewReader(localBuf.Bytes())
 						lineScanner := newLineScanner(bufReader)
 						for lineScanner.Scan() {
 							line := lineScanner.Text()
 							if len(line) > 0 {
-								render.StringData(c, line)
+								if meta.Mode == relaymode.Responses {
+									respStreamState.feedLine(c, line)
+								} else {
+									render.StringData(c, line)
+								}
 							}
 						}
 						localBuf.Reset()
@@ -325,7 +374,11 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 						if data == "data: [DONE]" || data == "data:[DONE]" {
 							sawDone = true
 						}
-						render.StringData(c, data)
+						if meta.Mode == relaymode.Responses {
+							respStreamState.feedLine(c, data)
+						} else {
+							render.StringData(c, data)
+						}
 					}
 
 					// 流式整体超时（dyt-52）
@@ -361,12 +414,20 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 				}
 			}
 
+			// dyt-53: 静默超时——上游 0 字节时 Scan 因 Body.Close() 退出，
+			// 在此判定为首 token 超时
+			if !localConfirmed && probeTimedOut.Load() {
+				reason := fmt.Sprintf("SSE首token超时(HTTP %d, %d行/%d字节, %ds内无任何数据)",
+					resp.StatusCode, lineCount, bytesRead, config.ProbeTimeout)
+				return false, nil, "", nil, nil, resp.StatusCode, reason, respBodyBuf.String()
+			}
+
 			// dyt-20: 失败判定。考虑 3 种情况：
 			// 1) 未收到 content/reasoning token → empty response
 			// 2) 收到 finish_reason 但缺 usage 且流末尾不是 [DONE] → 异常断流（仅在未透传前判定）
 			// 3) 正常空流（仅 [DONE]）→ 成功
 			// 数据已透传给客户端后（startedPassthrough）不再判失败，避免重复内容
-			streamAbnormal := startedPassthrough && sawFinishReason && localUsage == nil && !sawDone
+			streamAbnormal := !startedPassthrough && sawFinishReason && localUsage == nil && !sawDone
 			if !localConfirmed || streamAbnormal {
 				// Stream ended without content or with abnormal truncation
 				reason := classifyEmptyResponse(lineCount, bytesRead, sawDone, lastLine, resp.StatusCode)
@@ -470,9 +531,14 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 
 		if lastSuccess {
 			logger.Infof(ctx, "stream finished with passthrough, usage: %+v", lastProbeUsage)
-			// 上游已透传 [DONE] 则不再补发
-			if !sawDone {
-				render.Done(c)
+			if meta.Mode == relaymode.Responses {
+				// dyt-53: 补发 responses 完成事件（response.completed 等，幂等）
+				respStreamState.finishUp(c)
+			} else {
+				// 上游已透传 [DONE] 则不再补发（attemptSawDone 为最后成功 attempt 的状态）
+				if !attemptSawDone {
+					render.Done(c)
+				}
 			}
 
 			go postConsumeQuota(ctx, lastProbeUsage, meta, textRequest, 1, preConsumedQuota, 0, 0, systemPromptReset, lastResponseSnippet)
@@ -508,6 +574,82 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 		return RelayErrorHandler(resp)
 	}
 
+	// 提取非流式回复内容用于日志
+	responseSnippet := ""
+	if rt, ok := c.Get("response_content"); ok {
+		responseSnippet, _ = rt.(string)
+	}
+
+	// dyt-53: Responses 非流式——拦截上游 chat JSON，转换为 Responses JSON 写回
+	if meta.Mode == relaymode.Responses {
+		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
+		if readErr != nil {
+			resp.Body.Close()
+			return openai.ErrorWrapper(readErr, "read_response_body_failed", http.StatusInternalServerError)
+		}
+		resp.Body.Close()
+		// 空响应判定：无内容无 usage 时触发 fallback（与 chat 模式一致）
+		var slimResp openai.SlimTextResponse
+		isEmpty := false
+		if json.Unmarshal(body, &slimResp) == nil && slimResp.Error.Type == "" {
+			hasContent := false
+			for _, choice := range slimResp.Choices {
+				if choice.Message.StringContent() != "" || len(choice.Message.ToolCalls) > 0 {
+					hasContent = true
+					break
+				}
+			}
+			if !hasContent && slimResp.Usage.TotalTokens == 0 {
+				isEmpty = true
+			}
+		}
+		if isEmpty {
+			logger.Warnf(ctx, "responses: empty upstream response, triggering fallback")
+			chName := c.GetString(ctxkey.ChannelName)
+			chId := c.GetInt(ctxkey.ChannelId)
+			failLogContent := fmt.Sprintf("回复为空，渠道：%s(#%d)，模型：%s→%s（Responses 模式，无内容无 token）", chName, chId, meta.OriginModelName, meta.ActualModelName)
+			failLogId := dbmodel.RecordConsumeLogWithId(ctx, &dbmodel.Log{
+				UserId:            meta.UserId,
+				TokenName:         meta.TokenName,
+				ModelName:         meta.OriginModelName,
+				ChannelId:         chId,
+				PromptTokens:      promptTokens,
+				CompletionTokens:  0,
+				Quota:             0,
+				Content:           failLogContent,
+				IsStream:          false,
+				ElapsedTime:       helper.CalcElapsedTime(meta.StartTime),
+				SystemPromptReset: systemPromptReset,
+			})
+			if failLogId > 0 {
+				if reqJSON, ok := c.Get("dyt20_request_json"); ok {
+					reqStr, _ := reqJSON.(string)
+					dbmodel.RecordLogPayloadAsync(&dbmodel.LogPayload{
+						LogId:     failLogId,
+						Request:   reqStr,
+						Response:  string(body),
+						Error:     "empty response (responses): no content and no tokens",
+						CreatedAt: meta.StartTime.Unix(),
+					})
+				}
+			}
+			return openai.ErrorWrapper(fmt.Errorf("empty response from channel"), "empty_response", http.StatusBadGateway)
+		}
+		for k, v := range resp.Header {
+			if strings.EqualFold(k, "Content-Type") {
+				continue
+			}
+			c.Writer.Header().Set(k, v[0])
+		}
+		c.Writer.Header().Set("Content-Type", "application/json")
+		c.Writer.WriteHeader(http.StatusOK)
+		usage := renderResponsesNonStream(c, body, meta.ActualModelName, promptTokens)
+		if usage != nil {
+			go postConsumeQuota(ctx, usage, meta, textRequest, 1, preConsumedQuota, 0, 0, systemPromptReset, responseSnippet)
+		}
+		return nil
+	}
+
 	usage, respErr := adaptor.DoResponse(c, resp, meta)
 	if respErr != nil {
 		// dyt-39: 用户断开 → 记终止日志
@@ -523,11 +665,6 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 		}
 		logger.Errorf(ctx, "respErr is not nil: %+v", respErr)
 		return respErr
-	}
-	// 提取非流式回复内容用于日志
-	responseSnippet := ""
-	if rt, ok := c.Get("response_content"); ok {
-		responseSnippet, _ = rt.(string)
 	}
 	// 空响应判定：usage 全 0 且无回复内容才算空。
 	// 不再仅凭 CompletionTokens==0 判定，避免误伤 embedding（completion 恒 0）/moderation 等正常响应
@@ -569,6 +706,15 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 }
 
 func getRequestBody(c *gin.Context, meta *meta.Meta, textRequest *model.GeneralOpenAIRequest, adaptor adaptor.Adaptor) (io.Reader, error) {
+	// dyt-53: Responses 模式必须发送转换后的 chat JSON（原始 body 是 Responses 格式）
+	if meta.Mode == relaymode.Responses {
+		jsonData, err := json.Marshal(textRequest)
+		if err != nil {
+			logger.Debugf(c.Request.Context(), "responses request json marshal failed: %s\n", err.Error())
+			return nil, err
+		}
+		return bytes.NewBuffer(jsonData), nil
+	}
 	if !config.EnforceIncludeUsage &&
 		meta.APIType == apitype.OpenAI &&
 		meta.OriginModelName == meta.ActualModelName &&
