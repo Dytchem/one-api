@@ -7,8 +7,9 @@ COPY ./VERSION .
 COPY ./web .
 
 # dyt-52: 顺序执行 + set -e，构建失败不再被 & wait 掩盖
-# --legacy-peer-deps: react-scripts@5 与 i18next 的 typescript peer 冲突，CRA 仅在存在 ts 文件时需要
-RUN set -e && npm install --prefix /web/default --no-audit --no-fund --legacy-peer-deps
+# npm ci 使用提交的 package-lock.json 固定依赖树（修复 ajv 缺失）；
+# --legacy-peer-deps 忽略 react-scripts@5 与 i18next 的 typescript peer 冲突（CRA 仅在有 ts 文件时需要）
+RUN set -e && npm ci --prefix /web/default --no-audit --no-fund --legacy-peer-deps
 
 RUN set -e && DISABLE_ESLINT_PLUGIN='true' REACT_APP_VERSION=$(cat ./VERSION) npm run build --prefix /web/default
 
