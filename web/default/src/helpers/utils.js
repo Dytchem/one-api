@@ -81,7 +81,8 @@ export async function copy(text) {
 }
 
 export function isMobile() {
-  return window.innerWidth <= 600;
+  // 仅手机（<=480px）使用侧边栏移动布局；480 以上一律桌面布局（同一画布，仅宽度缩放）
+  return window.innerWidth <= 480;
 }
 
 let showErrorOptions = { autoClose: toastConstants.ERROR_TIMEOUT };

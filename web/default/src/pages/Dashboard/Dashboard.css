@@ -2,9 +2,12 @@
     padding: 20px 24px 40px;
     background-color: #ffffff;
     margin-top: -15px; /* 减小与导航栏的间距 */
-    max-width: 1600px;        /* 设置最大宽度 */
+    /* dyt-55: 全宽，与全局容器一致（同一画布，无大屏两侧空白） */
+    max-width: none;
+    width: 100%;
     margin-left: auto;        /* 水平居中 */
     margin-right: auto;
+    box-sizing: border-box;
 }
 
 .stat-card {

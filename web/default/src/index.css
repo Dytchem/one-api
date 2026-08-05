@@ -28,92 +28,80 @@ code {
     font-size: 1.1em;
 }
 
+/* dyt-55: 同一画布方案 —— 所有分辨率使用完全相同的布局结构，仅宽度随视口变化：
+   容器一律 100% 宽（无 max-width，杜绝大屏两侧大空白），字体/密度所有分辨率一致，
+   窄屏元素统一用 flexWrap/横向滚动，不做布局重排 */
+
 @media only screen and (max-width: 600px) {
     .hide-on-mobile {
         display: none !important;
     }
 }
 
+/* 统一容器：全宽 + 固定内边距（各端一致，只缩放内容宽度） */
+.ui.container {
+  width: 100% !important;
+  max-width: none !important;
+  margin-left: 0 !important;
+  margin-right: 0 !important;
+  padding: 0 24px !important;
+}
+
+@media screen and (max-width: 600px) {
+  .ui.container {
+    padding: 0 12px !important;
+  }
+}
+
+/* 统一字体：所有分辨率保持同一密度 */
+.ui.table {
+  font-size: 1em !important;
+}
+
+/* dyt-55: 顶部导航同一布局，窄屏仅收缩不重排 */
+.header-menu-items {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.header-menu-items::-webkit-scrollbar {
+  display: none;
+}
+
 @media screen and (max-width: 768px) {
-  .ui.container {
-    width: 100% !important;
-    margin-left: 0 !important;
-    margin-right: 0 !important;
-    padding: 0 10px !important;
-  }
-
-  .ui.card, 
-  .ui.cards,
-  .ui.segment {
-    margin-left: 0 !important;
-    margin-right: 0 !important;
-  }
-
-  .ui.table {
-    padding-left: 0 !important;
-    padding-right: 0 !important;
+  .header-logo-text {
+    display: none !important;
   }
 }
 
-/* 小屏笔记本 (13-14寸) */
-@media screen and (min-width: 769px) and (max-width: 1366px) {
-  .ui.container {
-    width: auto !important;
-    max-width: 100% !important;
-    margin-left: auto !important;
-    margin-right: auto !important;
-    padding: 0 24px !important;
+@media screen and (max-width: 1024px) {
+  .header-menu-items .item {
+    padding: 0 0.5em !important;
   }
-
-  /* 调整表格显示 */
-  .ui.table {
-    font-size: 0.9em;
-  }
-
-  /* 调整卡片布局 */
-  .ui.cards {
-    margin-left: -0.5em !important;
-    margin-right: -0.5em !important;
-  }
-
-  .ui.cards > .card {
-    margin: 0.5em !important;
-    width: calc(50% - 1em) !important;
+  .header-menu-items .item .icon {
+    margin-right: 2px !important;
   }
 }
 
-/* 大屏幕 */
-@media screen and (min-width: 1367px) {
-  .ui.container {
-    width: 1200px !important;
-    margin-left: auto !important;
-    margin-right: auto !important;
-    padding: 0 !important;
-  }
+.ui.card,
+.ui.cards,
+.ui.segment {
+  margin-left: 0 !important;
+  margin-right: 0 !important;
 }
 
-/* 优化 Dashboard 网格布局 */
-@media screen and (max-width: 1366px) {
-  .charts-grid {
-    margin: 0 -0.5em !important;
-  }
+/* Dashboard 网格：所有分辨率一致（列内卡片自适应） */
+.charts-grid {
+  margin: 0 -0.5em !important;
+}
 
-  .charts-grid .column {
-    padding: 0.5em !important;
-  }
+.charts-grid .column {
+  padding: 0.5em !important;
+}
 
-  .chart-card {
-    margin: 0 !important;
-  }
-
-  /* 调整字体大小 */
-  .ui.header {
-    font-size: 1.1em !important;
-  }
-
-  .stat-value {
-    font-size: 0.9em !important;
-  }
+.chart-card {
+  margin: 0 !important;
 }
 
 /* ========== 表格紧凑布局修复 ========== */

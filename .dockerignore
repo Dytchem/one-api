@@ -1,0 +1,12 @@
+# dyt-55: 依赖层与源码层分离，npm ci 只在 package 文件变化时重装
+.git
+.gitignore
+node_modules
+web/default/node_modules
+web/build
+web/default/build
+*.tgz
+docker-compose.yml
+backup/
+Dockerfile
+README*.md

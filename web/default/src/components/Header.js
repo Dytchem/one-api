@@ -172,7 +172,7 @@ const Header = () => {
                 <b>{systemName}</b>
               </div>
             </Menu.Item>
-            <Menu.Menu position='right'>
+          <Menu.Menu position='right'>
               <Menu.Item onClick={toggleSidebar}>
                 <Icon name={showSidebar ? 'close' : 'sidebar'} />
               </Menu.Item>
@@ -252,6 +252,7 @@ const Header = () => {
           <Menu.Item as={Link} to='/' className={'hide-on-mobile'}>
             <img src={logo} alt='logo' style={{ marginRight: '0.75em' }} />
             <div
+              className='header-logo-text'
               style={{
                 fontSize: '18px',
                 fontWeight: '500',
@@ -261,7 +262,9 @@ const Header = () => {
               {systemName}
             </div>
           </Menu.Item>
+          <div className='header-menu-items' style={{ display: 'flex', alignItems: 'center' }}>
           {renderButtons(false)}
+          </div>
           <Menu.Menu position='right'>
             <Dropdown
               item

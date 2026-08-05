@@ -559,7 +559,7 @@ const EditChannel = () => {
               </Form.Field>
             )}
             {inputs.type !== 43 && (
-              <div style={{ lineHeight: '40px', marginBottom: '12px' }}>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center', marginBottom: '12px' }}>
                 <Button
                   type={'button'}
                   positive
@@ -611,6 +611,7 @@ const EditChannel = () => {
                       {t('channel.edit.buttons.add_custom')}
                     </Button>
                   }
+                  style={{ flex: '1 1 180px', minWidth: '150px' }}
                   placeholder={t('channel.edit.buttons.custom_placeholder')}
                   value={customModel}
                   onChange={(e, { value }) => {
@@ -693,7 +694,7 @@ const EditChannel = () => {
                         style={{margin: 0, minWidth: 28, padding: '4px 8px'}}>✕</Button>
                     </div>
                   ))}
-                  <div style={{display: 'flex', gap: 8, alignItems: 'center', marginTop: 6}}>
+                  <div style={{display: 'flex', gap: 8, alignItems: 'center', marginTop: 6, flexWrap: 'wrap'}}>
                     <Dropdown
                       placeholder='源模型'
                       search
@@ -704,7 +705,7 @@ const EditChannel = () => {
                       additionLabel='自定义: '
                       value={mappingFrom}
                       onChange={(e, {value}) => setMappingFrom(value)}
-                      style={{minWidth: 160}}
+                      style={{minWidth: 160, flex: '1 1 140px'}}
                     />
                     <span style={{color: '#aaa'}}>→</span>
                     <Dropdown
@@ -717,7 +718,7 @@ const EditChannel = () => {
                       additionLabel='自定义: '
                       value={mappingTo}
                       onChange={(e, {value}) => setMappingTo(value)}
-                      style={{minWidth: 160}}
+                      style={{minWidth: 160, flex: '1 1 140px'}}
                     />
                     <Button primary size='mini'
                       onClick={() => {
