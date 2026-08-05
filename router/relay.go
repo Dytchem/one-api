@@ -1,11 +1,27 @@
 package router
 
 import (
+	"github.com/gin-gonic/gin"
+	"github.com/songquanpeng/one-api/common/config"
 	"github.com/songquanpeng/one-api/controller"
 	"github.com/songquanpeng/one-api/middleware"
 
-	"github.com/gin-gonic/gin"
+	"net/http"
 )
+
+// bodySizeLimit 限制请求体大小，防止超大请求/zip bomb 打爆内存（0 表示不限制）
+func bodySizeLimit() gin.HandlerFunc {
+	maxBytes := int64(config.MaxRequestBodyMB) * 1024 * 1024
+	if maxBytes <= 0 {
+		return func(c *gin.Context) { c.Next() }
+	}
+	return func(c *gin.Context) {
+		if c.Request.Body != nil {
+			c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBytes)
+		}
+		c.Next()
+	}
+}
 
 func SetRelayRouter(router *gin.Engine) {
 	router.Use(middleware.CORS())
@@ -19,6 +35,7 @@ func SetRelayRouter(router *gin.Engine) {
 	}
 	relayV1Router := router.Group("/v1")
 	relayV1Router.Use(middleware.RelayPanicRecover(), middleware.TokenAuth(), middleware.Distribute())
+	relayV1Router.Use(bodySizeLimit())
 	{
 		relayV1Router.Any("/oneapi/proxy/:channelid/*target", controller.Relay)
 		relayV1Router.POST("/completions", controller.Relay)

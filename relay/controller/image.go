@@ -124,12 +124,6 @@ func RelayImageHelper(c *gin.Context, relayMode int) *relaymodel.ErrorWithStatus
 		return bizErr
 	}
 
-	imageCostRatio, err := getImageCostRatio(imageRequest)
-	if err != nil {
-		return openai.ErrorWrapper(err, "get_image_cost_ratio_failed", http.StatusInternalServerError)
-	}
-
-	imageModel := imageRequest.Model
 	// Convert the original image model
 	imageRequest.Model, _ = getMappedModelName(imageRequest.Model, billingratio.ImageOriginModelName)
 	c.Set("response_format", imageRequest.ResponseFormat)
@@ -168,24 +162,6 @@ func RelayImageHelper(c *gin.Context, relayMode int) *relaymodel.ErrorWithStatus
 		requestBody = bytes.NewBuffer(jsonStr)
 	}
 
-	modelRatio := billingratio.GetModelRatio(imageModel, meta.ChannelType)
-	groupRatio := billingratio.GetGroupRatio(meta.Group)
-	ratio := modelRatio * groupRatio
-	userQuota, err := model.CacheGetUserQuota(ctx, meta.UserId)
-
-	var quota int64
-	switch meta.ChannelType {
-	case channeltype.Replicate:
-		// replicate always return 1 image
-		quota = int64(ratio * imageCostRatio * 1000)
-	default:
-		quota = int64(ratio*imageCostRatio*1000) * int64(imageRequest.N)
-	}
-
-	if userQuota-quota < 0 {
-		return openai.ErrorWrapper(errors.New("user quota is not enough"), "insufficient_user_quota", http.StatusForbidden)
-	}
-
 	// do request
 	resp, err := adaptor.DoRequest(c, meta, requestBody)
 	if err != nil {
@@ -193,38 +169,25 @@ func RelayImageHelper(c *gin.Context, relayMode int) *relaymodel.ErrorWithStatus
 		return openai.ErrorWrapper(err, "do_request_failed", http.StatusInternalServerError)
 	}
 
+	// 自用模式：不做配额检查与扣减，仅保留请求日志
 	defer func(ctx context.Context) {
 		if resp != nil &&
 			resp.StatusCode != http.StatusCreated && // replicate returns 201
 			resp.StatusCode != http.StatusOK {
 			return
 		}
-
-		err := model.PostConsumeTokenQuota(meta.TokenId, quota)
-		if err != nil {
-			logger.SysError("error consuming token remain quota: " + err.Error())
-		}
-		err = model.CacheUpdateUserQuota(ctx, meta.UserId)
-		if err != nil {
-			logger.SysError("error update user quota cache: " + err.Error())
-		}
-		if quota != 0 {
-			tokenName := c.GetString(ctxkey.TokenName)
-			logContent := fmt.Sprintf("倍率：%.2f × %.2f", modelRatio, groupRatio)
-			model.RecordConsumeLog(ctx, &model.Log{
-				UserId:           meta.UserId,
-				ChannelId:        meta.ChannelId,
-				PromptTokens:     0,
-				CompletionTokens: 0,
-				ModelName:        imageRequest.Model,
-				TokenName:        tokenName,
-				Quota:            int(quota),
-				Content:          logContent,
-			})
-			model.UpdateUserUsedQuotaAndRequestCount(meta.UserId, quota)
-			channelId := c.GetInt(ctxkey.ChannelId)
-			model.UpdateChannelUsedQuota(channelId, quota)
-		}
+		tokenName := c.GetString(ctxkey.TokenName)
+		model.RecordConsumeLog(ctx, &model.Log{
+			UserId:           meta.UserId,
+			ChannelId:        meta.ChannelId,
+			PromptTokens:     0,
+			CompletionTokens: 0,
+			ModelName:        imageRequest.Model,
+			TokenName:        tokenName,
+			Quota:            0,
+			Content:          "图片生成完成",
+		})
+		model.UpdateUserUsedQuotaAndRequestCount(meta.UserId, 0)
 	}(c.Request.Context())
 
 	// do response

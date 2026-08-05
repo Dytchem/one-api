@@ -330,7 +330,7 @@ type LogPayload struct {
 var payloadQueue = make(chan *LogPayload, 2048)
 
 // dyt-33: payload 默认保留 7 天（主人可设 LOG_PAYLOAD_TTL_HOURS 环境变量覆盖）
-// 每天凌晨 3 点跑一次清理
+// 负值 = 禁用清理；0 = 使用默认 7 天。每 24h 清理一次。
 // 长文本 payload 可能 100KB+ / 条，不定期清理会无限增长
 const defaultPayloadTTLHours = 7 * 24
 
@@ -421,6 +421,20 @@ func LogHasPayload(logId int64) bool {
 	return cnt > 0
 }
 
+// BatchHasPayload dyt-52: 批量检查 logs 是否有 payload（替代 N+1 查询）
+func BatchHasPayload(logIds []int64) map[int64]bool {
+	result := make(map[int64]bool, len(logIds))
+	if len(logIds) == 0 {
+		return result
+	}
+	var ids []int64
+	payloadDB().Model(&LogPayload{}).Where("log_id IN ?", logIds).Pluck("log_id", &ids)
+	for _, id := range ids {
+		result[id] = true
+	}
+	return result
+}
+
 // GetFailLogs dyt-20: 失败日志分页列表
 // 筛选：type=2 的"探测失败"和"回复为空" + type=5 的测试失败
 func GetFailLogs(channelId int, modelName string, startTimestamp, endTimestamp int64, offset, size int) ([]*Log, int64, error) {
@@ -429,7 +443,7 @@ func GetFailLogs(channelId int, modelName string, startTimestamp, endTimestamp i
 
 	query := LOG_DB.Model(&Log{}).
 		Where("type IN (2, 5)").
-		Where("content LIKE '%探测失败%' OR content LIKE '%回复为空%'")
+		Where("(content LIKE '%探测失败%' OR content LIKE '%回复为空%')")
 
 	if channelId > 0 {
 		query = query.Where("channel_id = ?", channelId)

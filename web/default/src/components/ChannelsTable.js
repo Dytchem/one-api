@@ -20,20 +20,17 @@ function renderTimestamp(timestamp) {
   return <>{timestamp2string(timestamp)}</>;
 }
 
-let type2label = undefined;
-
 function renderType(type, t) {
-  if (!type2label) {
-    type2label = new Map();
-    for (let i = 0; i < CHANNEL_OPTIONS.length; i++) {
-      type2label[CHANNEL_OPTIONS[i].value] = CHANNEL_OPTIONS[i];
-    }
-    type2label[0] = {
-      value: 0,
-      text: t('channel.table.status_unknown'),
-      color: 'grey',
-    };
+  // 每次渲染重新构建，避免切换语言后缓存旧文案
+  const type2label = new Map();
+  for (let i = 0; i < CHANNEL_OPTIONS.length; i++) {
+    type2label[CHANNEL_OPTIONS[i].value] = CHANNEL_OPTIONS[i];
   }
+  type2label[0] = {
+    value: 0,
+    text: t('channel.table.status_unknown'),
+    color: 'grey',
+  };
   return (
     <Label basic color={type2label[type]?.color}>
       {type2label[type] ? type2label[type].text : type}
@@ -109,7 +106,6 @@ const ChannelsTable = () => {
           value: model,
         };
       });
-      console.log('channel', channel);
     }
     return channel;
   };
@@ -482,6 +478,16 @@ const ChannelsTable = () => {
   };
 
   const sortChannel = async (key) => {
+    // health 是内存指标不是数据库列，不支持服务端排序，改为客户端排序
+    if (key === 'health') {
+      const sorted = [...channels].sort((a, b) => {
+        const ah = healthData[a.id] ? healthData[a.id].health_score : 0;
+        const bh = healthData[b.id] ? healthData[b.id].health_score : 0;
+        return bh - ah;
+      });
+      setChannels(sorted);
+      return;
+    }
     // Determine sort order: if clicking same field, toggle; otherwise default to desc
     let newOrder = 'desc';
     if (sortField === key) {
@@ -820,8 +826,9 @@ const ChannelsTable = () => {
                 size='tiny'
                 siblingRange={1}
                 totalPages={
-                  Math.ceil(channels.length / itemsPerPage) +
-                  (channels.length % itemsPerPage === 0 ? 1 : 0)
+                  channels.length === 0
+                    ? 1
+                    : Math.ceil(channels.length / itemsPerPage)
                 }
               />
               <Button size='tiny' onClick={refresh} loading={loading}>

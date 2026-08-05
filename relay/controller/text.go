@@ -27,12 +27,26 @@ import (
 	"github.com/songquanpeng/one-api/relay/adaptor"
 	"github.com/songquanpeng/one-api/relay/adaptor/openai"
 	"github.com/songquanpeng/one-api/relay/apitype"
-	"github.com/songquanpeng/one-api/relay/billing"
-	billingratio "github.com/songquanpeng/one-api/relay/billing/ratio"
 	"github.com/songquanpeng/one-api/relay/channeltype"
 	"github.com/songquanpeng/one-api/relay/meta"
 	"github.com/songquanpeng/one-api/relay/model"
 )
+
+// isProbeCompatible 探测只对 OpenAI 兼容 SSE 渠道启用。
+// 其他渠道（Anthropic/Gemini/AwsClaude/Zhipu/Ali/Baidu/Xunfei 等）的 DoRequest
+// 只透传 OpenAI JSON，且 SSE 格式不是 data: {choices...}，探测会永远等超时，
+// 直接走上游原始 DoResponse 路径（不探测、不 buffered 回放）。
+func isProbeCompatible(meta *meta.Meta) bool {
+	return meta.APIType == apitype.OpenAI
+}
+
+// newLineScanner 创建支持超长行的 scanner（上限 STREAM_SCANNER_MAX_BUFFER_MB，默认 64MB）
+func newLineScanner(r io.Reader) *bufio.Scanner {
+	scanner := bufio.NewScanner(r)
+	scanner.Split(bufio.ScanLines)
+	scanner.Buffer(make([]byte, 64*1024), common.StreamScannerMaxBufferBytes)
+	return scanner
+}
 
 func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 	ctx := c.Request.Context()
@@ -59,12 +73,10 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 	meta.ActualModelName = textRequest.Model
 	c.Set(ctxkey.ActualModel, meta.ActualModelName) // dyt-22: 供 relay.go 使用
 	systemPromptReset := setSystemPrompt(ctx, textRequest, meta.ForcedSystemPrompt)
-	modelRatio := billingratio.GetModelRatio(textRequest.Model, meta.ChannelType)
-	groupRatio := billingratio.GetGroupRatio(meta.Group)
-	ratio := modelRatio * groupRatio
 	promptTokens := getPromptTokens(textRequest, meta.Mode)
 	meta.PromptTokens = promptTokens
-	preConsumedQuota, bizErr := preConsumeQuota(ctx, textRequest, promptTokens, ratio, meta)
+	// 自用模式：preConsumeQuota 恒返回 (0, nil)，不再预扣/检查额度
+	preConsumedQuota, bizErr := preConsumeQuota(ctx, textRequest, promptTokens, 1, meta)
 	if bizErr != nil {
 		logger.Warnf(ctx, "preConsumeQuota failed: %+v", *bizErr)
 		return bizErr
@@ -77,7 +89,8 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 	adaptor.Init(meta)
 
 	// Stream probe: buffer until first content token, then replay + passthrough
-	if meta.IsStream {
+	// 仅对 OpenAI 兼容渠道启用；其他渠道走下方原始透传路径
+	if meta.IsStream && isProbeCompatible(meta) {
 		// dyt-23: 探测不再克隆请求，直接用 textRequest 的 JSON 作为 body
 		// 这样两次 doProbe 发送完全相同的 body 给上游
 		textRequest.Stream = true // 探测总是流式
@@ -90,6 +103,7 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 
 		// dyt-24: 同渠道重试次数由 CHANNEL_RETRY_COUNT 控制（默认 1）
 		retryCount := env.Int("CHANNEL_RETRY_COUNT", 1)
+		var sawDone bool // 上游是否已发 [DONE]（探测阶段记录/透传阶段转发后置位）
 		doProbe := func(attemptNum int) (success bool, probeUsage *model.Usage, responseSnippet string, buf *bytes.Buffer, scanner *bufio.Scanner, statusCode int, errReason string, respBody string) {
 			// dyt-23: 每次重试都从原 bytes 重新创建 reader，确保 body 完全一致
 			// dyt-39: 用户断开连接时立即停止
@@ -99,8 +113,8 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 
 			resp, doErr := adaptor.DoRequest(c, meta, bytes.NewReader(probeBodyBytes))
 			if doErr != nil || resp == nil || resp.StatusCode/100 != 2 {
-				// dyt-39: 检测 context 取消
-				if errors.Is(doErr, context.Canceled) || errors.Is(doErr, context.DeadlineExceeded) || ctx.Err() != nil {
+				// dyt-39: 用户断开（客户端取消）→ 499；服务端自身超时不算用户断开
+				if ctx.Err() != nil && errors.Is(ctx.Err(), context.Canceled) {
 					return false, nil, "", nil, nil, 499, "__CANCEL__用户已断开连接", ""
 				}
 				code := 0
@@ -125,8 +139,7 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 
 			var localBuf bytes.Buffer
 			localBuf.Grow(4096)
-			localScanner := bufio.NewScanner(resp.Body)
-			localScanner.Split(bufio.ScanLines)
+			localScanner := newLineScanner(resp.Body)
 			var localUsage *model.Usage
 			localConfirmed := false
 			var localSnippet string
@@ -134,12 +147,14 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 			// 改进1：追踪上游返回细节
 			lineCount := 0
 			bytesRead := 0
-			sawDone := false
 			lastLine := ""
 
 			// dyt-20: 异常检测 — finish_reason 出现但缺 usage
 			sawFinishReason := false
 			finishReasonValue := ""
+
+			// 透传已经开始（数据已发给客户端）后，不能再判定失败触发重试
+			startedPassthrough := false
 
 			// dyt-20: 完整响应 body 累积（限 100KB）
 			var respBodyBuf bytes.Buffer
@@ -148,6 +163,8 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 
 			// dyt-47: SSE首token超时计时起点
 			probeStartTime := time.Now()
+			// 首个 data: 行到达后，切换为流式整体超时（STREAMING_TIMEOUT，默认 0=跟随 HTTPClient 300s）
+			streamingDeadline := time.Time{}
 
 			// dyt-50: keep-alive 排队超时检测
 			keepAliveLineCount := 0
@@ -156,7 +173,7 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 			for localScanner.Scan() {
 				data := localScanner.Text()
 				// dyt-39: 用户断开连接时立即停止读取上游
-				if ctx.Err() != nil {
+				if ctx.Err() != nil && errors.Is(ctx.Err(), context.Canceled) {
 					return false, nil, "", nil, nil, 499, "__CANCEL__用户已断开连接", respBodyBuf.String()
 				}
 				lineCount++
@@ -170,11 +187,9 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 				// 持续 keep-alive（排队中）→ 等 3×ProbeTimeout（默认 360s）
 				if len(data) > 0 && data[:1] == ":" {
 					keepAliveLineCount++
-					if keepAliveLineCount == 1 {
-						if keepAliveDeadline.IsZero() {
-							keepAliveDeadline = time.Now().Add(
-								time.Duration(config.ProbeTimeout) * 3 * time.Second)
-						}
+					if keepAliveDeadline.IsZero() {
+						keepAliveDeadline = time.Now().Add(
+							time.Duration(config.ProbeTimeout) * 3 * time.Second)
 					}
 					if !localConfirmed && !keepAliveDeadline.IsZero() && time.Now().After(keepAliveDeadline) {
 						return false, nil, "", nil, nil, resp.StatusCode,
@@ -234,7 +249,12 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 					}
 
 					// dyt-48: SSE首token超时 — 读 PROBE_TIMEOUT 环境变量（默认 120s）
-					if !localConfirmed && time.Since(probeStartTime) > time.Duration(config.ProbeTimeout)*time.Second {
+					// keep-alive 排队时使用更长的 keepAliveDeadline
+					deadline := probeStartTime.Add(time.Duration(config.ProbeTimeout) * time.Second)
+					if !keepAliveDeadline.IsZero() && keepAliveDeadline.After(deadline) {
+						deadline = keepAliveDeadline
+					}
+					if !localConfirmed && time.Now().After(deadline) {
 						reason := fmt.Sprintf("SSE首token超时(HTTP %d, %d行/%d字节, %ds内无content)",
 							resp.StatusCode, lineCount, bytesRead, config.ProbeTimeout)
 						return false, nil, "", nil, nil, resp.StatusCode, reason, respBodyBuf.String()
@@ -244,7 +264,7 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 						// First content token found: set headers, replay buffer, then passthrough
 						logger.Infof(ctx, "stream confirmed with first content token (attempt-%d), replaying %d buffered bytes", attemptNum, localBuf.Len())
 
-						// Write probe confirm log immediately for visibility
+						// Write probe confirm log immediately for visibility（异步，不阻塞首 token 关键路径）
 						chName := c.GetString(ctxkey.ChannelName)
 						chId := c.GetInt(ctxkey.ChannelId)
 						probeTTFT := helper.CalcElapsedTime(meta.StartTime)
@@ -252,9 +272,9 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 						if probeLogContent != "" {
 							probeLogContent = fmt.Sprintf("探测成功，渠道：%s(#%d)，模型：%s→%s，请求内容：%s", chName, chId, meta.OriginModelName, meta.ActualModelName, probeLogContent)
 						} else {
-							probeLogContent = fmt.Sprintf("探测成功，渠道：%s(#%d)，模型：%s→%s，%s | %dms", chName, chId, meta.OriginModelName, meta.ActualModelName, chName, probeTTFT)
+							probeLogContent = fmt.Sprintf("探测成功，渠道：%s(#%d)，模型：%s→%s，TTFT %dms", chName, chId, meta.OriginModelName, meta.ActualModelName, probeTTFT)
 						}
-						dbmodel.RecordConsumeLog(ctx, &dbmodel.Log{
+						probeLog := &dbmodel.Log{
 							UserId:            meta.UserId,
 							TokenName:         meta.TokenName,
 							ModelName:         meta.OriginModelName,
@@ -266,10 +286,14 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 							IsStream:          true,
 							ElapsedTime:       probeTTFT,
 							SystemPromptReset: systemPromptReset,
-						})
+						}
+						go func() {
+							logCtx := context.Background()
+							dbmodel.RecordConsumeLog(logCtx, probeLog)
+						}()
 
 						// 记录 TTFT 到滑动窗口（后续 postConsumeQuota 会记录完整 tok/s）
-						monitor.GlobalPerformanceStore.RecordRequest(
+						go monitor.GlobalPerformanceStore.RecordRequest(
 							chId,
 							promptTokens,
 							0, // 完成 tokens 未知
@@ -280,8 +304,7 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 						common.SetEventStreamHeaders(c)
 
 						bufReader := bytes.NewReader(localBuf.Bytes())
-						lineScanner := bufio.NewScanner(bufReader)
-						lineScanner.Split(bufio.ScanLines)
+						lineScanner := newLineScanner(bufReader)
 						for lineScanner.Scan() {
 							line := lineScanner.Text()
 							if len(line) > 0 {
@@ -289,11 +312,26 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 							}
 						}
 						localBuf.Reset()
+						startedPassthrough = true
+						// 透传开始后按流式整体超时限制（STREAMING_TIMEOUT）
+						if config.StreamingTimeout > 0 {
+							streamingDeadline = time.Now().Add(time.Duration(config.StreamingTimeout) * time.Second)
+						}
 					}
 				} else {
 					// Passthrough mode: forward directly
 					if len(data) > 0 {
+						// 转发上游 [DONE]，避免循环结束后重复发送
+						if data == "data: [DONE]" || data == "data:[DONE]" {
+							sawDone = true
+						}
 						render.StringData(c, data)
+					}
+
+					// 流式整体超时（dyt-52）
+					if !streamingDeadline.IsZero() && time.Now().After(streamingDeadline) {
+						logger.Warnf(ctx, "streaming timeout after %ds, stopping passthrough", config.StreamingTimeout)
+						return true, localUsage, localSnippet, &localBuf, localScanner, resp.StatusCode, "", respBodyBuf.String()
 					}
 
 					// Accumulate response content snippet from passthrough
@@ -325,9 +363,10 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 
 			// dyt-20: 失败判定。考虑 3 种情况：
 			// 1) 未收到 content/reasoning token → empty response
-			// 2) 收到 finish_reason 但缺 usage 且流末尾不是 [DONE] → 异常断流
+			// 2) 收到 finish_reason 但缺 usage 且流末尾不是 [DONE] → 异常断流（仅在未透传前判定）
 			// 3) 正常空流（仅 [DONE]）→ 成功
-			streamAbnormal := sawFinishReason && localUsage == nil && !sawDone
+			// 数据已透传给客户端后（startedPassthrough）不再判失败，避免重复内容
+			streamAbnormal := startedPassthrough && sawFinishReason && localUsage == nil && !sawDone
 			if !localConfirmed || streamAbnormal {
 				// Stream ended without content or with abnormal truncation
 				reason := classifyEmptyResponse(lineCount, bytesRead, sawDone, lastLine, resp.StatusCode)
@@ -346,12 +385,9 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 		var lastSuccess bool
 		var lastProbeUsage *model.Usage
 		var lastResponseSnippet string
-		var lastBuf *bytes.Buffer
-		var lastScanner *bufio.Scanner
 		for attempt := 0; attempt < totalAttempts; attempt++ {
 			// dyt-39: 用户已断开，跳过后续所有重试
-			if ctx.Err() != nil {
-				billing.ReturnPreConsumedQuota(ctx, preConsumedQuota, meta.TokenId)
+			if ctx.Err() != nil && errors.Is(ctx.Err(), context.Canceled) {
 				dbmodel.RecordCancelLog(ctx, &dbmodel.Log{
 					UserId:    meta.UserId,
 					TokenName: meta.TokenName,
@@ -362,11 +398,10 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 				return openai.ErrorWrapper(ctx.Err(), "request_cancelled", 499)
 			}
 
-			success, probeUsage, responseSnippet, buf, scanner, _, errReason, respBody := doProbe(attempt)
+			success, probeUsage, responseSnippet, _, _, _, errReason, respBody := doProbe(attempt)
 
 			// dyt-39: 检测取消
 			if strings.HasPrefix(errReason, "__CANCEL__") {
-				billing.ReturnPreConsumedQuota(ctx, preConsumedQuota, meta.TokenId)
 				dbmodel.RecordCancelLog(ctx, &dbmodel.Log{
 					UserId:    meta.UserId,
 					TokenName: meta.TokenName,
@@ -381,8 +416,6 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 				lastSuccess = true
 				lastProbeUsage = probeUsage
 				lastResponseSnippet = responseSnippet
-				lastBuf = buf
-				lastScanner = scanner
 				break
 			}
 
@@ -436,19 +469,16 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 		}
 
 		if lastSuccess {
-				_ = lastBuf
-				_ = lastScanner
-			_ = lastBuf
-			_ = lastScanner
-
 			logger.Infof(ctx, "stream finished with passthrough, usage: %+v", lastProbeUsage)
-			render.Done(c)
+			// 上游已透传 [DONE] 则不再补发
+			if !sawDone {
+				render.Done(c)
+			}
 
-			go postConsumeQuota(ctx, lastProbeUsage, meta, textRequest, ratio, preConsumedQuota, modelRatio, groupRatio, systemPromptReset, lastResponseSnippet)
+			go postConsumeQuota(ctx, lastProbeUsage, meta, textRequest, 1, preConsumedQuota, 0, 0, systemPromptReset, lastResponseSnippet)
 			return nil
 		}
 
-		billing.ReturnPreConsumedQuota(ctx, preConsumedQuota, meta.TokenId)
 		return openai.ErrorWrapper(fmt.Errorf("all %d probe attempts returned empty response from channel", totalAttempts), "empty_response", http.StatusBadGateway)
 	}
 
@@ -460,9 +490,8 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 
 	resp, err := adaptor.DoRequest(c, meta, requestBody)
 	if err != nil {
-		// dyt-39: 用户断开 → 退配额 + 记终止日志
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil {
-			billing.ReturnPreConsumedQuota(ctx, preConsumedQuota, meta.TokenId)
+		// dyt-39: 用户断开（客户端取消）→ 499；服务端自身超时不算用户断开
+		if ctx.Err() != nil && errors.Is(ctx.Err(), context.Canceled) {
 			dbmodel.RecordCancelLog(ctx, &dbmodel.Log{
 				UserId:    meta.UserId,
 				TokenName: meta.TokenName,
@@ -476,15 +505,13 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 		return openai.ErrorWrapper(err, "do_request_failed", http.StatusInternalServerError)
 	}
 	if isErrorHappened(meta, resp) {
-		billing.ReturnPreConsumedQuota(ctx, preConsumedQuota, meta.TokenId)
 		return RelayErrorHandler(resp)
 	}
 
 	usage, respErr := adaptor.DoResponse(c, resp, meta)
 	if respErr != nil {
-		// dyt-39: 用户断开 → 退配额外记终止
-		if respErr.StatusCode == 499 || ctx.Err() != nil {
-			billing.ReturnPreConsumedQuota(ctx, preConsumedQuota, meta.TokenId)
+		// dyt-39: 用户断开 → 记终止日志
+		if respErr.StatusCode == 499 || (ctx.Err() != nil && errors.Is(ctx.Err(), context.Canceled)) {
 			dbmodel.RecordCancelLog(ctx, &dbmodel.Log{
 				UserId:    meta.UserId,
 				TokenName: meta.TokenName,
@@ -495,7 +522,6 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 			return openai.ErrorWrapper(context.Canceled, "request_cancelled", 499)
 		}
 		logger.Errorf(ctx, "respErr is not nil: %+v", respErr)
-		billing.ReturnPreConsumedQuota(ctx, preConsumedQuota, meta.TokenId)
 		return respErr
 	}
 	// 提取非流式回复内容用于日志
@@ -503,13 +529,14 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 	if rt, ok := c.Get("response_content"); ok {
 		responseSnippet, _ = rt.(string)
 	}
-	if usage != nil && usage.CompletionTokens == 0 {
-		logger.Warnf(ctx, "empty response detected (completion_tokens=0), triggering fallback")
-		billing.ReturnPreConsumedQuota(ctx, preConsumedQuota, meta.TokenId)
+	// 空响应判定：usage 全 0 且无回复内容才算空。
+	// 不再仅凭 CompletionTokens==0 判定，避免误伤 embedding（completion 恒 0）/moderation 等正常响应
+	if usage != nil && usage.PromptTokens == 0 && usage.CompletionTokens == 0 && responseSnippet == "" {
+		logger.Warnf(ctx, "empty response detected (no tokens, no content), triggering fallback")
 		// dyt-20: 记录非流式空响应日志 + payload
 		chName := c.GetString(ctxkey.ChannelName)
 		chId := c.GetInt(ctxkey.ChannelId)
-		failLogContent := fmt.Sprintf("回复为空，渠道：%s(#%d)，模型：%s→%s，completion_tokens=0", chName, chId, meta.OriginModelName, meta.ActualModelName)
+		failLogContent := fmt.Sprintf("回复为空，渠道：%s(#%d)，模型：%s→%s，无 token 无内容", chName, chId, meta.OriginModelName, meta.ActualModelName)
 		failLogId := dbmodel.RecordConsumeLogWithId(ctx, &dbmodel.Log{
 			UserId:            meta.UserId,
 			TokenName:         meta.TokenName,
@@ -530,14 +557,14 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 					LogId:     failLogId,
 					Request:   reqStr,
 					Response:  responseSnippet,
-					Error:     "empty response (non-stream): completion_tokens=0",
+					Error:     "empty response (non-stream): no tokens and no content",
 					CreatedAt: meta.StartTime.Unix(),
 				})
 			}
 		}
 		return openai.ErrorWrapper(fmt.Errorf("empty response from channel"), "empty_response", http.StatusBadGateway)
 	}
-	go postConsumeQuota(ctx, usage, meta, textRequest, ratio, preConsumedQuota, modelRatio, groupRatio, systemPromptReset, responseSnippet)
+	go postConsumeQuota(ctx, usage, meta, textRequest, 1, preConsumedQuota, 0, 0, systemPromptReset, responseSnippet)
 	return nil
 }
 

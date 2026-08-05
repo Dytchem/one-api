@@ -48,7 +48,7 @@ func Distribute() func(c *gin.Context) {
 
 			// Health-aware selection: get all top-priority abilities, filter degraded, pick best
 			abilities, abilityErr := model.GetTopSatisfiedAbilities(userGroup, requestModel)
-			if abilityErr != nil && len(abilities) > 0 {
+			if abilityErr == nil && len(abilities) > 0 {
 				filtered := monitor.FilterAbilities(abilities, nil)
 				if len(filtered) > 0 {
 					channel, err = model.GetChannelById(filtered[0].ChannelId, false)

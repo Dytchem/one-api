@@ -16,7 +16,6 @@ import { ITEMS_PER_PAGE_OPTIONS } from '../constants';
 import {
   renderGroup,
   renderNumber,
-  renderQuota,
   renderText,
 } from '../helpers/render';
 
@@ -228,10 +227,10 @@ const UsersTable = () => {
             <Table.HeaderCell
               style={{ cursor: 'pointer' }}
               onClick={() => {
-                sortUser('quota');
+                sortUser('request_count');
               }}
             >
-              {t('user.table.quota')}
+              {t('user.table.request_count')}
             </Table.HeaderCell>
             <Table.HeaderCell
               style={{ cursor: 'pointer' }}
@@ -280,18 +279,6 @@ const UsersTable = () => {
                   {/*  {user.email ? <Popup hoverable content={user.email} trigger={<span>{renderText(user.email, 24)}</span>} /> : '无'}*/}
                   {/*</Table.Cell>*/}
                   <Table.Cell>
-                    <Popup
-                      content={t('user.table.remaining_quota')}
-                      trigger={
-                        <Label basic>{renderQuota(user.quota, t)}</Label>
-                      }
-                    />
-                    <Popup
-                      content={t('user.table.used_quota')}
-                      trigger={
-                        <Label basic>{renderQuota(user.used_quota, t)}</Label>
-                      }
-                    />
                     <Popup
                       content={t('user.table.request_count')}
                       trigger={
@@ -388,16 +375,6 @@ const UsersTable = () => {
                 options={[
                   { key: '', text: t('user.table.sort.default'), value: '' },
                   {
-                    key: 'quota',
-                    text: t('user.table.sort.by_quota'),
-                    value: 'quota',
-                  },
-                  {
-                    key: 'used_quota',
-                    text: t('user.table.sort.by_used_quota'),
-                    value: 'used_quota',
-                  },
-                  {
                     key: 'request_count',
                     text: t('user.table.sort.by_request_count'),
                     value: 'request_count',
@@ -414,7 +391,7 @@ const UsersTable = () => {
                 onChange={handleItemsPerPageChange}
                 style={{ minWidth: '80px', marginRight: '5px' }}
               />
-              <span style={{ marginRight: '15px', fontSize: '12px', color: '#666' }}>条/页</span>
+              <span style={{ marginRight: '15px', fontSize: '12px', color: '#666' }}>/ page</span>
               <Pagination
                 floated='right'
                 activePage={activePage}
@@ -422,8 +399,9 @@ const UsersTable = () => {
                 size='small'
                 siblingRange={1}
                 totalPages={
-                  Math.ceil(users.length / itemsPerPage) +
-                  (users.length % itemsPerPage === 0 ? 1 : 0)
+                  users.length === 0
+                    ? 1
+                    : Math.ceil(users.length / itemsPerPage)
                 }
               />
             </Table.HeaderCell>

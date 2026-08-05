@@ -196,7 +196,55 @@ docker run -d --name one-api -p 3000:3000 \
 v0.6.11-dyt-N    # N 为自增构建号，每次发布递增
 ```
 
-当前最新：**[v0.6.11-dyt-26](https://github.com/Dytchem/one-api/releases/tag/v0.6.11-dyt-26)**
+当前最新：**[v0.6.11-dyt-52](https://github.com/Dytchem/one-api/releases/tag/v0.6.11-dyt-52)**
+
+## dyt-52 自用模式：计费移除 + 修复
+
+> 本版本起定位为**自用 LLM API 管理网关**，计费功能全部移除。
+
+### 计费移除
+
+| 改动 | 说明 |
+|------|------|
+| 配额扣减移除 | 预扣/实扣/退费全部 no-op，请求不再受余额限制（`relay/billing` 保留签名）|
+| 兑换码系统移除 | `/redemption` 路由、页面、控制器、模型全部删除 |
+| 充值系统移除 | `/topup` 路由、页面、`TopUp`/`AdminTopUp` 删除 |
+| 计费配置项移除 | 设置页删除额度/倍率/充值链接/货币显示等配置 |
+| 用户/令牌额度 UI 移除 | 表格余额列替换为请求数统计 |
+| dashboard 统计保留 | 日志 `quota` 字段改为记录 **token 总量**，统计图表继续可用 |
+| 渠道余额查询保留 | `update_balance`（上游余额查看）仍在 |
+
+> DB 兼容：`quota`/`remain_quota` 等字段保留在表中（不再扣减），可直接复用现有数据库。
+
+### Bug 修复（P0/P1）
+
+| 修复 | 说明 |
+|------|------|
+| 健康选渠道条件反转 | `middleware/distributor.go` 条件 `!= nil` → `== nil`，健康排序/熔断过滤现在真正生效 |
+| 失败日志 SQL 优先级 | `GetFailLogs` 加括号，不再捞错类型日志 |
+| 渠道排序 SQL 注入 | `order`/`sort` 白名单校验，点"健康度"表头不再 500 |
+| probe 渠道兼容 | 探测仅对 OpenAI 兼容渠道启用；Anthropic/Gemini 等不再 120s 超时 |
+| 流式透传后误判失败 | 数据已发给客户端后不再判定失败触发重试（防重复内容）|
+| 双 `[DONE]` 哨兵 | 上游已发 `[DONE]` 不再补发 |
+| keep-alive 超时短路 | 排队场景使用 3×PROBE_TIMEOUT 期限，不再被 120s 短路 |
+| 400 重试 | 无效请求不再烧光重试次数 |
+| 空响应误判 | 非流式空响应判定收紧（仅 usage 全 0 且无内容），不再误伤 embedding |
+| 499 语义 | 服务端超时不再误记为"用户断开" |
+| 死代码 | 删除 `StreamHandlerWithBuffer`，统一 scanner 逻辑 |
+| metric goroutine 堆积 | `Emit` 改非阻塞发送 |
+| N+1 查询 | 失败日志列表批量查 payload |
+| 前端 `JSON.parse` 崩溃 | EditChannel 脏 JSON 不再卡死页面 |
+| 前端 i18n 缓存 | 渠道类型标签切换语言后正常刷新 |
+| 分页公式 | 数据整倍数时不再出现空页 |
+| Dockerfile 构建掩盖 | 移除 `& wait` 并行占位，失败立即报错 |
+
+### 新能力（参考 new-api 实践）
+
+| 变量 | 含义 | 默认 |
+|------|------|------|
+| `STREAM_SCANNER_MAX_BUFFER_MB` | 流式 SSE 单行缓冲上限（base64 大图不截断）| 64 |
+| `MAX_REQUEST_BODY_MB` | 请求体大小上限（防超大请求/zip bomb）| 32 |
+| `STREAMING_TIMEOUT` | 流式透传整体超时（秒），0 = 跟随 HTTPClient | 0 |
 
 ## 失败日志调试工作流（dyt-20+）
 

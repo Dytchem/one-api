@@ -144,8 +144,8 @@ func shouldRetry(c *gin.Context, statusCode int) bool {
 		return true
 	}
 	if statusCode == http.StatusBadRequest {
-		// Allow retry on 400 - the channel may have format issues but other channels might work
-		return true
+		// 400 表示请求本身无效（参数/格式错误），重试其他渠道不会改变结果，不重试
+		return false
 	}
 	if statusCode/100 == 2 {
 		return false

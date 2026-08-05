@@ -69,11 +69,16 @@ func Emit(channelId int, success bool) {
 	if !config.EnableMetric {
 		return
 	}
-	go func() {
-		if success {
-			metricSuccessChan <- channelId
-		} else {
-			metricFailChan <- channelId
+	// 非阻塞发送：channel 满时丢弃，避免 goroutine 堆积
+	if success {
+		select {
+		case metricSuccessChan <- channelId:
+		default:
 		}
-	}()
+	} else {
+		select {
+		case metricFailChan <- channelId:
+		default:
+		}
+	}
 }

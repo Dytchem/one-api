@@ -198,11 +198,12 @@ func (s *PerformanceStore) GetHealthScore(channelId int) float64 {
 
 	for i := 0; i < m.count; i++ {
 		record := m.records[i]
-		if record.Success {
+		// 只统计完整请求（非 TTFT-only 探测记录），避免拉低 tok/s
+		if record.Success && record.TTFTMs == 0 {
 			weightedSuccesses += 1.0
 			totalCompletionTokens += record.CompletionTokens
 			totalElapsedMs += record.ElapsedMs
-		} else {
+		} else if !record.Success {
 			weightedFailures += s.failWeight
 		}
 	}
@@ -257,7 +258,7 @@ func (s *PerformanceStore) GetChannelSpeed(channelId int) float64 {
 
 	for i := 0; i < m.count; i++ {
 		record := m.records[i]
-		if record.Success && record.ElapsedMs > 0 {
+		if record.Success && record.ElapsedMs > 0 && record.TTFTMs == 0 {
 			totalCompletionTokens += record.CompletionTokens
 			totalElapsedMs += record.ElapsedMs
 			hasData = true
@@ -375,6 +376,13 @@ func (s *PerformanceStore) ResetChannelMetrics(channelId int) {
 		m.consecutiveFailures = 0
 		m.degradedSince = 0
 	}
+}
+
+// RemoveChannelMetrics 渠道删除时清理指标，防止内存泄漏
+func (s *PerformanceStore) RemoveChannelMetrics(channelId int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.channels, channelId)
 }
 
 // GetRecordCount 获取滑动窗口当前记录数

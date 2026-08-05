@@ -653,7 +653,7 @@ const LogsTable = () => {
 
         <Table.Footer>
           <Table.Row>
-            <Table.HeaderCell colSpan={isAdminUser ? '10' : '9'}>
+            <Table.HeaderCell colSpan={isAdminUser ? '12' : '11'}>
               <Select
                 placeholder={t('log.type.select')}
                 options={LOG_OPTIONS}
@@ -682,8 +682,9 @@ const LogsTable = () => {
                 size='small'
                 siblingRange={1}
                 totalPages={
-                  Math.ceil(logs.length / itemsPerPage) +
-                  (logs.length % itemsPerPage === 0 ? 1 : 0)
+                  logs.length === 0
+                    ? 1
+                    : Math.ceil(logs.length / itemsPerPage)
                 }
               />
             </Table.HeaderCell>

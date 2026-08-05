@@ -16,7 +16,6 @@ import {
   showSuccess,
   timestamp2string,
 } from '../../helpers';
-import { renderQuotaWithPrompt } from '../../helpers/render';
 
 const EditToken = () => {
   const { t } = useTranslation();
@@ -252,13 +251,9 @@ const EditToken = () => {
                 {t('token.edit.buttons.expire_1_minute')}
               </Button>
             </div>
-            <Message>{t('token.edit.quota_notice')}</Message>
             <Form.Field>
               <Form.Input
-                label={`${t('token.edit.quota')}${renderQuotaWithPrompt(
-                  remain_quota,
-                  t
-                )}`}
+                label={t('token.edit.quota')}
                 name='remain_quota'
                 placeholder={t('token.edit.quota_placeholder')}
                 onChange={handleInputChange}

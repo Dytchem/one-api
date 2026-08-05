@@ -3,7 +3,6 @@ import { useTranslation } from 'react-i18next';
 import { Button, Form, Card } from 'semantic-ui-react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { API, showError, showSuccess } from '../../helpers';
-import { renderQuota, renderQuotaWithPrompt } from '../../helpers/render';
 
 const EditUser = () => {
   const { t } = useTranslation();
@@ -151,10 +150,7 @@ const EditUser = () => {
                 </Form.Field>
                 <Form.Field>
                   <Form.Input
-                    label={`${t('user.edit.quota')}${renderQuotaWithPrompt(
-                      quota,
-                      t
-                    )}`}
+                    label={t('user.edit.request_count')}
                     name='quota'
                     placeholder={t('user.edit.quota_placeholder')}
                     onChange={handleInputChange}

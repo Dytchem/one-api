@@ -87,33 +87,46 @@ const EditChannel = () => {
   };
 
   const loadChannel = async () => {
-    let res = await API.get(`/api/channel/${channelId}`);
-    const { success, message, data } = res.data;
-    if (success) {
-      if (data.models === '') {
-        data.models = [];
+    try {
+      let res = await API.get(`/api/channel/${channelId}`);
+      const { success, message, data } = res.data;
+      if (success) {
+        if (data.models === '') {
+          data.models = [];
+        } else {
+          data.models = data.models.split(',');
+        }
+        if (data.group === '') {
+          data.groups = [];
+        } else {
+          data.groups = data.group.split(',');
+        }
+        if (data.model_mapping !== '') {
+          // JSON.parse 加保护：脏数据不卡死页面
+          try {
+            data.model_mapping = JSON.stringify(
+              JSON.parse(data.model_mapping),
+              null,
+              2
+            );
+          } catch (e) {
+            showError('model_mapping 不是合法 JSON，已按原样显示');
+          }
+        }
+        setInputs(data);
+        if (data.config !== '') {
+          try {
+            setConfig(JSON.parse(data.config));
+          } catch (e) {
+            showError('config 不是合法 JSON，已忽略');
+          }
+        }
+        setBasicModels(getChannelModels(data.type));
       } else {
-        data.models = data.models.split(',');
+        showError(message);
       }
-      if (data.group === '') {
-        data.groups = [];
-      } else {
-        data.groups = data.group.split(',');
-      }
-      if (data.model_mapping !== '') {
-        data.model_mapping = JSON.stringify(
-          JSON.parse(data.model_mapping),
-          null,
-          2
-        );
-      }
-      setInputs(data);
-      if (data.config !== '') {
-        setConfig(JSON.parse(data.config));
-      }
-      setBasicModels(getChannelModels(data.type));
-    } else {
-      showError(message);
+    } catch (e) {
+      showError('加载渠道失败：' + (e.response?.data?.message || e.message));
     }
     setLoading(false);
   };
@@ -210,18 +223,19 @@ const EditChannel = () => {
   }, []);
 
   const submit = async () => {
-    if (inputs.key === '') {
+    let key = inputs.key;
+    if (key === '') {
       if (config.ak !== '' && config.sk !== '' && config.region !== '') {
-        inputs.key = `${config.ak}|${config.sk}|${config.region}`;
+        key = `${config.ak}|${config.sk}|${config.region}`;
       } else if (
         config.region !== '' &&
         config.vertex_ai_project_id !== '' &&
         config.vertex_ai_adc !== ''
       ) {
-        inputs.key = `${config.region}|${config.vertex_ai_project_id}|${config.vertex_ai_adc}`;
+        key = `${config.region}|${config.vertex_ai_project_id}|${config.vertex_ai_adc}`;
       }
     }
-    if (!isEdit && (inputs.name === '' || inputs.key === '')) {
+    if (!isEdit && (inputs.name === '' || key === '')) {
       showInfo(t('channel.edit.messages.name_required'));
       return;
     }
@@ -233,7 +247,7 @@ const EditChannel = () => {
       showInfo(t('channel.edit.messages.model_mapping_invalid'));
       return;
     }
-    let localInputs = { ...inputs };
+    let localInputs = { ...inputs, key };
     if (localInputs.key === 'undefined|undefined|undefined') {
       localInputs.key = ''; // prevent potential bug
     }
@@ -247,16 +261,21 @@ const EditChannel = () => {
       localInputs.other = '2024-03-01-preview';
     }
     let res;
-    localInputs.models = localInputs.models.join(',');
-    localInputs.group = localInputs.groups.join(',');
-    localInputs.config = JSON.stringify(config);
-    if (isEdit) {
-      res = await API.put(`/api/channel/`, {
-        ...localInputs,
-        id: parseInt(channelId),
-      });
-    } else {
-      res = await API.post(`/api/channel/`, localInputs);
+    try {
+      localInputs.models = localInputs.models.join(',');
+      localInputs.group = localInputs.groups.join(',');
+      localInputs.config = JSON.stringify(config);
+      if (isEdit) {
+        res = await API.put(`/api/channel/`, {
+          ...localInputs,
+          id: parseInt(channelId),
+        });
+      } else {
+        res = await API.post(`/api/channel/`, localInputs);
+      }
+    } catch (e) {
+      showError('请求失败：' + (e.response?.data?.message || e.message));
+      return;
     }
     const { success, message } = res.data;
     if (success) {

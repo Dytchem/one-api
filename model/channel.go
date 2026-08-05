@@ -52,12 +52,20 @@ type ChannelConfig struct {
 	VertexAIADC       string `json:"vertex_ai_adc,omitempty"`
 }
 
+// GetAllChannels 支持白名单排序：order 必须是 channel 表的列名，sort 只能是 asc/desc
 func GetAllChannels(startIdx int, num int, scope string, order string, sort string) ([]*Channel, error) {
 	var channels []*Channel
 	var err error
 	orderClause := "id desc"
-	if order != "" && sort != "" {
-		orderClause = order + " " + sort
+	if order != "" {
+		// 白名单校验，防止 SQL 注入
+		switch order {
+		case "id", "name", "type", "models", "status", "balance", "used_quota",
+			"priority", "created_time", "updated_time", "group":
+			if sort == "asc" || sort == "desc" {
+				orderClause = order + " " + sort
+			}
+		}
 	} else if sort == "asc" {
 		orderClause = "id asc"
 	}

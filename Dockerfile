@@ -6,15 +6,10 @@ WORKDIR /web
 COPY ./VERSION .
 COPY ./web .
 
-RUN npm install --prefix /web/default & \
-    echo "berry disabled" & \
-    echo "air disabled" & \
-    wait
+# dyt-52: 顺序执行 + set -e，构建失败不再被 & wait 掩盖
+RUN set -e && npm install --prefix /web/default --no-audit --no-fund
 
-RUN DISABLE_ESLINT_PLUGIN='true' REACT_APP_VERSION=$(cat ./VERSION) npm run build --prefix /web/default & \
-    DISABLE_ESLINT_PLUGIN='true' REACT_APP_VERSION=$(cat ./VERSION) echo "berry disabled" & \
-    DISABLE_ESLINT_PLUGIN='true' REACT_APP_VERSION=$(cat ./VERSION) echo "air disabled" & \
-    wait
+RUN set -e && DISABLE_ESLINT_PLUGIN='true' REACT_APP_VERSION=$(cat ./VERSION) npm run build --prefix /web/default
 
 FROM golang:1.22-alpine3.20 AS builder2
 

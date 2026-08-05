@@ -198,15 +198,24 @@ func GetFailLogs(c *gin.Context) {
 	}
 
 	items := make([]gin.H, 0, len(logs))
+	// 批量查询 payload 存在性，避免 N+1
+	payloadMap := make(map[int64]bool)
+	if len(logs) > 0 {
+		ids := make([]int64, 0, len(logs))
+		for _, log := range logs {
+			ids = append(ids, int64(log.Id))
+		}
+		payloadMap = model.BatchHasPayload(ids)
+	}
 	for _, log := range logs {
 		items = append(items, gin.H{
-			"id":          log.Id,
-			"time":        log.CreatedAt,
-			"channel_id":  log.ChannelId,
-			"model_name":  log.ModelName,
-			"content":     log.Content,
+			"id":            log.Id,
+			"time":          log.CreatedAt,
+			"channel_id":    log.ChannelId,
+			"model_name":    log.ModelName,
+			"content":       log.Content,
 			"prompt_tokens": log.PromptTokens,
-			"has_payload": model.LogHasPayload(int64(log.Id)),
+			"has_payload":   payloadMap[int64(log.Id)],
 		})
 	}
 	c.JSON(http.StatusOK, gin.H{

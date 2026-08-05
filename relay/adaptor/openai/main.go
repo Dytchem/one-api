@@ -23,75 +23,12 @@ const (
 	dataPrefixLength = len(dataPrefix)
 )
 
-// StreamHandlerWithBuffer is a variant of StreamHandler that buffers data instead of sending to client
-// Returns buffered chunks and usage
-func StreamHandlerWithBuffer(c *gin.Context, resp *http.Response, relayMode int) (*model.ErrorWithStatusCode, []byte, *model.Usage) {
-	var buf bytes.Buffer
-	scanner := bufio.NewScanner(resp.Body)
-	scanner.Split(bufio.ScanLines)
-	var usage *model.Usage
-
-	for scanner.Scan() {
-		data := scanner.Text()
-		if len(data) < dataPrefixLength {
-			continue
-		}
-
-		// Check for [DONE] message
-		dataWithoutPrefix := data[dataPrefixLength:]
-		if dataWithoutPrefix == done {
-			buf.WriteString(data)
-			buf.WriteString("\n")
-			continue
-		}
-
-		// Only handle data: prefix
-		if data[:dataPrefixLength] != dataPrefix {
-			continue
-		}
-
-		switch relayMode {
-		case relaymode.ChatCompletions:
-			var streamResponse ChatCompletionsStreamResponse
-			err := json.Unmarshal([]byte(dataWithoutPrefix), &streamResponse)
-			if err != nil {
-				logger.SysError("error unmarshalling stream response: " + err.Error())
-				continue
-			}
-			if len(streamResponse.Choices) == 0 && streamResponse.Usage == nil {
-				continue
-			}
-			// Store in buffer
-			buf.WriteString(data)
-			buf.WriteString("\n")
-
-			if streamResponse.Usage != nil {
-				usage = streamResponse.Usage
-			}
-		case relaymode.Completions:
-			var streamResponse CompletionsStreamResponse
-			err := json.Unmarshal([]byte(dataWithoutPrefix), &streamResponse)
-			if err != nil {
-				logger.SysError("error unmarshalling stream response: " + err.Error())
-				continue
-			}
-			buf.WriteString(data)
-			buf.WriteString("\n")
-		}
-	}
-
-	if err := scanner.Err(); err != nil {
-		logger.SysError("error reading stream: " + err.Error())
-	}
-	resp.Body.Close()
-
-	return nil, buf.Bytes(), usage
-}
-
 func StreamHandler(c *gin.Context, resp *http.Response, relayMode int) (*model.ErrorWithStatusCode, string, *model.Usage) {
 	responseText := ""
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Split(bufio.ScanLines)
+	// 支持超长 SSE 行（base64 图片等），上限 STREAM_SCANNER_MAX_BUFFER_MB（默认 64MB）
+	scanner.Buffer(make([]byte, 64*1024), common.StreamScannerMaxBufferBytes)
 	var usage *model.Usage
 	common.SetEventStreamHeaders(c)
 	doneRendered := false

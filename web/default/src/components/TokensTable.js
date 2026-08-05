@@ -20,7 +20,7 @@ import {
 } from '../helpers';
 
 import { ITEMS_PER_PAGE } from '../constants';
-import { renderQuota } from '../helpers/render';
+import { renderNumber } from '../helpers/render';
 
 function renderTimestamp(timestamp) {
   return <>{timestamp2string(timestamp)}</>;
@@ -348,14 +348,6 @@ const TokensTable = () => {
             <Table.HeaderCell
               style={{ cursor: 'pointer' }}
               onClick={() => {
-                sortToken('remain_quota');
-              }}
-            >
-              {t('token.table.remain_quota')}
-            </Table.HeaderCell>
-            <Table.HeaderCell
-              style={{ cursor: 'pointer' }}
-              onClick={() => {
                 sortToken('created_time');
               }}
             >
@@ -404,12 +396,7 @@ const TokensTable = () => {
                     {token.name ? token.name : t('token.table.no_name')}
                   </Table.Cell>
                   <Table.Cell>{renderStatus(token.status, t)}</Table.Cell>
-                  <Table.Cell>{renderQuota(token.used_quota, t)}</Table.Cell>
-                  <Table.Cell>
-                    {token.unlimited_quota
-                      ? t('token.table.unlimited')
-                      : renderQuota(token.remain_quota, t, 2)}
-                  </Table.Cell>
+                  <Table.Cell>{renderNumber(token.used_quota, t)}</Table.Cell>
                   <Table.Cell>{renderTimestamp(token.created_time)}</Table.Cell>
                   <Table.Cell>
                     {token.expired_time === -1
@@ -532,8 +519,9 @@ const TokensTable = () => {
                 size='small'
                 siblingRange={1}
                 totalPages={
-                  Math.ceil(tokens.length / ITEMS_PER_PAGE) +
-                  (tokens.length % ITEMS_PER_PAGE === 0 ? 1 : 0)
+                  tokens.length === 0
+                    ? 1
+                    : Math.ceil(tokens.length / ITEMS_PER_PAGE)
                 }
               />
             </Table.HeaderCell>

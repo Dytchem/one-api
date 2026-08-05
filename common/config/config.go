@@ -183,5 +183,14 @@ var UserContentRequestTimeout = env.Int("USER_CONTENT_REQUEST_TIMEOUT", 30)
 // dyt-48: SSE probe 首 token 超时（流式探测上游时等待第一个 data: 内容的最大时间）
 var ProbeTimeout = env.Int("PROBE_TIMEOUT", 120)
 
+// dyt-52: 流式 SSE 单行缓冲上限（MB），超长行（base64 图片）不截断；0 表示使用默认 64MB
+var StreamScannerMaxBufferMB = env.Int("STREAM_SCANNER_MAX_BUFFER_MB", 64)
+
+// dyt-52: 请求体大小上限（MB），防止超大请求/zip bomb 打爆内存；0 表示不限制
+var MaxRequestBodyMB = env.Int("MAX_REQUEST_BODY_MB", 32)
+
+// dyt-52: 流式请求整体超时（秒）。0 表示跟随 HTTPClient.Timeout（默认 300s）
+var StreamingTimeout = env.Int("STREAMING_TIMEOUT", 0)
+
 var EnforceIncludeUsage = env.Bool("ENFORCE_INCLUDE_USAGE", false)
 var TestPrompt = env.String("TEST_PROMPT", "Output only your specific model name with no additional text.")
