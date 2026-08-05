@@ -235,7 +235,7 @@ docker run -d --name one-api -p 3000:3000 \
 v0.6.11-dyt-N    # N 为自增构建号，每次发布递增
 ```
 
-当前最新：**[v0.6.11-dyt-53](https://github.com/Dytchem/one-api/releases/tag/v0.6.11-dyt-53)**
+当前最新：**[v0.6.11-dyt-54](https://github.com/Dytchem/one-api/releases/tag/v0.6.11-dyt-54)**
 
 ## dyt-52 自用模式：计费移除 + 修复
 
@@ -308,3 +308,27 @@ dyt-26 在探测判断里增加 `len(delta.ToolCalls) > 0` 分支，**所有使�
 ---
 
 *上游项目：[songquanpeng/one-api](https://github.com/songquanpeng/one-api)，MIT 协议。*
+
+### 常用提供商补充（dyt-54）
+
+基于 models.dev 数据（opencode 内置的 180 个提供商库）补充 12 个常用渠道：
+
+| 渠道 | 类型 | 端点 |
+|------|------|------|
+| 小米 MiMo | 61 | api.xiaomimimo.com/v1 |
+| OpenCode Zen | 62 | opencode.ai/zen/v1 |
+| OpenCode Go | 63 | opencode.ai/zen/go/v1 |
+| Ollama Cloud | 64 | ollama.com/v1 |
+| NVIDIA NIM | 65 | integrate.api.nvidia.com/v1 |
+| Hugging Face | 66 | router.huggingface.co/v1 |
+| ModelScope 魔搭 | 67 | api-inference.modelscope.cn/v1 |
+| Deep Infra | 68 | api.deepinfra.com/v1 |
+| Z.AI 智谱国际 | 69 | api.z.ai/api/paas/v4 |
+| Moonshot AI 国际 | 70 | api.moonshot.ai/v1 |
+| Vultr | 71 | api.vultrinference.com/v1 |
+| Agnes | 72 | apihub.agnes-ai.com/v1 |
+
+**模型建议**：编辑渠道页新增"填入推荐模型"按钮，一键填入该渠道的最新常用模型（数据来自 models.dev）。
+
+> 已有自定义渠道（type 50）可手动升级为对应内置类型，base_url 不变即可无缝切换。
+
