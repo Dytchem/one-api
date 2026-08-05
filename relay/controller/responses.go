@@ -150,12 +150,27 @@ func responsesToChatRequest(req *OpenAIResponsesRequest) *relaymodel.GeneralOpen
 	if req.Tools != nil {
 		if tools, ok := req.Tools.([]any); ok {
 			for _, tRaw := range tools {
-				if tMap, ok := tRaw.(map[string]any); ok {
-					if tBytes, err := json.Marshal(tMap); err == nil {
-						var tool relaymodel.Tool
-						if json.Unmarshal(tBytes, &tool) == nil {
-							chat.Tools = append(chat.Tools, tool)
-						}
+				tMap, ok := tRaw.(map[string]any)
+				if !ok {
+					continue
+				}
+				// Responses 格式: {"type":"function","name":...,"description":...,"parameters":...}
+				// 转换为 chat 格式: {"type":"function","function":{"name":...,"description":...,"parameters":...}}
+				if fn, ok := tMap["name"].(string); ok && fn != "" {
+					tool := relaymodel.Tool{
+						Type: "function",
+						Function: relaymodel.Function{
+							Name:        fn,
+							Description: fmt.Sprintf("%v", tMap["description"]),
+							Parameters:  tMap["parameters"],
+						},
+					}
+					chat.Tools = append(chat.Tools, tool)
+				} else if tBytes, err := json.Marshal(tMap); err == nil {
+					// 已经是 chat 格式（含 function 字段）
+					var tool relaymodel.Tool
+					if json.Unmarshal(tBytes, &tool) == nil && tool.Function.Name != "" {
+						chat.Tools = append(chat.Tools, tool)
 					}
 				}
 			}
@@ -528,8 +543,10 @@ func (s *responsesStreamState) feedLine(c *gin.Context, data string) {
 				content = rc
 			}
 		}
-		// tool calls delta（按 chat 的 tool_call id 归并）
+		// tool calls delta（始终按 index 归并——DeepSeek/OpenAI 首个 chunk 带 id，
+		// 后续 delta 只带 index 不带 id）
 		var toolDelta []struct {
+			key  string
 			id   string
 			name string
 			args string
@@ -539,29 +556,31 @@ func (s *responsesStreamState) feedLine(c *gin.Context, data string) {
 			if tc.Function.Arguments != nil {
 				argsStr = fmt.Sprintf("%v", tc.Function.Arguments)
 			}
+			key := fmt.Sprintf("idx%d", tc.Index)
 			toolDelta = append(toolDelta, struct {
+				key  string
 				id   string
 				name string
 				args string
-			}{id: tc.Id, name: tc.Function.Name, args: argsStr})
+			}{key: key, id: tc.Id, name: tc.Function.Name, args: argsStr})
 		}
 
 		if content != "" {
 			s.emitContentDelta(c, content)
 		}
 		for _, td := range toolDelta {
-			if td.id == "" {
-				continue
-			}
-			tc, ok := s.toolCalls[td.id]
+			tc, ok := s.toolCalls[td.key]
 			if !ok {
 				tc = &responsesToolCallState{
 					id:     "fc_" + random.GetRandomString(16),
 					callID: td.id,
 					name:   td.name,
 				}
-				s.toolCalls[td.id] = tc
+				s.toolCalls[td.key] = tc
 				s.emitToolCallAdded(c, tc)
+			}
+			if td.id != "" {
+				tc.callID = td.id
 			}
 			if td.name != "" {
 				tc.name = td.name

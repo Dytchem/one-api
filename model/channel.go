@@ -61,7 +61,7 @@ func GetAllChannels(startIdx int, num int, scope string, order string, sort stri
 		// 白名单校验，防止 SQL 注入
 		switch order {
 		case "id", "name", "type", "models", "status", "balance", "used_quota",
-			"priority", "created_time", "updated_time", "group":
+			"priority", "created_time", "balance_updated_time", "group":
 			if sort == "asc" || sort == "desc" {
 				orderClause = order + " " + sort
 			}

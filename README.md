@@ -190,13 +190,52 @@ docker run -d --name one-api -p 3000:3000 \
 
 > ⚠️ 升级到 dyt-20+ 时，`log_payloads` 表会自动迁移（旧日志会丢失 payload，只有新失败才存）。
 
+## dyt-53 OpenAI Responses API + 新提供商
+
+### Responses API（/v1/responses）
+
+自用网关新增 **OpenAI Responses API** 支持（`client.responses.create` 可直接使用）：
+
+| 能力 | 说明 |
+|------|------|
+| 请求转换 | `input`/`instructions`/`tools`/`max_output_tokens` 自动转 chat 格式，复用探测与跨渠道 fallback |
+| 非流式 | chat JSON → Responses JSON（output/usage/function_call 完整转换，usage 缺失时按文本兜底估算）|
+| 流式 | chat SSE → Responses SSE（`response.created/delta/done/completed` 标准事件序列，含 `event:` 行）|
+| 工具调用 | 流式 `function_call_arguments.delta/done`（按 index 归并增量参数）|
+| 空响应 | 无内容无 token 时触发跨渠道 fallback |
+
+> 仅 OpenAI 兼容渠道支持 Responses；上游 URL 自动改写为 `/chat/completions`。
+
+### 新提供商渠道（dyt-53 新增）
+
+| 渠道 | 类型 | 说明 |
+|------|------|------|
+| Perplexity | 52 | AI 搜索 API（Sonar 系列）|
+| MokaAI | 53 | 国内模型聚合（api.mok.ai）|
+| Xinference | 54 | 本地/远程推理服务（需自填 base_url）|
+| Cerebras | 55 | 高速推理（gpt-oss 系列）|
+| Hyperbolic | 56 | 分布式推理（开源模型）|
+| Fireworks AI | 57 | 推理/微调平台 |
+| Lambda | 58 | 开源模型推理 |
+| 智谱 GLM (OpenAI 兼容) | 59 | open.bigmodel.cn/api/paas/v4 |
+| Jina | 60 | 多模态/嵌入 |
+
+### 基础 URL 更新（dyt-53）
+
+| 渠道 | 旧 | 新 |
+|------|----|----|
+| MiniMax | api.minimax.chat（已停用）| api.minimaxi.com |
+| 腾讯混元 | hunyuan.tencentcloudapi.com（TC3 已停售）| api.hunyuan.cloud.tencent.com/v1（OpenAI 兼容）|
+| 360 智脑 | ai.360.cn | api.360.cn |
+| Coze | api.coze.com | api.coze.cn |
+
 ## 版本号约定
 
 ```
 v0.6.11-dyt-N    # N 为自增构建号，每次发布递增
 ```
 
-当前最新：**[v0.6.11-dyt-52](https://github.com/Dytchem/one-api/releases/tag/v0.6.11-dyt-52)**
+当前最新：**[v0.6.11-dyt-53](https://github.com/Dytchem/one-api/releases/tag/v0.6.11-dyt-53)**
 
 ## dyt-52 自用模式：计费移除 + 修复
 
