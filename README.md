@@ -235,7 +235,7 @@ docker run -d --name one-api -p 3000:3000 \
 v0.6.11-dyt-N    # N 为自增构建号，每次发布递增
 ```
 
-当前最新：**[v0.6.11-dyt-54](https://github.com/Dytchem/one-api/releases/tag/v0.6.11-dyt-54)**
+当前最新：**[v0.6.11-dyt-55](https://github.com/Dytchem/one-api/releases/tag/v0.6.11-dyt-55)**
 
 ## dyt-52 自用模式：计费移除 + 修复
 
