@@ -77,7 +77,7 @@ const Home = () => {
               <Card.Header>
                 <Header as='h3'>{t('home.system_status.title')}</Header>
               </Card.Header>
-              <Grid columns={2} stackable>
+              <Grid columns={2}>
                 <Grid.Column>
                   <Card
                     fluid

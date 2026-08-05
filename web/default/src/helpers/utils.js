@@ -81,8 +81,7 @@ export async function copy(text) {
 }
 
 export function isMobile() {
-  // 仅手机（<=480px）使用侧边栏移动布局；480 以上一律桌面布局（同一画布，仅宽度缩放）
-  return window.innerWidth <= 480;
+  return false;
 }
 
 let showErrorOptions = { autoClose: toastConstants.ERROR_TIMEOUT };
@@ -90,20 +89,6 @@ let showWarningOptions = { autoClose: toastConstants.WARNING_TIMEOUT };
 let showSuccessOptions = { autoClose: toastConstants.SUCCESS_TIMEOUT };
 let showInfoOptions = { autoClose: toastConstants.INFO_TIMEOUT };
 let showNoticeOptions = { autoClose: false };
-
-if (isMobile()) {
-  showErrorOptions.position = 'top-center';
-  // showErrorOptions.transition = 'flip';
-
-  showSuccessOptions.position = 'top-center';
-  // showSuccessOptions.transition = 'flip';
-
-  showInfoOptions.position = 'top-center';
-  // showInfoOptions.transition = 'flip';
-
-  showNoticeOptions.position = 'top-center';
-  // showNoticeOptions.transition = 'flip';
-}
 
 export function showError(error) {
   if (!error) return;

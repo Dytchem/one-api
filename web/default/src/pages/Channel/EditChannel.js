@@ -611,7 +611,7 @@ const EditChannel = () => {
                       {t('channel.edit.buttons.add_custom')}
                     </Button>
                   }
-                  style={{ flex: '1 1 180px', minWidth: '150px' }}
+                  style={{ flex: '1 1 100%', minWidth: '100%' }}
                   placeholder={t('channel.edit.buttons.custom_placeholder')}
                   value={customModel}
                   onChange={(e, { value }) => {

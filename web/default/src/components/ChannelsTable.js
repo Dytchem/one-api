@@ -537,12 +537,11 @@ const ChannelsTable = () => {
           {t('channel.detail_notice')}
         </Message>
       )}
-      <div className='channels-table-wrap'>
-      <Table basic={'very'} compact size='small' className={'channels-table' + (showDetail ? ' detail-mode' : '')}>
+      <Table basic={'very'} compact size='small'>
         <Table.Header>
           <Table.Row>
             <Table.HeaderCell
-              style={{ cursor: 'pointer', width: '4%' }}
+              style={{ cursor: 'pointer' }}
               onClick={() => {
                 sortChannel('id');
               }}
@@ -550,7 +549,7 @@ const ChannelsTable = () => {
               {t('channel.table.id')}
             </Table.HeaderCell>
             <Table.HeaderCell
-              style={{ cursor: 'pointer', width: '15%' }}
+              style={{ cursor: 'pointer' }}
               onClick={() => {
                 sortChannel('name');
               }}
@@ -558,7 +557,7 @@ const ChannelsTable = () => {
               {t('channel.table.name')}
             </Table.HeaderCell>
             <Table.HeaderCell
-              style={{ cursor: 'pointer', width: '7%' }}
+              style={{ cursor: 'pointer' }}
               onClick={() => {
                 sortChannel('group');
               }}
@@ -566,7 +565,7 @@ const ChannelsTable = () => {
               {t('channel.table.group')}
             </Table.HeaderCell>
             <Table.HeaderCell
-              style={{ cursor: 'pointer', width: '13%' }}
+              style={{ cursor: 'pointer' }}
               onClick={() => {
                 sortChannel('type');
               }}
@@ -574,7 +573,7 @@ const ChannelsTable = () => {
               {t('channel.table.type')}
             </Table.HeaderCell>
             <Table.HeaderCell
-              style={{ cursor: 'pointer', width: '9%' }}
+              style={{ cursor: 'pointer' }}
               onClick={() => {
                 sortChannel('status');
               }}
@@ -582,7 +581,7 @@ const ChannelsTable = () => {
               {t('channel.table.status')}
             </Table.HeaderCell>
             <Table.HeaderCell
-              style={{ cursor: 'pointer', width: '9%' }}
+              style={{ cursor: 'pointer' }}
               onClick={() => {
                 sortChannel('response_time');
               }}
@@ -591,7 +590,7 @@ const ChannelsTable = () => {
               {t('channel.table.response_time')}
             </Table.HeaderCell>
             <Table.HeaderCell
-              style={{ cursor: 'pointer', width: '9%' }}
+              style={{ cursor: 'pointer' }}
               onClick={() => {
                 sortChannel('balance');
               }}
@@ -599,7 +598,7 @@ const ChannelsTable = () => {
               {t('channel.table.balance')}
             </Table.HeaderCell>
             <Table.HeaderCell
-              style={{ cursor: 'pointer', width: '8%' }}
+              style={{ cursor: 'pointer' }}
               onClick={() => {
                 sortChannel('health');
               }}
@@ -608,7 +607,7 @@ const ChannelsTable = () => {
               {t('channel.table.health')}
             </Table.HeaderCell>
             <Table.HeaderCell
-              style={{ cursor: 'pointer', width: '8%' }}
+              style={{ cursor: 'pointer' }}
               onClick={() => {
                 sortChannel('priority');
               }}
@@ -618,11 +617,10 @@ const ChannelsTable = () => {
             </Table.HeaderCell>
             <Table.HeaderCell
               hidden={!showDetail}
-              style={{ width: '13%' }}
             >
               {t('channel.table.test_model')}
             </Table.HeaderCell>
-            <Table.HeaderCell style={{ width: '24%' }}>
+            <Table.HeaderCell>
               {t('channel.table.actions')}
             </Table.HeaderCell>
           </Table.Row>
@@ -640,27 +638,13 @@ const ChannelsTable = () => {
                 <Table.Row key={channel.id}>
                   <Table.Cell>{channel.id}</Table.Cell>
                   <Table.Cell>
-                    <span className='cell-ellipsis' title={channel.name}>
-                      {channel.name
-                        ? channel.name
-                        : t('channel.table.no_name')}
-                    </span>
+                    {channel.name
+                      ? channel.name
+                      : t('channel.table.no_name')}
                   </Table.Cell>
-                  <Table.Cell>
-                    <span className='cell-nowrap'>
-                      {renderGroup(channel.group)}
-                    </span>
-                  </Table.Cell>
-                  <Table.Cell>
-                    <span className='cell-nowrap'>
-                      {renderType(channel.type, t)}
-                    </span>
-                  </Table.Cell>
-                  <Table.Cell>
-                    <span className='cell-nowrap'>
-                      {renderStatus(channel.status, t)}
-                    </span>
-                  </Table.Cell>
+                  <Table.Cell>{renderGroup(channel.group)}</Table.Cell>
+                  <Table.Cell>{renderType(channel.type, t)}</Table.Cell>
+                  <Table.Cell>{renderStatus(channel.status, t)}</Table.Cell>
                   <Table.Cell hidden={showDetail}>
                     <Popup
                       content={
@@ -680,7 +664,7 @@ const ChannelsTable = () => {
                           onClick={() => {
                             updateChannelBalance(channel.id, channel.name, idx);
                           }}
-                          style={{ cursor: 'pointer', whiteSpace: 'nowrap' }}
+                          style={{ cursor: 'pointer' }}
                         >
                           {renderBalance(channel.type, channel.balance, t)}
                         </span>
@@ -883,7 +867,6 @@ const ChannelsTable = () => {
           </Table.Row>
         </Table.Footer>
       </Table>
-      </div>
     </>
   );
 };

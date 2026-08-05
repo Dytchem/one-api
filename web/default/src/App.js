@@ -1,4 +1,4 @@
-import React, { lazy, Suspense, useContext, useEffect } from 'react';
+import React, { lazy, Suspense, useContext, useEffect, useRef } from 'react';
 import { Route, Routes } from 'react-router-dom';
 import Loading from './components/Loading';
 import User from './pages/User';
@@ -31,6 +31,7 @@ const About = lazy(() => import('./pages/About'));
 function App() {
   const [userState, userDispatch] = useContext(UserContext);
   const [statusState, statusDispatch] = useContext(StatusContext);
+  const statusRequested = useRef(false);
 
   const loadUser = () => {
     let user = localStorage.getItem('user');
@@ -73,6 +74,8 @@ function App() {
   };
 
   useEffect(() => {
+    if (statusRequested.current) return;
+    statusRequested.current = true;
     loadUser();
     loadStatus().then();
     let systemName = getSystemName();

@@ -2,10 +2,23 @@ body {
     margin: 0;
     padding-top: 55px;
     overflow-y: scroll;
+    overflow-x: hidden;
     font-family: Lato, 'Helvetica Neue', Arial, Helvetica, "Microsoft YaHei", sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     scrollbar-width: none;
+}
+
+html,
+body,
+#root {
+    min-width: 0;
+}
+
+/* 固定画布由 React 按视口等比缩放，外层只负责裁掉缩放误差，不产生横向滚动 */
+.app-viewport {
+    width: 100%;
+    overflow: hidden;
 }
 
 body::-webkit-scrollbar {
@@ -28,15 +41,7 @@ code {
     font-size: 1.1em;
 }
 
-/* dyt-55: 同一画布方案 —— 所有分辨率使用完全相同的布局结构，仅宽度随视口变化：
-   容器一律 100% 宽（无 max-width，杜绝大屏两侧大空白），字体/密度所有分辨率一致，
-   窄屏元素统一用 flexWrap/横向滚动，不做布局重排 */
-
-@media only screen and (max-width: 600px) {
-    .hide-on-mobile {
-        display: none !important;
-    }
-}
+/* dyt-57: 1440px 固定画布由 React 整体缩放，所有分辨率保持同一布局和比例 */
 
 /* 统一容器：全宽 + 固定内边距（各端一致，只缩放内容宽度） */
 .ui.container {
@@ -47,15 +52,45 @@ code {
   padding: 0 24px !important;
 }
 
-@media screen and (max-width: 600px) {
-  .ui.container {
-    padding: 0 12px !important;
-  }
-}
-
 /* 统一字体：所有分辨率保持同一密度 */
 .ui.table {
   font-size: 1em !important;
+}
+
+/* Semantic UI 在 max-width: 767px 会把表格改成 block；固定画布必须覆盖该规则，
+   否则同一页面在手机端会被拆成纵向卡片。 */
+.app-canvas .ui.table:not(.unstackable) {
+  display: table !important;
+}
+
+.app-canvas .ui.table:not(.unstackable) thead {
+  display: table-header-group !important;
+}
+
+.app-canvas .ui.table:not(.unstackable) tbody {
+  display: table-row-group !important;
+}
+
+.app-canvas .ui.table:not(.unstackable) tfoot {
+  display: table-footer-group !important;
+}
+
+.app-canvas .ui.table:not(.unstackable) tr {
+  display: table-row !important;
+}
+
+.app-canvas .ui.table:not(.unstackable) th,
+.app-canvas .ui.table:not(.unstackable) td {
+  display: table-cell !important;
+}
+
+.app-canvas .ui.table:not(.unstackable) tr td::before {
+  display: none !important;
+  content: none !important;
+}
+
+.app-canvas .ui.table:not(.unstackable) [hidden] {
+  display: none !important;
 }
 
 /* dyt-55: 顶部导航同一布局，窄屏仅收缩不重排 */
@@ -67,21 +102,6 @@ code {
 
 .header-menu-items::-webkit-scrollbar {
   display: none;
-}
-
-@media screen and (max-width: 768px) {
-  .header-logo-text {
-    display: none !important;
-  }
-}
-
-@media screen and (max-width: 1024px) {
-  .header-menu-items .item {
-    padding: 0 0.5em !important;
-  }
-  .header-menu-items .item .icon {
-    margin-right: 2px !important;
-  }
 }
 
 .ui.card,
@@ -123,67 +143,21 @@ code {
   white-space: nowrap;
 }
 
-/* ========== 渠道表格跨设备一致性 ========== */
-/* 外层滚动容器：窄屏不挤压列，横向滚动；宽屏铺满 */
-.channels-table-wrap {
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
-}
+/* ========== 渠道表格：与令牌/用户页一致的紧凑自动布局 ========== */
+/* 不设固定列宽/最小宽度：各分辨率列宽由内容自动分配，无横向滚动、无大间距 */
 
-/* 表格固定最小宽度：任何分辨率下列宽一致、文字不换行 */
-.ui.table.channels-table {
-  min-width: 1080px;
-  table-layout: fixed;
-  width: 100%;
-}
-
-/* 常规模式 8 列 */
-.ui.table.channels-table thead th:nth-child(1) { width: 5% !important; }
-.ui.table.channels-table thead th:nth-child(2) { width: 17% !important; }
-.ui.table.channels-table thead th:nth-child(3) { width: 8% !important; }
-.ui.table.channels-table thead th:nth-child(4) { width: 13% !important; }
-.ui.table.channels-table thead th:nth-child(5) { width: 9% !important; }
-.ui.table.channels-table thead th:nth-child(6) { width: 9% !important; }
-.ui.table.channels-table thead th:nth-child(7) { width: 9% !important; }
-.ui.table.channels-table thead th:nth-child(8) { width: 30% !important; }
-
-/* 渠道单元格：默认不换行 */
-.ui.table.channels-table td {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  vertical-align: middle;
-}
-
-/* 名称列：超长省略号，悬停显示全名 */
-.cell-ellipsis {
-  display: inline-block;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  vertical-align: middle;
-}
-
-.cell-nowrap {
-  white-space: nowrap;
-  display: inline-block;
-}
-
-/* 操作列：按钮组不压缩按钮文字 */
-.ui.table.channels-table td:last-child {
-  white-space: normal;
-}
-
-.ui.table.channels-table .channel-actions .ui.button {
+/* 操作列按钮：紧凑贴合，窄屏自动换行 */
+.channel-actions .ui.button {
   white-space: nowrap;
   margin: 0;
   flex-shrink: 0;
+  padding: 0.55em 0.75em;
+  font-size: 12px;
 }
 
-/* 测试模型下拉：固定宽度避免挤压 */
-.ui.table.channels-table td .ui.selection.dropdown {
-  min-width: 130px;
-  max-width: 100%;
+/* 测试模型下拉：不挤压其他列 */
+.ui.table td .ui.selection.dropdown {
+  min-width: 100px;
 }
 
 /* 表脚：按钮与分页紧凑排列，窄屏自动换行 */
@@ -196,16 +170,4 @@ code {
 
 .channels-table-footer .ui.button {
   margin: 0;
-}
-
-/* 详情模式 11 列：加大最小宽度 */
-.ui.table.channels-table.detail-mode {
-  min-width: 1400px;
-}
-
-/* 移动端：表脚操作按钮不溢出 */
-@media screen and (max-width: 768px) {
-  .channels-table-footer .ui.pagination.menu {
-    margin: 2px 0 !important;
-  }
 }

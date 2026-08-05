@@ -236,7 +236,7 @@ const Dashboard = () => {
   return (
     <div className='dashboard-container'>
       {/* 三个并排的折线图 */}
-      <Grid columns={3} stackable className='charts-grid'>
+      <Grid columns={3} className='charts-grid'>
         <Grid.Column>
           <Card fluid className='chart-card'>
             <Card.Content>

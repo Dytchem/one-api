@@ -71,22 +71,6 @@
     margin-left: 16px;
 }
 
-/* 优化图表响应式布局 */
-@media (max-width: 768px) {
-    .dashboard-container {
-        padding: 10px 16px;   /* 移动端也相应减小内边距 */
-        max-width: 100%;      /* 移动端占满全宽 */
-    }
-    
-    .chart-container {
-        padding: 12px;
-    }
-    
-    .charts-grid .column {
-        padding: 0.25rem !important;
-    }
-}
-
 /* 设置页面的 Tab 样式 */
 .settings-tab {
     margin-top: 1rem !important;
@@ -109,4 +93,4 @@
     border: none !important;
     box-shadow: none !important;
     padding: 1rem 0 !important;
-} 
+}

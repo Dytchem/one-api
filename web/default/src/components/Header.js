@@ -1,5 +1,5 @@
-import React, { useContext, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import React, { useContext } from 'react';
+import { Link } from 'react-router-dom';
 import { UserContext } from '../context/User';
 import { useTranslation } from 'react-i18next';
 
@@ -9,14 +9,12 @@ import {
   Dropdown,
   Icon,
   Menu,
-  Segment,
 } from 'semantic-ui-react';
 import {
   API,
   getLogo,
   getSystemName,
   isAdmin,
-  isMobile,
   showSuccess,
 } from '../helpers';
 import '../index.css';
@@ -75,45 +73,24 @@ if (localStorage.getItem('chat_link')) {
   });
 }
 
+// dyt-57: 单一布局 —— 所有分辨率使用同一套顶部导航（无手机/桌面分支），
+// 窄屏通过 CSS 收缩（隐藏 logo 文字、菜单项压缩、溢出横向滚动兜底）
 const Header = () => {
   const { t, i18n } = useTranslation();
   const [userState, userDispatch] = useContext(UserContext);
-  let navigate = useNavigate();
-
-  const [showSidebar, setShowSidebar] = useState(false);
   const systemName = getSystemName();
   const logo = getLogo();
 
   async function logout() {
-    setShowSidebar(false);
     await API.get('/api/user/logout');
     showSuccess('注销成功!');
     userDispatch({ type: 'logout' });
     localStorage.removeItem('user');
-    navigate('/login');
   }
 
-  const toggleSidebar = () => {
-    setShowSidebar(!showSidebar);
-  };
-
-  const renderButtons = (isMobile) => {
+  const renderButtons = () => {
     return headerButtons.map((button) => {
       if (button.admin && !isAdmin()) return <></>;
-      if (isMobile) {
-        return (
-          <Menu.Item
-            key={button.name}
-            onClick={() => {
-              navigate(button.to);
-              setShowSidebar(false);
-            }}
-            style={{ fontSize: '15px' }}
-          >
-            {t(button.name)}
-          </Menu.Item>
-        );
-      }
       return (
         <Menu.Item
           key={button.name}
@@ -142,96 +119,6 @@ const Header = () => {
     i18n.changeLanguage(language);
   };
 
-  if (isMobile()) {
-    return (
-      <>
-        <Menu
-          borderless
-          size='large'
-          style={
-            showSidebar
-              ? {
-                  borderBottom: 'none',
-                  marginBottom: '0',
-                  borderTop: 'none',
-                  height: '51px',
-                }
-              : { borderTop: 'none', height: '52px' }
-          }
-        >
-          <Container
-            style={{
-              width: '100%',
-              maxWidth: isMobile() ? '100%' : '1200px',
-              padding: isMobile() ? '0 10px' : '0 20px',
-            }}
-          >
-            <Menu.Item as={Link} to='/'>
-              <img src={logo} alt='logo' style={{ marginRight: '0.75em' }} />
-              <div style={{ fontSize: '20px' }}>
-                <b>{systemName}</b>
-              </div>
-            </Menu.Item>
-          <Menu.Menu position='right'>
-              <Menu.Item onClick={toggleSidebar}>
-                <Icon name={showSidebar ? 'close' : 'sidebar'} />
-              </Menu.Item>
-            </Menu.Menu>
-          </Container>
-        </Menu>
-        {showSidebar ? (
-          <Segment style={{ marginTop: 0, borderTop: '0' }}>
-            <Menu secondary vertical style={{ width: '100%', margin: 0 }}>
-              {renderButtons(true)}
-              <Menu.Item>
-                <Dropdown
-                  selection
-                  trigger={
-                    <Icon
-                      name='language'
-                      style={{ margin: 0, fontSize: '18px' }}
-                    />
-                  }
-                  options={languageOptions}
-                  value={i18n.language}
-                  onChange={(_, { value }) => changeLanguage(value)}
-                />
-              </Menu.Item>
-              <Menu.Item>
-                {userState.user ? (
-                  <Button onClick={logout} style={{ color: '#666666' }}>
-                    {t('header.logout')}
-                  </Button>
-                ) : (
-                  <>
-                    <Button
-                      onClick={() => {
-                        setShowSidebar(false);
-                        navigate('/login');
-                      }}
-                    >
-                      {t('header.login')}
-                    </Button>
-                    <Button
-                      onClick={() => {
-                        setShowSidebar(false);
-                        navigate('/register');
-                      }}
-                    >
-                      {t('header.register')}
-                    </Button>
-                  </>
-                )}
-              </Menu.Item>
-            </Menu>
-          </Segment>
-        ) : (
-          <></>
-        )}
-      </>
-    );
-  }
-
   return (
     <>
       <Menu
@@ -245,11 +132,10 @@ const Header = () => {
         <Container
           style={{
             width: '100%',
-            maxWidth: isMobile() ? '100%' : '1200px',
-            padding: isMobile() ? '0 10px' : '0 20px',
+            padding: '0 24px',
           }}
         >
-          <Menu.Item as={Link} to='/' className={'hide-on-mobile'}>
+          <Menu.Item as={Link} to='/'>
             <img src={logo} alt='logo' style={{ marginRight: '0.75em' }} />
             <div
               className='header-logo-text'
@@ -262,8 +148,11 @@ const Header = () => {
               {systemName}
             </div>
           </Menu.Item>
-          <div className='header-menu-items' style={{ display: 'flex', alignItems: 'center' }}>
-          {renderButtons(false)}
+          <div
+            className='header-menu-items'
+            style={{ display: 'flex', alignItems: 'center' }}
+          >
+            {renderButtons()}
           </div>
           <Menu.Menu position='right'>
             <Dropdown
