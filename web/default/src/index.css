@@ -93,6 +93,135 @@ code {
   display: none !important;
 }
 
+/* 日志筛选项固定为电脑版的横向排列，禁止 Semantic UI 在窄视口自动堆叠 */
+.app-canvas .logs-filter-group {
+  display: flex !important;
+  flex-direction: row !important;
+  flex-wrap: nowrap !important;
+  align-items: flex-end !important;
+  width: 100% !important;
+}
+
+.app-canvas .logs-filter-group > .field {
+  flex: 0 0 auto !important;
+  min-width: 0 !important;
+}
+
+.app-canvas .logs-filter-group:not(.logs-filter-group-secondary) > .field:nth-child(1),
+.app-canvas .logs-filter-group:not(.logs-filter-group-secondary) > .field:nth-child(2) {
+  width: 18.75% !important;
+}
+
+.app-canvas .logs-filter-group:not(.logs-filter-group-secondary) > .field:nth-child(3),
+.app-canvas .logs-filter-group:not(.logs-filter-group-secondary) > .field:nth-child(4) {
+  width: 25% !important;
+}
+
+.app-canvas .logs-filter-group:not(.logs-filter-group-secondary) > .field:nth-child(5) {
+  width: 12.5% !important;
+}
+
+.app-canvas .logs-filter-group-secondary > .field {
+  width: 18.75% !important;
+}
+
+/* 日志表：固定前置元数据列，把剩余空间交给最后的详情列 */
+.app-canvas .logs-table {
+  width: 100% !important;
+  table-layout: fixed !important;
+}
+
+.app-canvas .logs-table th,
+.app-canvas .logs-table td {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+}
+
+.app-canvas .logs-table.admin-logs th:nth-child(1),
+.app-canvas .logs-table.admin-logs td:nth-child(1) { width: 8% !important; }
+.app-canvas .logs-table.admin-logs th:nth-child(2),
+.app-canvas .logs-table.admin-logs td:nth-child(2) { width: 4% !important; }
+.app-canvas .logs-table.admin-logs th:nth-child(3),
+.app-canvas .logs-table.admin-logs td:nth-child(3) { width: 5% !important; }
+.app-canvas .logs-table.admin-logs th:nth-child(4),
+.app-canvas .logs-table.admin-logs td:nth-child(4) { width: 10% !important; }
+.app-canvas .logs-table.admin-logs th:nth-child(5),
+.app-canvas .logs-table.admin-logs td:nth-child(5) { width: 7% !important; }
+.app-canvas .logs-table.admin-logs th:nth-child(6),
+.app-canvas .logs-table.admin-logs td:nth-child(6) { width: 8% !important; }
+.app-canvas .logs-table.admin-logs th:nth-child(7),
+.app-canvas .logs-table.admin-logs td:nth-child(7),
+.app-canvas .logs-table.admin-logs th:nth-child(8),
+.app-canvas .logs-table.admin-logs td:nth-child(8),
+.app-canvas .logs-table.admin-logs th:nth-child(9),
+.app-canvas .logs-table.admin-logs td:nth-child(9),
+.app-canvas .logs-table.admin-logs th:nth-child(10),
+.app-canvas .logs-table.admin-logs td:nth-child(10),
+.app-canvas .logs-table.admin-logs th:nth-child(11),
+.app-canvas .logs-table.admin-logs td:nth-child(11) { width: 5% !important; }
+.app-canvas .logs-table.admin-logs th:nth-child(12),
+.app-canvas .logs-table.admin-logs td:nth-child(12) { width: 33% !important; }
+
+.app-canvas .logs-table.self-logs th:nth-child(1),
+.app-canvas .logs-table.self-logs td:nth-child(1) { width: 10% !important; }
+.app-canvas .logs-table.self-logs th:nth-child(2),
+.app-canvas .logs-table.self-logs td:nth-child(2) { width: 6% !important; }
+.app-canvas .logs-table.self-logs th:nth-child(3),
+.app-canvas .logs-table.self-logs td:nth-child(3) { width: 14% !important; }
+.app-canvas .logs-table.self-logs th:nth-child(4),
+.app-canvas .logs-table.self-logs td:nth-child(4) { width: 12% !important; }
+.app-canvas .logs-table.self-logs th:nth-child(5),
+.app-canvas .logs-table.self-logs td:nth-child(5),
+.app-canvas .logs-table.self-logs th:nth-child(6),
+.app-canvas .logs-table.self-logs td:nth-child(6),
+.app-canvas .logs-table.self-logs th:nth-child(7),
+.app-canvas .logs-table.self-logs td:nth-child(7),
+.app-canvas .logs-table.self-logs th:nth-child(8),
+.app-canvas .logs-table.self-logs td:nth-child(8),
+.app-canvas .logs-table.self-logs th:nth-child(9),
+.app-canvas .logs-table.self-logs td:nth-child(9) { width: 7% !important; }
+.app-canvas .logs-table.self-logs th:nth-child(10),
+.app-canvas .logs-table.self-logs td:nth-child(10) { width: 23% !important; }
+
+.app-canvas .logs-table td:last-child {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+}
+
+.app-canvas .fail-log-filters {
+  width: 100%;
+}
+
+.app-canvas .fail-logs-table {
+  width: 100% !important;
+  table-layout: fixed !important;
+}
+
+.app-canvas .fail-logs-table th,
+.app-canvas .fail-logs-table td {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.app-canvas .fail-logs-table th:nth-child(1),
+.app-canvas .fail-logs-table td:nth-child(1) { width: 13% !important; }
+.app-canvas .fail-logs-table th:nth-child(2),
+.app-canvas .fail-logs-table td:nth-child(2) { width: 6% !important; }
+.app-canvas .fail-logs-table th:nth-child(3),
+.app-canvas .fail-logs-table td:nth-child(3) { width: 6% !important; }
+.app-canvas .fail-logs-table th:nth-child(4),
+.app-canvas .fail-logs-table td:nth-child(4) { width: 12% !important; }
+.app-canvas .fail-logs-table th:nth-child(5),
+.app-canvas .fail-logs-table td:nth-child(5) { width: 9% !important; }
+.app-canvas .fail-logs-table th:nth-child(6),
+.app-canvas .fail-logs-table td:nth-child(6) { width: 48% !important; }
+.app-canvas .fail-logs-table th:nth-child(7),
+.app-canvas .fail-logs-table td:nth-child(7) { width: 6% !important; }
+
 /* dyt-55: 顶部导航同一布局，窄屏仅收缩不重排 */
 .header-menu-items {
   flex-wrap: nowrap;

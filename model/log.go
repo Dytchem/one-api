@@ -133,15 +133,16 @@ func RecordChannelAttemptLog(ctx context.Context, userId int, channelId int, cha
 		modelDisplay = fmt.Sprintf("%s→%s", modelName, actualModel)
 	}
 
+	requestID := helper.GetRequestID(ctx)
 	log := &Log{
 		UserId:    userId,
 		Username:  GetUsernameById(userId),
 		CreatedAt: helper.GetTimestamp(),
 		Type:      LogTypeSystem,
-		Content:   fmt.Sprintf("渠道尝试 - 渠道: %s (#%d), 模型: %s, 状态: %s, 错误: %s",
+		Content: fmt.Sprintf("渠道尝试 | 渠道：%s(#%d) | 模型：%s | 状态：%s | 请求ID：%s | 错误：%s",
 			channelName, channelId, modelDisplay,
 			map[bool]string{true: "成功", false: "失败"}[success],
-			errorMessage),
+			requestID, errorMessage),
 		Quota: 0,
 	}
 	recordLogHelper(ctx, log)
@@ -435,15 +436,14 @@ func BatchHasPayload(logIds []int64) map[int64]bool {
 	return result
 }
 
-// GetFailLogs dyt-20: 失败日志分页列表
-// 筛选：type=2 的"探测失败"和"回复为空" + type=5 的测试失败
+// GetFailLogs 失败日志分页列表：探测、渠道尝试和测试失败都纳入。
 func GetFailLogs(channelId int, modelName string, startTimestamp, endTimestamp int64, offset, size int) ([]*Log, int64, error) {
 	var logs []*Log
 	var total int64
 
 	query := LOG_DB.Model(&Log{}).
-		Where("type IN (2, 5)").
-		Where("(content LIKE '%探测失败%' OR content LIKE '%回复为空%')")
+		Where("type IN (2, 4, 5)").
+		Where("(content LIKE '%探测失败%' OR content LIKE '%回复为空%' OR content LIKE '%状态：失败%' OR content LIKE '%状态: 失败%' OR content LIKE '%请求失败%' OR content LIKE '%HTTP %')")
 
 	if channelId > 0 {
 		query = query.Where("channel_id = ?", channelId)

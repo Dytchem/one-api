@@ -1,7 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { Card, Table, Button, Modal, Label, Input, Select, Message } from 'semantic-ui-react';
 import { useTranslation } from 'react-i18next';
-import { API, showError, showWarning, showNotice, copy } from '../../helpers';
+import {
+  API,
+  showError,
+  showWarning,
+  showNotice,
+  copy,
+  timestamp2string,
+} from '../../helpers';
 
 // 渠道名缓存
 const channelCache = {};
@@ -83,26 +90,16 @@ const FailLog = () => {
     return null;
   };
 
-  // 截取预览
+  // 预览保留 OpenRouter 风格的关键上下文，完整内容在详情中查看
   const getPreview = (content) => {
     if (!content) return '';
-    const prefix = '探测失败，请求模型：';
-    const idx = content.indexOf(prefix);
-    if (idx >= 0) {
-      const start = idx + prefix.length;
-      const rest = content.substring(start);
-      const barIdx = rest.indexOf(' | 上游：');
-      const prev = barIdx >= 0 ? rest.substring(0, barIdx) : rest;
-      return prev.length > 60 ? prev.substring(0, 60) + '…' : prev;
-    }
-    return content.length > 80 ? content.substring(0, 80) + '…' : content;
+    const compact = content.replace(/\s+/g, ' ').trim();
+    return compact.length > 180 ? compact.substring(0, 180) + '…' : compact;
   };
 
   // 格式化时间
   const formatTime = (ts) => {
-    const d = new Date(ts * 1000);
-    const pad = (n) => String(n).padStart(2, '0');
-    return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    return timestamp2string(ts);
   };
 
   // JSON 格式化
@@ -129,7 +126,7 @@ const FailLog = () => {
           </Card.Header>
 
           {/* 筛选栏 */}
-          <div style={{ marginBottom: 16, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+          <div className='fail-log-filters' style={{ marginBottom: 16, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'nowrap' }}>
             <Input
               placeholder={t('fail_log.channel_placeholder', '渠道ID')}
               value={channelFilter}
@@ -150,16 +147,16 @@ const FailLog = () => {
           </div>
 
           {/* 列表 */}
-          <Table celled compact selectable size='small' style={{ fontSize: '13px' }}>
+          <Table celled compact selectable size='small' className='fail-logs-table' style={{ fontSize: '13px' }}>
             <Table.Header>
               <Table.Row>
-                <Table.HeaderCell style={{ width: 80 }}>{t('log.time', '时间')}</Table.HeaderCell>
-                <Table.HeaderCell style={{ width: 60 }}>ID</Table.HeaderCell>
-                <Table.HeaderCell style={{ width: 60 }}>{t('fail_log.channel', '渠道')}</Table.HeaderCell>
-                <Table.HeaderCell style={{ width: 90 }}>{t('fail_log.model', '模型')}</Table.HeaderCell>
-                <Table.HeaderCell style={{ width: 100 }}>{t('fail_log.status', '状态码')}</Table.HeaderCell>
+                <Table.HeaderCell>{t('log.time', '时间')}</Table.HeaderCell>
+                <Table.HeaderCell>ID</Table.HeaderCell>
+                <Table.HeaderCell>{t('fail_log.channel', '渠道')}</Table.HeaderCell>
+                <Table.HeaderCell>{t('fail_log.model', '模型')}</Table.HeaderCell>
+                <Table.HeaderCell>{t('fail_log.status', '状态码')}</Table.HeaderCell>
                 <Table.HeaderCell>{t('fail_log.preview', '预览')}</Table.HeaderCell>
-                <Table.HeaderCell style={{ width: 60 }}>{t('fail_log.payload', 'Payload')}</Table.HeaderCell>
+                <Table.HeaderCell>{t('fail_log.payload', 'Payload')}</Table.HeaderCell>
               </Table.Row>
             </Table.Header>
             <Table.Body>
@@ -172,12 +169,12 @@ const FailLog = () => {
                     style={{ cursor: 'pointer' }}
                     active={selectedLog && selectedLog.id === log.id}
                   >
-                    <Table.Cell>{formatTime(log.time)}</Table.Cell>
+                    <Table.Cell title={formatTime(log.time)}>{formatTime(log.time)}</Table.Cell>
                     <Table.Cell>{log.id}</Table.Cell>
                     <Table.Cell>
                       <Label basic size='mini'>{log.channel_id}</Label>
                     </Table.Cell>
-                    <Table.Cell style={{ maxWidth: 90, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    <Table.Cell title={log.model_name}>
                       {log.model_name}
                     </Table.Cell>
                     <Table.Cell>
@@ -193,7 +190,7 @@ const FailLog = () => {
                         <Label size='mini' color='red'>-</Label>
                       )}
                     </Table.Cell>
-                    <Table.Cell style={{ maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    <Table.Cell title={log.content}>
                       {getPreview(log.content)}
                     </Table.Cell>
                     <Table.Cell style={{ textAlign: 'center' }}>
@@ -245,10 +242,12 @@ const FailLog = () => {
           <Modal.Content scrolling style={{ maxHeight: '70vh' }}>
             {/* 基本元信息 */}
             <Message size='small'>
-              <strong>{t('log.time', '时间')}:</strong> {formatTime(selectedLog.time)}&nbsp;&nbsp;
-              <strong>{t('fail_log.channel', '渠道')}:</strong> {selectedLog.channel_id}&nbsp;&nbsp;
-              <strong>{t('fail_log.model', '模型')}:</strong> {selectedLog.model_name}&nbsp;&nbsp;
-              <strong>Tokens:</strong> {selectedLog.prompt_tokens}
+                <strong>{t('log.time', '时间')}:</strong> {formatTime(selectedLog.time)}&nbsp;&nbsp;
+                <strong>{t('fail_log.channel', '渠道')}:</strong> {selectedLog.channel_id}&nbsp;&nbsp;
+                <strong>{t('fail_log.model', '模型')}:</strong> {selectedLog.model_name}&nbsp;&nbsp;
+                <strong>请求 ID:</strong> {selectedLog.request_id || '-'}&nbsp;&nbsp;
+                <strong>Tokens:</strong> {selectedLog.prompt_tokens || 0}↑ {selectedLog.completion_tokens || 0}↓&nbsp;&nbsp;
+                <strong>耗时:</strong> {selectedLog.elapsed_time || 0}ms
             </Message>
 
             {/* Error */}

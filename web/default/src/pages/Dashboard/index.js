@@ -1,6 +1,6 @@
 import React, {useEffect, useState} from 'react';
 import {useTranslation} from 'react-i18next';
-import {Card, Grid} from 'semantic-ui-react';
+import {Button, Card, Grid, Message} from 'semantic-ui-react';
 import {
   Bar,
   BarChart,
@@ -53,7 +53,25 @@ const chartConfig = {
   ],
 };
 
-const Dashboard = () => {
+function normalizeDashboardData(rawData) {
+  if (!Array.isArray(rawData)) return [];
+  return rawData.flatMap((item) => {
+    const date = new Date(item?.Day);
+    if (Number.isNaN(date.getTime())) return [];
+    const modelName = String(item?.ModelName || '未知模型');
+    return [{
+      ...item,
+      Day: date.toISOString().slice(0, 10),
+      ModelName: modelName,
+      RequestCount: Number(item?.RequestCount) || 0,
+      Quota: Number(item?.Quota) || 0,
+      PromptTokens: Number(item?.PromptTokens) || 0,
+      CompletionTokens: Number(item?.CompletionTokens) || 0,
+    }];
+  });
+}
+
+const DashboardContent = () => {
   const { t } = useTranslation();
   const [data, setData] = useState([]);
   const [summaryData, setSummaryData] = useState({
@@ -70,7 +88,7 @@ const Dashboard = () => {
     try {
       const response = await axios.get('/api/user/dashboard');
       if (response.data.success) {
-        const dashboardData = response.data.data || [];
+        const dashboardData = normalizeDashboardData(response.data.data);
         setData(dashboardData);
         calculateSummary(dashboardData);
       }
@@ -142,6 +160,7 @@ const Dashboard = () => {
 
     // 填充实际数据
     data.forEach((item) => {
+      if (!dailyData[item.Day]) return;
       dailyData[item.Day].requests += item.RequestCount;
       dailyData[item.Day].quota += item.Quota / 1000000;
       dailyData[item.Day].tokens += item.PromptTokens + item.CompletionTokens;
@@ -187,6 +206,7 @@ const Dashboard = () => {
 
     // 填充实际数据
     data.forEach((item) => {
+      if (!timeData[item.Day]) return;
       timeData[item.Day][item.ModelName] =
         item.PromptTokens + item.CompletionTokens;
     });
@@ -323,7 +343,7 @@ const Dashboard = () => {
                         boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
                       }}
                       formatter={(value) => [
-                        value.toFixed(6),
+                        (Number(value) || 0).toFixed(6),
                         t('dashboard.charts.quota.tooltip'),
                       ]}
                       labelFormatter={(label) =>
@@ -456,5 +476,42 @@ const Dashboard = () => {
     </div>
   );
 };
+
+class DashboardErrorBoundary extends React.Component {
+  state = { error: null };
+
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+
+  componentDidCatch(error, info) {
+    console.error('Dashboard render failed:', error, info);
+  }
+
+  retry = () => {
+    this.setState({ error: null });
+  };
+
+  render() {
+    if (this.state.error) {
+      return (
+        <div className='dashboard-container'>
+          <Message negative>
+            <Message.Header>总览加载失败</Message.Header>
+            <p>数据存在异常，页面已保护性恢复。可以直接重试，无需刷新整页。</p>
+            <Button size='small' onClick={this.retry}>重试</Button>
+          </Message>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+const Dashboard = () => (
+  <DashboardErrorBoundary>
+    <DashboardContent />
+  </DashboardErrorBoundary>
+);
 
 export default Dashboard;

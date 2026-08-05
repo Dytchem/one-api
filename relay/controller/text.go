@@ -50,6 +50,15 @@ func newLineScanner(r io.Reader) *bufio.Scanner {
 	return scanner
 }
 
+func compactFailureLogText(text string, limit int) string {
+	text = strings.Join(strings.Fields(text), " ")
+	runes := []rune(text)
+	if len(runes) > limit {
+		return string(runes[:limit]) + "…"
+	}
+	return text
+}
+
 func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 	ctx := c.Request.Context()
 	meta := meta.GetByContext(c)
@@ -117,7 +126,7 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 
 		// dyt-24: 同渠道重试次数由 CHANNEL_RETRY_COUNT 控制（默认 1）
 		retryCount := env.Int("CHANNEL_RETRY_COUNT", 1)
-		var attemptSawDone bool   // 最后一次 attempt 的上游 [DONE] 状态（由 doProbe 写入）
+		var attemptSawDone bool                   // 最后一次 attempt 的上游 [DONE] 状态（由 doProbe 写入）
 		var respStreamState *responsesStreamState // dyt-53: Responses 流式状态机（跨 attempt 共享最后一次的）
 		doProbe := func(attemptNum int) (success bool, probeUsage *model.Usage, responseSnippet string, buf *bytes.Buffer, scanner *bufio.Scanner, statusCode int, errReason string, respBody string) {
 			// dyt-53: 每个 attempt 独立的 [DONE] 状态，避免跨 attempt 泄漏
@@ -439,7 +448,7 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 			}
 
 			return true, localUsage, localSnippet, &localBuf, localScanner, resp.StatusCode, "", respBodyBuf.String()
-			}
+		}
 
 		// dyt-24: 探测循环（attempt-0 是原始请求，attempt-1..N 是重试）
 		totalAttempts := retryCount + 1
@@ -459,7 +468,7 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 				return openai.ErrorWrapper(ctx.Err(), "request_cancelled", 499)
 			}
 
-			success, probeUsage, responseSnippet, _, _, _, errReason, respBody := doProbe(attempt)
+			success, probeUsage, responseSnippet, _, _, statusCode, errReason, respBody := doProbe(attempt)
 
 			// dyt-39: 检测取消
 			if strings.HasPrefix(errReason, "__CANCEL__") {
@@ -480,7 +489,7 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 				break
 			}
 
-			// 失败：写独立错误日志（含完整响应体）
+			// 失败：写独立错误日志。列表保留关键上下文，完整请求/响应仍写入 payload。
 			attemptLabel := "原始请求"
 			if attempt > 0 {
 				attemptLabel = fmt.Sprintf("重试-%d", attempt)
@@ -488,14 +497,24 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 
 			chName := c.GetString(ctxkey.ChannelName)
 			chId := c.GetInt(ctxkey.ChannelId)
-			probeFailLogContent := getRequestPreview(textRequest)
-			if probeFailLogContent != "" {
-				probeFailLogContent = fmt.Sprintf("[%s] 探测失败，渠道：%s(#%d)，模型：%s→%s，请求内容：%s | 上游：%s",
-					attemptLabel, chName, chId, meta.OriginModelName, meta.ActualModelName, probeFailLogContent, errReason)
-			} else {
-				probeFailLogContent = fmt.Sprintf("[%s] 探测失败，渠道：%s(#%d)，模型：%s→%s | 上游：%s",
-					attemptLabel, chName, chId, meta.OriginModelName, meta.ActualModelName, errReason)
+			requestPreview := compactFailureLogText(getRequestPreview(textRequest), 160)
+			responsePreview := compactFailureLogText(respBody, 320)
+			requestID := helper.GetRequestID(ctx)
+			probeParts := []string{
+				fmt.Sprintf("[%s] 探测失败", attemptLabel),
+				fmt.Sprintf("渠道：%s(#%d)", chName, chId),
+				fmt.Sprintf("模型：%s→%s", meta.OriginModelName, meta.ActualModelName),
+				fmt.Sprintf("HTTP：%d", statusCode),
+				fmt.Sprintf("请求ID：%s", requestID),
+				fmt.Sprintf("上游：%s", errReason),
 			}
+			if requestPreview != "" {
+				probeParts = append(probeParts, "请求内容："+requestPreview)
+			}
+			if responsePreview != "" {
+				probeParts = append(probeParts, "上游响应："+responsePreview)
+			}
+			probeFailLogContent := strings.Join(probeParts, " | ")
 
 			failLogId := dbmodel.RecordConsumeLogWithId(ctx, &dbmodel.Log{
 				UserId:            meta.UserId,

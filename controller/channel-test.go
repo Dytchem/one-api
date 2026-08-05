@@ -65,6 +65,15 @@ func parseTestResponse(resp string) (*openai.TextResponse, string, error) {
 	return &response, stringContent, nil
 }
 
+func compactTestLogText(text string, limit int) string {
+	text = strings.Join(strings.Fields(text), " ")
+	runes := []rune(text)
+	if len(runes) > limit {
+		return string(runes[:limit]) + "…"
+	}
+	return text
+}
+
 func testChannel(ctx context.Context, channel *model.Channel, request *relaymodel.GeneralOpenAIRequest) (responseMessage string, err error, openaiErr *relaymodel.Error, testUsage *relaymodel.Usage) {
 	startTime := time.Now()
 	w := httptest.NewRecorder()
@@ -114,8 +123,13 @@ func testChannel(ctx context.Context, channel *model.Channel, request *relaymode
 
 	defer func() {
 		elapsedMs := helper.CalcElapsedTime(startTime)
-		// 构建日志内容（类似消费日志格式）
-		logContent := fmt.Sprintf("测试完成，请求模型：%s/%s，回复内容：测试通过", channel.Name, modelName)
+		// 测试日志也记录实际回复摘要，格式与正常消费日志保持一致。
+		responsePreview := compactTestLogText(responseMessage, 240)
+		if responsePreview == "" && err == nil && openaiErr == nil {
+			responsePreview = "（空响应）"
+		}
+		logContent := fmt.Sprintf("回复完成，请求模型：%s/%s，回复内容：%s",
+			channel.Name, modelName, responsePreview)
 		if err != nil || openaiErr != nil {
 			errMsg := ""
 			if err != nil {
@@ -123,17 +137,17 @@ func testChannel(ctx context.Context, channel *model.Channel, request *relaymode
 			} else {
 				errMsg = openaiErr.Message
 			}
-			logContent = fmt.Sprintf("测试完成，请求模型：%s/%s，回复内容：失败 | %s", channel.Name, modelName, errMsg)
+			logContent = fmt.Sprintf("请求失败，请求模型：%s/%s，回复内容：失败 | %s", channel.Name, modelName, errMsg)
 		}
 
 		// 记录测试日志（Type 5），与消费日志相同丰富度
 		go model.RecordTestLog(ctx, &model.Log{
-			UserId:          0,
-			ChannelId:       channel.Id,
-			ModelName:       modelName,
-			Content:         logContent,
-			ElapsedTime:     elapsedMs,
-			PromptTokens:    promptTokens,
+			UserId:           0,
+			ChannelId:        channel.Id,
+			ModelName:        modelName,
+			Content:          logContent,
+			ElapsedTime:      elapsedMs,
+			PromptTokens:     promptTokens,
 			CompletionTokens: completionTokens,
 		})
 

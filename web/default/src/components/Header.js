@@ -89,9 +89,9 @@ const Header = () => {
   }
 
   const renderButtons = () => {
-    return headerButtons.map((button) => {
-      if (button.admin && !isAdmin()) return <></>;
-      return (
+    return headerButtons
+      .filter((button) => !button.admin || isAdmin())
+      .map((button) => (
         <Menu.Item
           key={button.name}
           as={Link}
@@ -105,8 +105,7 @@ const Header = () => {
           <Icon name={button.icon} style={{ marginRight: '4px' }} />
           {t(button.name)}
         </Menu.Item>
-      );
-    });
+      ));
   };
 
   // Add language switcher dropdown

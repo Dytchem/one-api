@@ -377,7 +377,7 @@ const LogsTable = () => {
         )}
       </Header>
       <Form>
-        <Form.Group>
+        <Form.Group className='logs-filter-group'>
           <Form.Input
             fluid
             label={t('log.table.token_name')}
@@ -430,7 +430,7 @@ const LogsTable = () => {
         </Form.Group>
         {isAdminUser && (
           <>
-            <Form.Group>
+            <Form.Group className='logs-filter-group logs-filter-group-secondary'>
               <Form.Input
                 fluid
                 label={t('log.table.channel_id')}
@@ -461,7 +461,12 @@ const LogsTable = () => {
           onChange={(e, { value }) => setSearchKeyword(value)}
         />
       </Form>
-      <Table basic={'very'} compact size='small' className='logs-table'>
+      <Table
+        basic={'very'}
+        compact
+        size='small'
+        className={`logs-table ${isAdminUser ? 'admin-logs' : 'self-logs'}`}
+      >
         <Table.Header>
           <Table.Row>
             <Table.HeaderCell

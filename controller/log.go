@@ -209,13 +209,19 @@ func GetFailLogs(c *gin.Context) {
 	}
 	for _, log := range logs {
 		items = append(items, gin.H{
-			"id":            log.Id,
-			"time":          log.CreatedAt,
-			"channel_id":    log.ChannelId,
-			"model_name":    log.ModelName,
-			"content":       log.Content,
-			"prompt_tokens": log.PromptTokens,
-			"has_payload":   payloadMap[int64(log.Id)],
+			"id":                log.Id,
+			"time":              log.CreatedAt,
+			"created_at":        log.CreatedAt,
+			"request_id":        log.RequestId,
+			"channel_id":        log.ChannelId,
+			"model_name":        log.ModelName,
+			"token_name":        log.TokenName,
+			"content":           log.Content,
+			"prompt_tokens":     log.PromptTokens,
+			"completion_tokens": log.CompletionTokens,
+			"elapsed_time":      log.ElapsedTime,
+			"is_stream":         log.IsStream,
+			"has_payload":       payloadMap[int64(log.Id)],
 		})
 	}
 	c.JSON(http.StatusOK, gin.H{
@@ -247,10 +253,10 @@ func GetFailLogPayload(c *gin.Context) {
 		"success": true,
 		"message": "",
 		"data": gin.H{
-			"log_id":  payload.LogId,
-			"request":  payload.Request,
-			"response": payload.Response,
-			"error":    payload.Error,
+			"log_id":     payload.LogId,
+			"request":    payload.Request,
+			"response":   payload.Response,
+			"error":      payload.Error,
 			"created_at": payload.CreatedAt,
 		},
 	})

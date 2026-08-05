@@ -14,8 +14,8 @@ import (
 
 	"github.com/songquanpeng/one-api/common"
 	"github.com/songquanpeng/one-api/common/logger"
-	"github.com/songquanpeng/one-api/monitor"
 	"github.com/songquanpeng/one-api/model"
+	"github.com/songquanpeng/one-api/monitor"
 	"github.com/songquanpeng/one-api/relay/adaptor/openai"
 	"github.com/songquanpeng/one-api/relay/channeltype"
 	"github.com/songquanpeng/one-api/relay/controller/validator"
@@ -105,9 +105,9 @@ func getRequestPreview(textRequest *relaymodel.GeneralOpenAIRequest) string {
 			cleaned := strings.TrimSpace(strings.ReplaceAll(text, "\n", " "))
 			runes := []rune(cleaned)
 			preview := cleaned
-			// dyt-42: 30 → 50，多显示一些详情
-			if len(runes) > 50 {
-				preview = string(runes[:50]) + "…"
+			// 失败日志和无回复日志保留更多请求上下文。
+			if len(runes) > 160 {
+				preview = string(runes[:160]) + "…"
 			}
 			return preview
 		}
