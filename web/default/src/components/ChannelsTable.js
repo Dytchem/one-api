@@ -214,9 +214,17 @@ const ChannelsTable = () => {
         }
         res = await API.put('/api/channel/', data);
         break;
+      case 'clone':
+        res = await API.post(`/api/channel/clone/${id}/`);
+        break;
     }
     const { success, message } = res.data;
     if (success) {
+      if (action === 'clone') {
+        showSuccess(t('channel.messages.clone_success'));
+        await refresh();
+        return;
+      }
       showSuccess(t('channel.messages.operation_success'));
       let channel = res.data.data;
       let newChannels = [...channels];
@@ -529,11 +537,12 @@ const ChannelsTable = () => {
           {t('channel.detail_notice')}
         </Message>
       )}
-      <Table basic={'very'} compact size='small' className='channels-table'>
+      <div className='channels-table-wrap'>
+      <Table basic={'very'} compact size='small' className={'channels-table' + (showDetail ? ' detail-mode' : '')}>
         <Table.Header>
           <Table.Row>
             <Table.HeaderCell
-              style={{ cursor: 'pointer' }}
+              style={{ cursor: 'pointer', width: '4%' }}
               onClick={() => {
                 sortChannel('id');
               }}
@@ -541,7 +550,7 @@ const ChannelsTable = () => {
               {t('channel.table.id')}
             </Table.HeaderCell>
             <Table.HeaderCell
-              style={{ cursor: 'pointer' }}
+              style={{ cursor: 'pointer', width: '15%' }}
               onClick={() => {
                 sortChannel('name');
               }}
@@ -549,7 +558,7 @@ const ChannelsTable = () => {
               {t('channel.table.name')}
             </Table.HeaderCell>
             <Table.HeaderCell
-              style={{ cursor: 'pointer' }}
+              style={{ cursor: 'pointer', width: '7%' }}
               onClick={() => {
                 sortChannel('group');
               }}
@@ -557,7 +566,7 @@ const ChannelsTable = () => {
               {t('channel.table.group')}
             </Table.HeaderCell>
             <Table.HeaderCell
-              style={{ cursor: 'pointer' }}
+              style={{ cursor: 'pointer', width: '13%' }}
               onClick={() => {
                 sortChannel('type');
               }}
@@ -565,7 +574,7 @@ const ChannelsTable = () => {
               {t('channel.table.type')}
             </Table.HeaderCell>
             <Table.HeaderCell
-              style={{ cursor: 'pointer' }}
+              style={{ cursor: 'pointer', width: '9%' }}
               onClick={() => {
                 sortChannel('status');
               }}
@@ -573,7 +582,7 @@ const ChannelsTable = () => {
               {t('channel.table.status')}
             </Table.HeaderCell>
             <Table.HeaderCell
-              style={{ cursor: 'pointer' }}
+              style={{ cursor: 'pointer', width: '9%' }}
               onClick={() => {
                 sortChannel('response_time');
               }}
@@ -582,7 +591,7 @@ const ChannelsTable = () => {
               {t('channel.table.response_time')}
             </Table.HeaderCell>
             <Table.HeaderCell
-              style={{ cursor: 'pointer' }}
+              style={{ cursor: 'pointer', width: '9%' }}
               onClick={() => {
                 sortChannel('balance');
               }}
@@ -590,7 +599,7 @@ const ChannelsTable = () => {
               {t('channel.table.balance')}
             </Table.HeaderCell>
             <Table.HeaderCell
-              style={{ cursor: 'pointer' }}
+              style={{ cursor: 'pointer', width: '8%' }}
               onClick={() => {
                 sortChannel('health');
               }}
@@ -599,7 +608,7 @@ const ChannelsTable = () => {
               {t('channel.table.health')}
             </Table.HeaderCell>
             <Table.HeaderCell
-              style={{ cursor: 'pointer' }}
+              style={{ cursor: 'pointer', width: '8%' }}
               onClick={() => {
                 sortChannel('priority');
               }}
@@ -607,10 +616,15 @@ const ChannelsTable = () => {
             >
               {t('channel.table.priority')}
             </Table.HeaderCell>
-            <Table.HeaderCell hidden={!showDetail}>
+            <Table.HeaderCell
+              hidden={!showDetail}
+              style={{ width: '13%' }}
+            >
               {t('channel.table.test_model')}
             </Table.HeaderCell>
-            <Table.HeaderCell>{t('channel.table.actions')}</Table.HeaderCell>
+            <Table.HeaderCell style={{ width: '24%' }}>
+              {t('channel.table.actions')}
+            </Table.HeaderCell>
           </Table.Row>
         </Table.Header>
 
@@ -626,11 +640,27 @@ const ChannelsTable = () => {
                 <Table.Row key={channel.id}>
                   <Table.Cell>{channel.id}</Table.Cell>
                   <Table.Cell>
-                    {channel.name ? channel.name : t('channel.table.no_name')}
+                    <span className='cell-ellipsis' title={channel.name}>
+                      {channel.name
+                        ? channel.name
+                        : t('channel.table.no_name')}
+                    </span>
                   </Table.Cell>
-                  <Table.Cell>{renderGroup(channel.group)}</Table.Cell>
-                  <Table.Cell>{renderType(channel.type, t)}</Table.Cell>
-                  <Table.Cell>{renderStatus(channel.status, t)}</Table.Cell>
+                  <Table.Cell>
+                    <span className='cell-nowrap'>
+                      {renderGroup(channel.group)}
+                    </span>
+                  </Table.Cell>
+                  <Table.Cell>
+                    <span className='cell-nowrap'>
+                      {renderType(channel.type, t)}
+                    </span>
+                  </Table.Cell>
+                  <Table.Cell>
+                    <span className='cell-nowrap'>
+                      {renderStatus(channel.status, t)}
+                    </span>
+                  </Table.Cell>
                   <Table.Cell hidden={showDetail}>
                     <Popup
                       content={
@@ -650,7 +680,7 @@ const ChannelsTable = () => {
                           onClick={() => {
                             updateChannelBalance(channel.id, channel.name, idx);
                           }}
-                          style={{ cursor: 'pointer' }}
+                          style={{ cursor: 'pointer', whiteSpace: 'nowrap' }}
                         >
                           {renderBalance(channel.type, channel.balance, t)}
                         </span>
@@ -697,6 +727,7 @@ const ChannelsTable = () => {
                   </Table.Cell>
                   <Table.Cell>
                     <div
+                      className='channel-actions'
                       style={{
                         display: 'flex',
                         alignItems: 'center',
@@ -760,6 +791,15 @@ const ChannelsTable = () => {
                       >
                         {t('channel.buttons.edit')}
                       </Button>
+                      <Button
+                        size={'tiny'}
+                        color='teal'
+                        onClick={() => {
+                          manageChannel(channel.id, 'clone', idx);
+                        }}
+                      >
+                        {t('channel.buttons.clone')}
+                      </Button>
                     </div>
                   </Table.Cell>
                 </Table.Row>
@@ -770,6 +810,7 @@ const ChannelsTable = () => {
         <Table.Footer>
           <Table.Row>
             <Table.HeaderCell colSpan={showDetail ? '11' : '8'}>
+              <div className='channels-table-footer'>
               <Button size='tiny' as={Link} to='/channel/add' loading={loading}>
                 {t('channel.buttons.add')}
               </Button>
@@ -811,7 +852,6 @@ const ChannelsTable = () => {
                 </Button>
               </Popup>
               <Dropdown
-                floated="left"
                 selection
                 options={ITEMS_PER_PAGE_OPTIONS}
                 value={itemsPerPage}
@@ -820,7 +860,6 @@ const ChannelsTable = () => {
                 style={{ marginRight: '10px' }}
               />
               <Pagination
-                floated='right'
                 activePage={activePage}
                 onPageChange={onPaginationChange}
                 size='tiny'
@@ -839,10 +878,12 @@ const ChannelsTable = () => {
                   ? t('channel.buttons.hide_detail')
                   : t('channel.buttons.show_detail')}
               </Button>
+              </div>
             </Table.HeaderCell>
           </Table.Row>
         </Table.Footer>
       </Table>
+      </div>
     </>
   );
 };

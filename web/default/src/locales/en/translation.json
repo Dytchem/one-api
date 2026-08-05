@@ -88,7 +88,8 @@
       "confirm_delete_disabled": "Confirm Delete",
       "refresh": "Refresh",
       "show_detail": "Details",
-      "hide_detail": "Hide Details"
+      "hide_detail": "Hide Details",
+      "clone": "Clone"
     },
     "messages": {
       "test_success": "Channel {{name}} test successful, model {{model}}, time {{time}}s, output: {{message}}",
@@ -96,7 +97,8 @@
       "delete_disabled_success": "Deleted all disabled channels, total: {{count}}",
       "balance_update_success": "Channel {{name}} balance updated successfully!",
       "all_balance_updated": "All enabled channel balances have been updated!",
-      "operation_success": "Operation completed successfully!"
+      "operation_success": "Operation completed successfully!",
+      "clone_success": "Channel cloned successfully"
     },
     "edit": {
       "title_edit": "Update Channel Information",

@@ -88,7 +88,8 @@
       "confirm_delete_disabled": "确认删除",
       "refresh": "刷新",
       "show_detail": "详情",
-      "hide_detail": "隐藏详情"
+      "hide_detail": "隐藏详情",
+      "clone": "复制"
     },
     "messages": {
       "test_success": "渠道 {{name}} 测试成功，模型 {{model}}，耗时 {{time}} 秒，模型输出：{{message}}",
@@ -96,7 +97,8 @@
       "delete_disabled_success": "已删除所有禁用渠道，共计 {{count}} 个",
       "balance_update_success": "渠道 {{name}} 余额更新成功！",
       "all_balance_updated": "已更新完毕所有已启用渠道余额！",
-      "operation_success": "操作成功完成！"
+      "operation_success": "操作成功完成！",
+      "clone_success": "渠道复制成功，新渠道已启用，请在列表中查看"
     },
     "edit": {
       "title_edit": "更新渠道信息",

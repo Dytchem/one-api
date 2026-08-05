@@ -134,3 +134,90 @@ code {
 .ui.table td .ui.label {
   white-space: nowrap;
 }
+
+/* ========== 渠道表格跨设备一致性 ========== */
+/* 外层滚动容器：窄屏不挤压列，横向滚动；宽屏铺满 */
+.channels-table-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* 表格固定最小宽度：任何分辨率下列宽一致、文字不换行 */
+.ui.table.channels-table {
+  min-width: 1080px;
+  table-layout: fixed;
+  width: 100%;
+}
+
+/* 常规模式 8 列 */
+.ui.table.channels-table thead th:nth-child(1) { width: 5% !important; }
+.ui.table.channels-table thead th:nth-child(2) { width: 17% !important; }
+.ui.table.channels-table thead th:nth-child(3) { width: 8% !important; }
+.ui.table.channels-table thead th:nth-child(4) { width: 13% !important; }
+.ui.table.channels-table thead th:nth-child(5) { width: 9% !important; }
+.ui.table.channels-table thead th:nth-child(6) { width: 9% !important; }
+.ui.table.channels-table thead th:nth-child(7) { width: 9% !important; }
+.ui.table.channels-table thead th:nth-child(8) { width: 30% !important; }
+
+/* 渠道单元格：默认不换行 */
+.ui.table.channels-table td {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+}
+
+/* 名称列：超长省略号，悬停显示全名 */
+.cell-ellipsis {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+}
+
+.cell-nowrap {
+  white-space: nowrap;
+  display: inline-block;
+}
+
+/* 操作列：按钮组不压缩按钮文字 */
+.ui.table.channels-table td:last-child {
+  white-space: normal;
+}
+
+.ui.table.channels-table .channel-actions .ui.button {
+  white-space: nowrap;
+  margin: 0;
+  flex-shrink: 0;
+}
+
+/* 测试模型下拉：固定宽度避免挤压 */
+.ui.table.channels-table td .ui.selection.dropdown {
+  min-width: 130px;
+  max-width: 100%;
+}
+
+/* 表脚：按钮与分页紧凑排列，窄屏自动换行 */
+.channels-table-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.channels-table-footer .ui.button {
+  margin: 0;
+}
+
+/* 详情模式 11 列：加大最小宽度 */
+.ui.table.channels-table.detail-mode {
+  min-width: 1400px;
+}
+
+/* 移动端：表脚操作按钮不溢出 */
+@media screen and (max-width: 768px) {
+  .channels-table-footer .ui.pagination.menu {
+    margin: 2px 0 !important;
+  }
+}
