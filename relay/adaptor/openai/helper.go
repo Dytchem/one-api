@@ -27,7 +27,20 @@ func GetFullRequestURL(baseURL string, requestURL string, channelType int) strin
 		channeltype.Lambda,
 		channeltype.ZhipuV4,
 		channeltype.Tencent,
-		channeltype.GeminiOpenAICompatible:
+		channeltype.GeminiOpenAICompatible,
+		// dyt-54: base URL 以 /v1 结尾的常用提供商
+		channeltype.Xiaomi,
+		channeltype.OpenCodeZen,
+		channeltype.OpenCodeGo,
+		channeltype.OllamaCloud,
+		channeltype.NvidiaNIM,
+		channeltype.HuggingFace,
+		channeltype.ModelScope,
+		channeltype.DeepInfra,
+		channeltype.ZAI,
+		channeltype.MoonshotGlobal,
+		channeltype.Vultr,
+		channeltype.Agnes:
 		return fmt.Sprintf("%s%s", strings.TrimSuffix(baseURL, "/"), strings.TrimPrefix(requestURL, "/v1"))
 	}
 	fullRequestURL := fmt.Sprintf("%s%s", baseURL, requestURL)

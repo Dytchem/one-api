@@ -3,7 +3,7 @@ import {useTranslation} from 'react-i18next';
 import {Button, Card, Dropdown, Form, Input, Label, Message} from 'semantic-ui-react';
 import {useNavigate, useParams} from 'react-router-dom';
 import {API, copy, getChannelModels, showError, showInfo, showSuccess, verifyJSON} from '../../helpers';
-import {CHANNEL_OPTIONS} from '../../constants';
+import {CHANNEL_OPTIONS, CHANNEL_MODEL_SUGGESTIONS} from '../../constants';
 import {renderChannelTip} from '../../helpers/render';
 
 const MODEL_MAPPING_EXAMPLE = {
@@ -80,6 +80,17 @@ const EditChannel = () => {
       }
       setBasicModels(localModels);
     }
+  };
+
+  // dyt-54: 一键填入该渠道类型的推荐模型（来自 models.dev 最新数据）
+  const fillSuggestedModels = () => {
+    const suggestions = CHANNEL_MODEL_SUGGESTIONS[inputs.type];
+    if (!suggestions || suggestions.length === 0) {
+      showInfo('该渠道类型暂无推荐模型');
+      return;
+    }
+    setInputs((inputs) => ({ ...inputs, models: suggestions }));
+    showSuccess(`已填入 ${suggestions.length} 个推荐模型`);
   };
 
   const handleConfigChange = (e, { name, value }) => {
@@ -549,6 +560,13 @@ const EditChannel = () => {
             )}
             {inputs.type !== 43 && (
               <div style={{ lineHeight: '40px', marginBottom: '12px' }}>
+                <Button
+                  type={'button'}
+                  positive
+                  onClick={fillSuggestedModels}
+                >
+                  填入推荐模型
+                </Button>
                 <Button
                   type={'button'}
                   onClick={() => {

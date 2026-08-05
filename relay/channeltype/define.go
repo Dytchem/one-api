@@ -63,5 +63,18 @@ const (
 	Lambda
 	ZhipuV4
 	Jina
+	// dyt-54: 常用聚合/知名提供商
+	Xiaomi
+	OpenCodeZen
+	OpenCodeGo
+	OllamaCloud
+	NvidiaNIM
+	HuggingFace
+	ModelScope
+	DeepInfra
+	ZAI
+	MoonshotGlobal
+	Vultr
+	Agnes
 	Dummy
 )
