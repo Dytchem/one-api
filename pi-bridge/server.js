@@ -100,6 +100,37 @@ async function ensureModels(force) {
   await syncModels();
 }
 
+// ---- 网络搜索（AnySearch MCP，匿名调用）----
+const ANYSEARCH_MCP = 'https://api.anysearch.com/mcp';
+async function anysearchCall(toolName, args) {
+  try {
+    const resp = await fetch(ANYSEARCH_MCP, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json, text/event-stream',
+        'X-Anysearch-Client': 'mcp/1.0.0',
+      },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: toolName, arguments: args } }),
+      signal: AbortSignal.timeout(90000),
+    });
+    const ct = resp.headers.get('content-type') || '';
+    let data = null;
+    if (ct.includes('text/event-stream')) {
+      const text = await resp.text();
+      const line = text.split('\n').find((l) => l.startsWith('data:'));
+      if (line) data = JSON.parse(line.slice(5));
+    } else {
+      data = await resp.json();
+    }
+    const content = data?.result?.content || [];
+    const texts = content.map((c) => (c.type === 'text' ? c.text : JSON.stringify(c))).join('\n').slice(0, 12000);
+    return { content: [{ type: 'text', text: texts || '（无结果）' }], details: {} };
+  } catch (e) {
+    return { content: [{ type: 'text', text: `网络搜索失败: ${e.message}` }], details: { error: e.message } };
+  }
+}
+
 // ---- one-api 管理工具 ----
 function makeTools({ getToken }) {
   const call = async (p, opts = {}) => {
@@ -162,8 +193,20 @@ function makeTools({ getToken }) {
     tool('add_channel', 'Add Channel (admin)', '新增渠道（管理员），channel 对象包含 name/type/key/models/group/base_url 等字段', Type.Object({ channel: Type.Record(Type.String(), Type.Any(), { description: '渠道配置对象' }) }), async (a) => call('/api/channel/', { method: 'POST', body: a.channel })),
     tool('update_channel', 'Update Channel (admin)', '更新渠道（管理员），channel 对象必须包含 id，其余字段为要修改的内容；key 留空表示不修改（列表接口返回的 key 已脱敏，直接回传会误清空密钥）', Type.Object({ channel: Type.Record(Type.String(), Type.Any(), { description: '渠道配置对象（含 id）' }) }), async (a) => call('/api/channel/', { method: 'PUT', body: a.channel })),
     tool('delete_channel', 'Delete Channel (admin)', '删除渠道（管理员）', Type.Object({ id: Type.Number({ description: '渠道 ID' }) }), async (a) => call(`/api/channel/${a.id}/`, { method: 'DELETE' })),
-    tool('clone_channel', 'Clone Channel (admin)', '复制渠道（管理员）：保留全部配置与 Key 创建新渠道，新渠道默认启用（复制渠道时务必使用本工具，不要用 add_channel 手动重建，避免密钥脱敏问题）', Type.Object({ id: Type.Number({ description: '要复制的渠道 ID' }) }), async (a) => call(`/api/channel/clone/${a.id}`, { method: 'POST' })),
     tool('fetch_channel_models', 'Fetch Channel Models (admin)', '从渠道上游探测模型列表（管理员）', Type.Object({ id: Type.Number({ description: '渠道 ID' }) }), async (a) => call(`/api/channel/fetch-models/${a.id}`)),
+    tool('sort_channels', 'Sort Channels (admin)', '渠道排序（管理员）：body 为渠道 ID 数组，顺序即展示/分配优先级', Type.Object({ ids: Type.Array(Type.Number(), { description: '渠道 ID 数组，按期望顺序排列' }) }), async (a) => call('/api/channel/sort', { method: 'POST', body: a.ids })),
+    tool('update_channel_balance', 'Update Channel Balance (admin)', '刷新渠道余额（管理员）', Type.Object({ id: Type.Number({ description: '渠道 ID，缺省 0 为全部' }) }), async (a) => call(`/api/channel/update_balance/${a.id || 0}`)),
+    tool('delete_disabled_channels', 'Delete Disabled Channels (admin)', '删除所有已禁用渠道（管理员）', Type.Object({}), async () => call('/api/channel/disabled', { method: 'DELETE' })),
+    tool('add_token', 'Add Token', '新增 API 令牌（自己的），token 对象包含 name/expired_time/remain_quota/limit_quota/model_limit_enabled 等字段', Type.Object({ token: Type.Record(Type.String(), Type.Any(), { description: '令牌配置对象' }) }), async (a) => call('/api/token/', { method: 'POST', body: a.token })),
+    tool('update_token', 'Update Token', '更新 API 令牌（自己的），token 对象必须包含 id，其余字段为要修改的内容', Type.Object({ token: Type.Record(Type.String(), Type.Any(), { description: '令牌配置对象（含 id）' }) }), async (a) => call('/api/token/', { method: 'PUT', body: a.token })),
+    tool('delete_token', 'Delete Token', '删除 API 令牌（自己的）', Type.Object({ id: Type.Number({ description: '令牌 ID' }) }), async (a) => call(`/api/token/${a.id}`, { method: 'DELETE' })),
+    tool('add_user', 'Add User (admin)', '新增用户（管理员），user 对象包含 username/password/display_name/quota 等字段', Type.Object({ user: Type.Record(Type.String(), Type.Any(), { description: '用户配置对象' }) }), async (a) => call('/api/user/', { method: 'POST', body: a.user })),
+    tool('update_user', 'Update User (admin)', '更新用户（管理员），user 对象必须包含 id，其余字段为要修改的内容', Type.Object({ user: Type.Record(Type.String(), Type.Any(), { description: '用户配置对象（含 id）' }) }), async (a) => call('/api/user/', { method: 'PUT', body: a.user })),
+    tool('delete_user', 'Delete User (admin)', '删除用户（管理员）', Type.Object({ id: Type.Number({ description: '用户 ID' }) }), async (a) => call(`/api/user/${a.id}`, { method: 'DELETE' })),
+    tool('manage_user', 'Manage User (admin)', '管理用户（管理员）：重置密码/调整额度等，body 含 id 与要修改的字段', Type.Object({ body: Type.Record(Type.String(), Type.Any(), { description: '管理操作对象（含 id）' }) }), async (a) => call('/api/user/manage', { method: 'POST', body: a.body })),
+    tool('get_options', 'System Options (admin)', '获取系统配置（管理员，只读）', Type.Object({}), async () => call('/api/option/')),
+    tool('web_search', 'Web Search', '互联网搜索（AnySearch，匿名）：查询最新信息、新闻、文档、教程等', Type.Object({ query: Type.String({ description: '搜索关键词' }), max_results: Type.Optional(Type.Number({ description: '结果数量，默认 5，最大 10' })) }), async (a) => anysearchCall('search', { query: a.query, max_results: Math.min(Math.max(a.max_results || 5, 1), 10) })),
+    tool('web_extract', 'Web Extract', '抓取网页正文为 Markdown（AnySearch，匿名）：用于阅读文章/文档/官方页面内容', Type.Object({ url: Type.String({ description: '页面 URL' }) }), async (a) => anysearchCall('extract', { url: a.url })),
     tool('list_users', 'Users (admin)', '列出所有用户（管理员）', Type.Object({}), async () => call('/api/user/?p=0&size=100')),
     tool('get_user', 'User Detail (admin)', '获取用户详情（管理员）', Type.Object({ id: Type.Number({ description: '用户 ID' }) }), async (a) => call(`/api/user/${a.id}`)),
     tool('list_logs', 'Logs (admin)', '查询使用日志（管理员）', Type.Object({ modelName: Type.Optional(Type.String({ description: '按模型筛选' })), channelId: Type.Optional(Type.Number({ description: '按渠道筛选' })) }), async (a) => {
