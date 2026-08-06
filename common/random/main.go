@@ -3,7 +3,6 @@ package random
 import (
 	"crypto/rand"
 	"encoding/binary"
-	"math/big"
 
 	"github.com/google/uuid"
 	"strings"
@@ -18,21 +17,10 @@ func GetUUID() string {
 const keyChars = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 const keyNumbers = "0123456789"
 
-// cryptoRandInt 返回 [0, n) 范围的加密随机整数
-func cryptoRandInt(n int) (int, error) {
-	if n <= 0 {
-		return 0, nil
-	}
-	bi := big.NewInt(int64(n))
-	r, err := rand.Int(rand.Reader, bi)
-	if err != nil {
-		return 0, err
-	}
-	return int(r.Int64()), nil
-}
-
 // readCharset 用 crypto/rand 填充 n 字节的字符集随机
 // dyt-27: 替代原 math/rand 实现，确保 API key 不可预测
+// dyt-100: 拒绝采样批量读取 —— 一次 rand.Read 批量取字节，丢弃超出有效范围的值保证均匀性，
+// 避免逐字符 cryptoRandInt（每个字符一次 crypto/rand 系统调用 + big.Int 分配）
 func readCharset(charset string, n int) (string, error) {
 	cs := []byte(charset)
 	csLen := len(cs)
@@ -40,12 +28,23 @@ func readCharset(charset string, n int) (string, error) {
 		return "", nil
 	}
 	out := make([]byte, n)
-	for i := 0; i < n; i++ {
-		idx, err := cryptoRandInt(csLen)
-		if err != nil {
+	// 有效范围 = 256/csLen 的整数倍（取整），落在范围内的字节才可用，保证均匀
+	limit := (256 / csLen) * csLen
+	filled := 0
+	for filled < n {
+		buf := make([]byte, n-filled)
+		if _, err := rand.Read(buf); err != nil {
 			return "", err
 		}
-		out[i] = cs[idx]
+		for _, b := range buf {
+			if filled >= n {
+				break
+			}
+			if int(b) < limit {
+				out[filled] = cs[int(b)%csLen]
+				filled++
+			}
+		}
 	}
 	return string(out), nil
 }

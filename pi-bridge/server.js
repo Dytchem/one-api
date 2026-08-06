@@ -357,18 +357,14 @@ async function handleChat(req, res) {
   }
   const { session_id, model, message, token_key, access_token, channel_id, thinking_level } = body;
   console.log(`[/chat] session=${session_id} model=${model} msg=${String(message || '').slice(0, 50)} channel=${channel_id || '-'}`);
-  // 模型表用登录用户的令牌同步：首次/过期时【同步等待】完成，确保 find 前表已就绪
-  // （此前为异步不等待，首次请求时表尚未生成导致误报"模型不在模型表中"，重试才成功）
-  if (token_key && (Date.now() - lastSync > 60_000 || !fs.existsSync(MODELS_PATH))) {
-    const n = await syncModels(token_key);
-    console.log(`[models] synced ${n} via user token`);
-  }
   if (!session_id || !model || !message) {
     res.writeHead(400, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'session_id/model/message required' }));
     return;
   }
 
+  // dyt-100: SSE 头先发（首字节不再等模型表同步），同步在 ensureModels 内完成——
+  // 表不存在/过期时才等待一次上游往返，且此时客户端已收到连接
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache',
@@ -462,6 +458,7 @@ async function handleChat(req, res) {
           holder.events.push(obj);
           if (holder.events.length > MAX_EVENTS_PER_SESSION) holder.events.shift();
           for (const sub of holder.subscribers) writeSse(sub, obj);
+          markDirty(session_id);
           scheduleSave();
         };
         switch (event.type) {
@@ -722,6 +719,7 @@ async function handleChatV1(req, res) {
     if (holder.events.length > MAX_EVENTS_PER_SESSION) holder.events.shift();
     holder.lastActive = Date.now();
     for (const sub of holder.subscribers) writeSse(sub, obj);
+    markDirty(session_id); // dyt-100
     scheduleSave();
   };
 
@@ -921,6 +919,54 @@ function loadSessions() {
 }
 
 let saveTimer = null;
+// dyt-100: 脏会话标记 —— 只有产生过事件的会话才需要落盘，无变化时跳过（消除 15s 空转全量写）
+const dirtySessions = new Set();
+let saveChain = Promise.resolve(); // 串行写盘链，防并发写交错
+
+function markDirty(sid) {
+  if (sid) dirtySessions.add(sid);
+}
+
+// dyt-100: 异步落盘（fs.promises），写盘不再阻塞事件循环（原 writeFileSync 会卡住所有流式输出）
+async function persistSessions() {
+  if (dirtySessions.size === 0) return;
+  try {
+    const chat = {};
+    for (const sid of dirtySessions) {
+      const h = chatSessions.get(sid);
+      if (h && h.events && h.events.length > 0) {
+        // dyt-93: 持久化 userId，重启后会话归属校验仍生效
+        chat[sid] = { events: h.events.slice(-MAX_EVENTS_PER_SESSION), userId: h.userId || 0 };
+      }
+    }
+    dirtySessions.clear();
+    // agent 会话为一次性执行上下文，且事件含工具参数/结果等敏感内容，不落盘
+    await fs.promises.mkdir(require('path').dirname(SESSION_STORE), { recursive: true });
+    // dyt-100: 合并旧数据（只覆盖有变化的会话）+ 临时文件原子替换
+    let merged = { chat: {}, agent: {} };
+    try {
+      const old = JSON.parse(await fs.promises.readFile(SESSION_STORE, 'utf8'));
+      merged = { chat: old.chat || {}, agent: {} };
+    } catch (_) { /* 首次写入 */ }
+    for (const [sid, data] of Object.entries(chat)) {
+      if (data.events && data.events.length > 0) merged.chat[sid] = data;
+      else delete merged.chat[sid];
+    }
+    const tmp = SESSION_STORE + '.tmp';
+    await fs.promises.writeFile(tmp, JSON.stringify(merged), { mode: 0o600 });
+    await fs.promises.rename(tmp, SESSION_STORE);
+  } catch (e) { /* 忽略持久化失败 */ }
+}
+
+function scheduleSave() {
+  if (dirtySessions.size === 0) return; // dyt-100: 无变化不写盘
+  if (saveTimer) return;
+  saveTimer = setTimeout(() => {
+    saveTimer = null;
+    if (dirtySessions.size === 0) return;
+    saveChain = saveChain.then(persistSessions).catch(() => {});
+  }, 3000);
+}
 // 定期清理：
 // - 24 小时无活跃的会话（busy 会话不清）
 // - busy 超过 1 小时视为卡死（上次审计发现的泄漏场景），强制清理
@@ -966,25 +1012,6 @@ setInterval(() => {
   }
 }, 30 * 60 * 1000);
 
-function scheduleSave() {
-  if (saveTimer) return;
-  saveTimer = setTimeout(() => {
-    saveTimer = null;
-    try {
-      const chat = {};
-      for (const [sid, h] of chatSessions) {
-        if (h.events && h.events.length > 0) {
-          // dyt-93: 持久化 userId，重启后会话归属校验仍生效
-          chat[sid] = { events: h.events.slice(-MAX_EVENTS_PER_SESSION), userId: h.userId || 0 };
-        }
-      }
-      // agent 会话为一次性执行上下文，且事件含工具参数/结果等敏感内容，不落盘
-      fs.mkdirSync(require('path').dirname(SESSION_STORE), { recursive: true });
-      // dyt-93: 0600（内容含用户对话全文）
-      fs.writeFileSync(SESSION_STORE, JSON.stringify({ chat, agent: {} }), { mode: 0o600 });
-    } catch (e) { /* 忽略持久化失败 */ }
-  }, 3000);
-}
 const server = http.createServer((req, res) => {
   if (req.method === 'GET' && req.url === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });

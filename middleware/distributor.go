@@ -50,7 +50,8 @@ func Distribute() func(c *gin.Context) {
 			// Health-aware selection: get all top-priority abilities, filter degraded, pick best
 			abilities, abilityErr := model.GetTopSatisfiedAbilities(userGroup, requestModel)
 			if abilityErr == nil && len(abilities) > 0 {
-				filtered := monitor.FilterAbilities(abilities, nil)
+				// dyt-100: 一次 FilterAbilitiesWithScores 同时拿到健康分，供加权复用（免二次计算）
+				scores, filtered := monitor.FilterAbilitiesWithScores(abilities, nil)
 				if len(filtered) > 0 {
 					// dyt-93: 健康度最高的前 k 个按 score×weight 加权随机选择——
 					// 原实现固定取 filtered[0]，全部流量压向单一"最健康"渠道（Weight 失效 + 故障雪崩）
@@ -63,16 +64,16 @@ func Distribute() func(c *gin.Context) {
 					weights := make([]float64, len(pool))
 					candidates := make([]*model.Channel, len(pool))
 					for i, a := range pool {
-						// 取完整渠道（含 key 与 weight），同时复用本次查询做加权
-						// dyt-96: 渠道查询失败/已删除时该项权重记 0，不参与选择（避免命中 nil 回退）
-						ch, cerr := model.GetChannelById(a.ChannelId, true)
+						// dyt-100: 渠道优先从内存缓存取（MemoryCacheEnabled 时免 3 次查库），
+						// 缓存未开启/未命中回退查库
+						ch, cerr := model.CacheGetChannelById(a.ChannelId, true)
 						if cerr != nil || ch.Status != model.ChannelStatusEnabled {
 							weights[i] = 0
 							continue
 						}
 						candidates[i] = ch
-						w := monitor.GlobalPerformanceStore.GetHealthScore(a.ChannelId)
-						w = w*w + 0.1 // 退化渠道保留小概率
+						w := scores[a.ChannelId] // 复用 FilterAbilities 已算好的健康分
+						w = w*w + 0.1            // 退化渠道保留小概率
 						if ch.Weight != nil && *ch.Weight > 0 {
 							w *= float64(*ch.Weight)
 						}

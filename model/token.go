@@ -133,6 +133,9 @@ func (t *Token) Insert() error {
 func (t *Token) Update() error {
 	var err error
 	err = DB.Model(t).Select("name", "status", "expired_time", "remain_quota", "unlimited_quota", "models", "subnet").Updates(t).Error
+	if err == nil && t.Key != "" {
+		DeleteTokenMemCache(t.Key) // dyt-100: 失效进程内 token 缓存
+	}
 	return err
 }
 
@@ -144,6 +147,9 @@ func (t *Token) SelectUpdate() error {
 func (t *Token) Delete() error {
 	var err error
 	err = DB.Delete(t).Error
+	if err == nil && t.Key != "" {
+		DeleteTokenMemCache(t.Key) // dyt-100: 失效进程内 token 缓存
+	}
 	return err
 }
 

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"gorm.io/gorm"
@@ -145,14 +147,96 @@ func RecordTopupLog(ctx context.Context, userId int, content string, quota int) 
 	recordLogHelper(ctx, log)
 }
 
+// ---- dyt-100: 消费日志批量写队列 ----
+// 成功消费日志高频（每次请求 1 条），批量合并 INSERT 大幅降低 logs 表写压力。
+// 100ms 窗口 / 64 条阈值二选一触发；username 由 worker 用一次 IN 查询批量回填。
+// 队列满时丢弃（消费日志可丢，不影响计费——quota 走独立路径）。
+var consumeLogQueue chan *Log
+var consumeLogInit sync.Once
+var consumeLogDropped atomic.Int64
+
+func initConsumeLogQueue() {
+	consumeLogQueue = make(chan *Log, 4096)
+	for i := 0; i < 2; i++ {
+		go consumeLogWorker()
+	}
+}
+
+func consumeLogWorker() {
+	batch := make([]*Log, 0, 64)
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case l, ok := <-consumeLogQueue:
+			if !ok {
+				return
+			}
+			batch = append(batch, l)
+			if len(batch) >= 64 {
+				flushConsumeLogBatch(batch)
+				batch = batch[:0]
+			}
+		case <-ticker.C:
+			if len(batch) > 0 {
+				flushConsumeLogBatch(batch)
+				batch = batch[:0]
+			}
+		}
+	}
+}
+
+func flushConsumeLogBatch(batch []*Log) {
+	if len(batch) == 0 {
+		return
+	}
+	// 批量回填 username：一次 IN 查询代替逐条单查
+	ids := make([]int, 0, len(batch))
+	seen := make(map[int]bool, len(batch))
+	for _, l := range batch {
+		if l.UserId > 0 && !seen[l.UserId] {
+			seen[l.UserId] = true
+			ids = append(ids, l.UserId)
+		}
+	}
+	if len(ids) > 0 {
+		var users []User
+		if err := DB.Select("id", "username").Where("id IN ?", ids).Find(&users).Error; err == nil {
+			nameByID := make(map[int]string, len(users))
+			for _, u := range users {
+				nameByID[u.Id] = u.Username
+			}
+			for _, l := range batch {
+				if l.Username == "" {
+					l.Username = nameByID[l.UserId]
+				}
+			}
+		}
+	}
+	for _, l := range batch {
+		markLogFailed(l)
+	}
+	if err := LOG_DB.Create(&batch).Error; err != nil {
+		logger.SysError("failed to record consume log batch: " + err.Error())
+	}
+}
+
 func RecordConsumeLog(ctx context.Context, log *Log) {
 	if !config.LogConsumeEnabled {
 		return
 	}
-	log.Username = GetUsernameById(log.UserId)
+	consumeLogInit.Do(initConsumeLogQueue)
 	log.CreatedAt = helper.GetTimestamp()
 	log.Type = LogTypeConsume
-	recordLogHelper(ctx, log)
+	// dyt-100: 异步批量写（username 由 worker 批量回填），不再逐条查库/逐条 INSERT
+	select {
+	case consumeLogQueue <- log:
+	default:
+		dropped := consumeLogDropped.Add(1)
+		if dropped%1000 == 1 {
+			logger.SysError(fmt.Sprintf("consume log queue full, dropped %d logs", dropped))
+		}
+	}
 }
 
 // RecordConsumeLogWithId dyt-20: 同步写消费日志并返回 log id（供 payload 关联）

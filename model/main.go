@@ -221,9 +221,12 @@ func setDBConns(db *gorm.DB) *sql.DB {
 		return nil
 	}
 
-	sqlDB.SetMaxIdleConns(env.Int("SQL_MAX_IDLE_CONNS", 100))
-	sqlDB.SetMaxOpenConns(env.Int("SQL_MAX_OPEN_CONNS", 1000))
-	sqlDB.SetConnMaxLifetime(time.Second * time.Duration(env.Int("SQL_MAX_LIFETIME", 60)))
+	// dyt-100: 连接池默认值贴合 MySQL 默认 max_connections=151：
+	// 原 1000 的 MaxOpen 在热点期会在池内排队（等连接），反而拉高延迟；
+	// 日志批量化（P0-3）后每请求 DB 往返已降至 ~4 读 1 写，200 连接足够
+	sqlDB.SetMaxIdleConns(env.Int("SQL_MAX_IDLE_CONNS", 50))
+	sqlDB.SetMaxOpenConns(env.Int("SQL_MAX_OPEN_CONNS", 200))
+	sqlDB.SetConnMaxLifetime(time.Second * time.Duration(env.Int("SQL_MAX_LIFETIME", 300)))
 	return sqlDB
 }
 

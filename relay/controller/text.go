@@ -412,28 +412,26 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 						return true, localUsage, localSnippet, &localBuf, localScanner, resp.StatusCode, "", respBodyBuf.String()
 					}
 
-					// Accumulate response content snippet from passthrough
-					if localSnippet == "" && len(data) > 6 && data[:6] == "data: " && data != "data: [DONE]" {
-						var streamResp openai.ChatCompletionsStreamResponse
-						if json.Unmarshal([]byte(data[6:]), &streamResp) == nil && len(streamResp.Choices) > 0 {
-							delta := &streamResp.Choices[0].Delta
-							if c, ok := delta.Content.(string); ok && c != "" {
-								runes := []rune(c)
-								// dyt-42: 30 → 50，多显示一些详情
-								if len(runes) > 50 {
-									localSnippet = string(runes[:50]) + "…"
-								} else {
-									localSnippet = c
-								}
-							}
-						}
-					}
-
-					// Still extract usage from passthrough
+					// Accumulate response content snippet & usage from passthrough
+					// dyt-100: 合并为一次 JSON 解析（原实现同一条 data 解析两次）
 					if len(data) > 6 && data[:6] == "data: " && data != "data: [DONE]" {
 						var streamResp openai.ChatCompletionsStreamResponse
-						if json.Unmarshal([]byte(data[6:]), &streamResp) == nil && streamResp.Usage != nil {
-							localUsage = streamResp.Usage
+						if json.Unmarshal([]byte(data[6:]), &streamResp) == nil {
+							if streamResp.Usage != nil {
+								localUsage = streamResp.Usage
+							}
+							if localSnippet == "" && len(streamResp.Choices) > 0 {
+								delta := &streamResp.Choices[0].Delta
+								if c, ok := delta.Content.(string); ok && c != "" {
+									runes := []rune(c)
+									// dyt-42: 30 → 50，多显示一些详情
+									if len(runes) > 50 {
+										localSnippet = string(runes[:50]) + "…"
+									} else {
+										localSnippet = c
+									}
+								}
+							}
 						}
 					}
 				}

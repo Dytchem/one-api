@@ -24,6 +24,81 @@ var (
 	GroupModelsCacheSeconds   = config.SyncFrequency
 )
 
+// ---- dyt-100: 进程内 TTL 缓存（Redis 未启用时生效，语义与 Redis 路径一致：SyncFrequency 窗口）----
+
+type memCacheItem[T any] struct {
+	value    T
+	expireAt time.Time
+}
+
+type memCache[T any] struct {
+	mu    sync.Mutex
+	items map[string]memCacheItem[T]
+	ttl   time.Duration
+}
+
+func newMemCache[T any](ttl time.Duration) *memCache[T] {
+	return &memCache[T]{items: make(map[string]memCacheItem[T]), ttl: ttl}
+}
+
+func (c *memCache[T]) Get(key string) (T, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	it, ok := c.items[key]
+	if !ok || time.Now().After(it.expireAt) {
+		if ok {
+			delete(c.items, key)
+		}
+		var zero T
+		return zero, false
+	}
+	return it.value, true
+}
+
+func (c *memCache[T]) Set(key string, v T) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.items) > 100000 { // 防膨胀：超过阈值顺带清理过期项
+		now := time.Now()
+		for k, it := range c.items {
+			if now.After(it.expireAt) {
+				delete(c.items, k)
+			}
+		}
+	}
+	c.items[key] = memCacheItem[T]{value: v, expireAt: time.Now().Add(c.ttl)}
+}
+
+func (c *memCache[T]) Delete(key string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.items, key)
+}
+
+var (
+	tokenMemCache         = newMemCache[*Token](time.Duration(TokenCacheSeconds) * time.Second)
+	userGroupMemCache     = newMemCache[string](time.Duration(UserId2GroupCacheSeconds) * time.Second)
+	userEnabledMemCache   = newMemCache[bool](time.Duration(UserId2StatusCacheSeconds) * time.Second)
+	channelStatusMemCache = newMemCache[int](time.Duration(config.SyncFrequency) * time.Second)
+)
+
+// DeleteUserMemCache: 用户变更（更新/封禁/删除/额度/角色）后调用，失效进程内缓存
+func DeleteUserMemCache(id int) {
+	key := strconv.Itoa(id)
+	userGroupMemCache.Delete(key)
+	userEnabledMemCache.Delete(key)
+}
+
+// DeleteTokenMemCache: 令牌变更（增删改/状态）后调用，按 key 失效
+func DeleteTokenMemCache(key string) {
+	tokenMemCache.Delete(key)
+}
+
+// DeleteChannelMemCache: 渠道变更后调用（状态/权重/配置），供健康路由缓存使用
+func DeleteChannelMemCache(id int) {
+	channelStatusMemCache.Delete(strconv.Itoa(id))
+}
+
 func CacheGetTokenByKey(key string) (*Token, error) {
 	keyCol := "`key`"
 	if common.UsingPostgreSQL {
@@ -31,8 +106,26 @@ func CacheGetTokenByKey(key string) (*Token, error) {
 	}
 	var token Token
 	if !common.RedisEnabled {
+		// dyt-100: 进程内 TTL 缓存（600s 窗口，与 Redis 路径一致；token 变更处主动失效）
+		if v, ok := tokenMemCache.Get(key); ok {
+			return v, nil
+		}
 		err := DB.Where(keyCol+" = ?", key).First(&token).Error
-		return &token, err
+		if err != nil {
+			return nil, err
+		}
+		// 深拷贝：Models/Subnet 是指针字段，防止调用方修改污染缓存
+		copy := token
+		if token.Models != nil {
+			m := *token.Models
+			copy.Models = &m
+		}
+		if token.Subnet != nil {
+			s := *token.Subnet
+			copy.Subnet = &s
+		}
+		tokenMemCache.Set(key, &copy)
+		return &copy, nil
 	}
 	tokenObjectString, err := common.RedisGet(fmt.Sprintf("token:%s", key))
 	if err != nil {
@@ -56,7 +149,15 @@ func CacheGetTokenByKey(key string) (*Token, error) {
 
 func CacheGetUserGroup(id int) (group string, err error) {
 	if !common.RedisEnabled {
-		return GetUserGroup(id)
+		// dyt-100: 进程内 TTL 缓存
+		if v, ok := userGroupMemCache.Get(strconv.Itoa(id)); ok {
+			return v, nil
+		}
+		group, err = GetUserGroup(id)
+		if err == nil {
+			userGroupMemCache.Set(strconv.Itoa(id), group)
+		}
+		return group, err
 	}
 	group, err = common.RedisGet(fmt.Sprintf("user_group:%d", id))
 	if err != nil {
@@ -128,7 +229,15 @@ func CacheIsUserEnabled(userId int) (bool, error) {
 	// 启用时缓存窗口 = SyncFrequency（默认 600s）：本服务内封禁/启用会同步清缓存，
 	// 直接改库/多实例场景下禁用最长延迟一个窗口
 	if !common.RedisEnabled {
-		return IsUserEnabled(userId)
+		// dyt-100: 进程内 TTL 缓存（用户封禁/启用/删除路径主动失效）
+		if v, ok := userEnabledMemCache.Get(strconv.Itoa(userId)); ok {
+			return v, nil
+		}
+		userEnabled, err := IsUserEnabled(userId)
+		if err == nil {
+			userEnabledMemCache.Set(strconv.Itoa(userId), userEnabled)
+		}
+		return userEnabled, err
 	}
 	enabled, err := common.RedisGet(fmt.Sprintf("user_enabled:%d", userId))
 	if err == nil {
@@ -170,7 +279,22 @@ func CacheGetGroupModels(ctx context.Context, group string) ([]string, error) {
 }
 
 var group2model2channels map[string]map[string][]*Channel
+var channelId2channel map[int]*Channel // dyt-100: 内存缓存启用时的渠道快照（含 key），按 id 索引
 var channelSyncLock sync.RWMutex
+
+// CacheGetChannelById: 内存缓存命中时直接返回快照（免查库），未开启/未命中回退 DB。
+// 语义与 CacheGetRandomSatisfiedChannel 一致（最多 SyncFrequency 内一致）
+func CacheGetChannelById(id int, selectAll bool) (*Channel, error) {
+	if config.MemoryCacheEnabled {
+		channelSyncLock.RLock()
+		ch, ok := channelId2channel[id]
+		channelSyncLock.RUnlock()
+		if ok && ch != nil {
+			return ch, nil
+		}
+	}
+	return GetChannelById(id, selectAll)
+}
 
 func InitChannelCache() {
 	newChannelId2channel := make(map[int]*Channel)
@@ -214,6 +338,7 @@ func InitChannelCache() {
 
 	channelSyncLock.Lock()
 	group2model2channels = newGroup2model2channels
+	channelId2channel = newChannelId2channel // dyt-100: 渠道快照一并发布
 	channelSyncLock.Unlock()
 	logger.SysLog("channels synced from database")
 }

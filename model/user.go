@@ -199,6 +199,7 @@ func (user *User) Update(updatePassword bool) error {
 			}
 		}
 	}
+	DeleteUserMemCache(user.Id) // dyt-100: 失效进程内用户缓存（任意字段变更都可能影响 group/status）
 	// dyt-93: 部分字段更新的调用方（UpdateSelf/EmailBind/AffCode/GenerateAccessToken/
 	// 第三方登录绑定 等）只填充部分字段，直接用 Select 全列会把其余字段清零；
 	// 这里用 DB 现值补齐零值字段后再显式更新。
@@ -260,6 +261,7 @@ func UpdateUserQuota(userId int, quota int64) error {
 			logger.SysError("failed to clear user_quota cache: " + err.Error())
 		}
 	}
+	DeleteUserMemCache(userId) // dyt-100: 失效进程内用户缓存
 	return DB.Model(&User{}).Where("id = ?", userId).Update("quota", quota).Error
 }
 
@@ -273,6 +275,7 @@ func (user *User) Delete() error {
 		return errors.New("id 为空！")
 	}
 	blacklist.BanUser(user.Id)
+	DeleteUserMemCache(user.Id) // dyt-100: 失效进程内用户缓存
 	user.Username = fmt.Sprintf("deleted_%s", random.GetUUID())
 	user.Status = UserStatusDeleted
 	err := DB.Model(user).Updates(user).Error
