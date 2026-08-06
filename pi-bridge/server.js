@@ -162,6 +162,7 @@ function makeTools({ getToken }) {
     tool('add_channel', 'Add Channel (admin)', '新增渠道（管理员），channel 对象包含 name/type/key/models/group/base_url 等字段', Type.Object({ channel: Type.Record(Type.String(), Type.Any(), { description: '渠道配置对象' }) }), async (a) => call('/api/channel/', { method: 'POST', body: a.channel })),
     tool('update_channel', 'Update Channel (admin)', '更新渠道（管理员），channel 对象必须包含 id，其余字段为要修改的内容；key 留空表示不修改（列表接口返回的 key 已脱敏，直接回传会误清空密钥）', Type.Object({ channel: Type.Record(Type.String(), Type.Any(), { description: '渠道配置对象（含 id）' }) }), async (a) => call('/api/channel/', { method: 'PUT', body: a.channel })),
     tool('delete_channel', 'Delete Channel (admin)', '删除渠道（管理员）', Type.Object({ id: Type.Number({ description: '渠道 ID' }) }), async (a) => call(`/api/channel/${a.id}/`, { method: 'DELETE' })),
+    tool('clone_channel', 'Clone Channel (admin)', '复制渠道（管理员）：保留全部配置与 Key 创建新渠道，新渠道默认启用（复制渠道时务必使用本工具，不要用 add_channel 手动重建，避免密钥脱敏问题）', Type.Object({ id: Type.Number({ description: '要复制的渠道 ID' }) }), async (a) => call(`/api/channel/clone/${a.id}`, { method: 'POST' })),
     tool('fetch_channel_models', 'Fetch Channel Models (admin)', '从渠道上游探测模型列表（管理员）', Type.Object({ id: Type.Number({ description: '渠道 ID' }) }), async (a) => call(`/api/channel/fetch-models/${a.id}`)),
     tool('list_users', 'Users (admin)', '列出所有用户（管理员）', Type.Object({}), async () => call('/api/user/?p=0&size=100')),
     tool('get_user', 'User Detail (admin)', '获取用户详情（管理员）', Type.Object({ id: Type.Number({ description: '用户 ID' }) }), async (a) => call(`/api/user/${a.id}`)),
