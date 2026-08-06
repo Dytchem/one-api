@@ -11,10 +11,13 @@ import (
 
 func SetApiRouter(router *gin.Engine) {
 	// dyt-64: Agent 代理（SSE，不经过 gzip，避免破坏流式分块）
-	router.POST("/api/agent/chat", middleware.UserAuth(), controller.AgentChat)
-	router.POST("/api/agent/resume", middleware.UserAuth(), controller.AgentResume)
-	router.POST("/api/chat/send", middleware.UserAuth(), controller.ChatSend)
-	router.POST("/api/chat/resume", middleware.UserAuth(), controller.ChatResume)
+	// dyt-88: 加入限流中间件（防枚举/滥用）；stop 为普通 JSON 端点
+	router.POST("/api/agent/chat", middleware.UserAuth(), middleware.GlobalAPIRateLimit(), controller.AgentChat)
+	router.POST("/api/agent/resume", middleware.UserAuth(), middleware.GlobalAPIRateLimit(), controller.AgentResume)
+	router.POST("/api/agent/stop", middleware.UserAuth(), middleware.GlobalAPIRateLimit(), controller.AgentStop)
+	router.POST("/api/chat/send", middleware.UserAuth(), middleware.GlobalAPIRateLimit(), controller.ChatSend)
+	router.POST("/api/chat/resume", middleware.UserAuth(), middleware.GlobalAPIRateLimit(), controller.ChatResume)
+	router.POST("/api/chat/stop", middleware.UserAuth(), middleware.GlobalAPIRateLimit(), controller.ChatStop)
 
 	apiRouter := router.Group("/api")
 	apiRouter.Use(gzip.Gzip(gzip.DefaultCompression))

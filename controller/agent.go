@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/songquanpeng/one-api/common/config"
@@ -12,10 +13,11 @@ import (
 	"github.com/songquanpeng/one-api/model"
 )
 
-// streamAgentBridge: 通用 SSE 透传
+// streamAgentBridge: 通用 SSE 透传（客户端断开时取消对 bridge 的请求，避免资源泄漏；
+// bridge 后台执行不受影响，刷新后续传机制照常工作）
 func streamAgentBridge(c *gin.Context, path string, body map[string]any) {
 	payload, _ := json.Marshal(body)
-	httpReq, err := http.NewRequest(http.MethodPost, config.AgentBridgeURL+path, bytes.NewReader(payload))
+	httpReq, err := http.NewRequestWithContext(c.Request.Context(), http.MethodPost, config.AgentBridgeURL+path, bytes.NewReader(payload))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": err.Error()})
 		return
@@ -24,6 +26,9 @@ func streamAgentBridge(c *gin.Context, path string, body map[string]any) {
 	client := &http.Client{}
 	resp, err := client.Do(httpReq)
 	if err != nil {
+		if c.Request.Context().Err() != nil {
+			return // 客户端已断开，无需响应
+		}
 		c.JSON(http.StatusBadGateway, gin.H{"success": false, "message": fmt.Sprintf("Agent 服务不可达：%v", err)})
 		return
 	}
@@ -87,9 +92,23 @@ func AgentChat(c *gin.Context) {
 		return
 	}
 
+	// 令牌归属校验：token_key 必须是当前登录用户自己的令牌
+	userId := c.GetInt(ctxkey.Id)
+	if req.TokenKey != "" {
+		token, err := model.ValidateUserToken(req.TokenKey)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "令牌无效：" + err.Error()})
+			return
+		}
+		if token.UserId != userId {
+			c.JSON(http.StatusForbidden, gin.H{"success": false, "message": "令牌不属于当前用户"})
+			return
+		}
+	}
+
 	// 工具调用凭据 = 当前登录用户自己的 access_token（不生成、不覆盖），
 	// 登录管理员即获得管理全权限；bridge 每次请求更新该会话的工具凭据
-	user, err := model.GetUserById(c.GetInt(ctxkey.Id), true)
+	user, err := model.GetUserById(userId, true)
 	accessToken := ""
 	if err == nil {
 		accessToken = user.AccessToken
@@ -102,6 +121,7 @@ func AgentChat(c *gin.Context) {
 		"access_token":   accessToken,
 		"channel_id":     req.ChannelId,
 		"thinking_level": req.ThinkingLevel,
+		"user_id":        userId,
 	})
 }
 
@@ -118,7 +138,7 @@ func AgentResume(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "session_id 不能为空"})
 		return
 	}
-	streamAgentBridge(c, "/resume", map[string]any{"session_id": req.SessionId})
+	streamAgentBridge(c, "/resume", map[string]any{"session_id": req.SessionId, "user_id": c.GetInt(ctxkey.Id)})
 }
 
 // dyt-70: 聊天后台会话 —— 轻量转发执行（不加载 pi agent），支持断点续传
@@ -148,6 +168,20 @@ func ChatSend(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "messages 格式错误"})
 		return
 	}
+
+	// 令牌归属校验：token_key 必须是当前登录用户自己的令牌
+	userId := c.GetInt(ctxkey.Id)
+	if req.TokenKey != "" {
+		token, err := model.ValidateUserToken(req.TokenKey)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "令牌无效：" + err.Error()})
+			return
+		}
+		if token.UserId != userId {
+			c.JSON(http.StatusForbidden, gin.H{"success": false, "message": "令牌不属于当前用户"})
+			return
+		}
+	}
 	streamAgentBridge(c, "/chat/v1", map[string]any{
 		"session_id":     req.SessionId,
 		"model":          req.Model,
@@ -155,7 +189,59 @@ func ChatSend(c *gin.Context) {
 		"token_key":      req.TokenKey,
 		"channel_id":     req.ChannelId,
 		"thinking_level": req.ThinkingLevel,
+		"user_id":        userId,
 	})
+}
+
+// dyt-88: 停止 Agent 生成（用户点击停止按钮时通知 bridge 中止后台执行）
+func AgentStop(c *gin.Context) {
+	if config.AgentBridgeURL == "" {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"success": false, "message": "Agent 服务未配置（AGENT_BRIDGE_URL）"})
+		return
+	}
+	var req struct {
+		SessionId string `json:"session_id"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.SessionId == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "session_id 不能为空"})
+		return
+	}
+	stopBridge(c, "/stop", map[string]any{"session_id": req.SessionId, "kind": "agent", "user_id": c.GetInt(ctxkey.Id)})
+}
+
+// dyt-88: 停止 Chat 生成
+func ChatStop(c *gin.Context) {
+	if config.AgentBridgeURL == "" {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"success": false, "message": "聊天后台服务未配置（AGENT_BRIDGE_URL）"})
+		return
+	}
+	var req struct {
+		SessionId string `json:"session_id"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.SessionId == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "session_id 不能为空"})
+		return
+	}
+	stopBridge(c, "/stop", map[string]any{"session_id": req.SessionId, "kind": "chat", "user_id": c.GetInt(ctxkey.Id)})
+}
+
+// stopBridge: 向 bridge 发送停止指令（非 SSE，普通 JSON 响应）
+func stopBridge(c *gin.Context, path string, body map[string]any) {
+	payload, _ := json.Marshal(body)
+	httpReq, err := http.NewRequestWithContext(c.Request.Context(), http.MethodPost, config.AgentBridgeURL+path, bytes.NewReader(payload))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": err.Error()})
+		return
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"success": false, "message": fmt.Sprintf("Agent 服务不可达：%v", err)})
+		return
+	}
+	defer resp.Body.Close()
+	c.JSON(http.StatusOK, gin.H{"success": true})
 }
 
 // dyt-70: 聊天会话续传（重放当前轮事件 + 实时续推）
@@ -171,6 +257,5 @@ func ChatResume(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "session_id 不能为空"})
 		return
 	}
-	fmt.Printf("[ChatResume] session=%s\n", req.SessionId)
-	streamAgentBridge(c, "/chat/v1/resume", map[string]any{"session_id": req.SessionId})
+	streamAgentBridge(c, "/chat/v1/resume", map[string]any{"session_id": req.SessionId, "user_id": c.GetInt(ctxkey.Id)})
 }

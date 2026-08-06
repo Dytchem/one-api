@@ -5,6 +5,7 @@
 
 import { marked } from 'marked';
 import katex from 'katex';
+import DOMPurify from 'dompurify';
 import 'katex/dist/katex.min.css';
 
 marked.setOptions({ breaks: true, gfm: true });
@@ -56,8 +57,11 @@ export function renderMarkdown(content) {
   // 4. 还原代码块
   out = out.replace(/\u0000C(\d+)\u0000/g, (m, i) => codes[Number(i)]);
 
-  // 5. marked 渲染
+  // 5. marked 渲染 + 安全过滤（DOMPurify：只保留安全标签，防 XSS）
   let html = marked.parse(out);
-  html = html.replace(/<script[\s\S]*?<\/script>/gi, '');
-  return html;
+  return DOMPurify.sanitize(html, {
+    USE_PROFILES: { html: true },
+    FORBID_TAGS: ['style', 'form', 'input', 'button', 'iframe', 'object', 'embed', 'link', 'meta', 'base'],
+    FORBID_ATTR: ['onerror', 'onload', 'onclick', 'onmouseover', 'onfocus', 'onblur', 'onchange', 'onsubmit', 'onkeydown', 'onkeyup', 'onkeypress', 'style'],
+  });
 }

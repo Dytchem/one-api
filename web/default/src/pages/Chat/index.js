@@ -540,9 +540,10 @@ const Chat = () => {
       }
     }
     let messages = [...history, { role: 'user', content }];
-    // 历史过大时裁剪（保留首条 + 最近 10 条），防止请求体膨胀超模型上下文
+    // 历史过大时裁剪历史（保留首条 + 最近 9 条，避免新消息被重复追加）
     if (JSON.stringify(messages).length > 150000 && messages.length > 12) {
-      messages = [messages[0], ...messages.slice(-10), { role: 'user', content }];
+      const trimmed = [history[0], ...history.slice(-9)];
+      messages = [...trimmed, { role: 'user', content }];
     }
     // UI 立即进入"正在生成"：追加用户消息 + 空 assistant 消息，会话标记 streaming
     // （刷新后从此状态恢复：界面照旧显示生成中，并自动重新订阅续传）
@@ -706,6 +707,13 @@ const Chat = () => {
     controllerRef.current?.abort();
     resumeControllerRef.current?.abort();
     if (activeId) {
+      // 通知 bridge 中止后台执行（仅用户主动停止；刷新断线不触发，保证续传）
+      fetch('/api/chat/stop', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: activeId }),
+      }).catch(() => {});
+
       updateSessionMessages(
         activeId,
         (msgs) => {

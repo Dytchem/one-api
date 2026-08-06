@@ -258,8 +258,11 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 
 				if !localConfirmed {
 					// Probe phase: write to buffer, check for first content
-					localBuf.WriteString(data)
-					localBuf.WriteString("\n")
+					// dyt-88: 探测缓冲设 1MB 上限，防止异常上游灌入无限数据占内存
+					if localBuf.Len() < 1<<20 {
+						localBuf.WriteString(data)
+						localBuf.WriteString("\n")
+					}
 
 					// Check for first meaningful content token
 					// 兼容 data: xxx 与 data:xxx（无空格）

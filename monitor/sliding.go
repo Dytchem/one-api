@@ -196,8 +196,10 @@ func (s *PerformanceStore) GetHealthScore(channelId int) float64 {
 	var totalCompletionTokens int
 	var totalElapsedMs int64
 
+	// dyt-88: 环形缓冲按写入顺序读取（从最旧到最新），避免窗口回绕后统计错乱
+	start := (m.head - m.count + m.size) % m.size
 	for i := 0; i < m.count; i++ {
-		record := m.records[i]
+		record := m.records[(start+i)%m.size]
 		// 只统计完整请求（非 TTFT-only 探测记录），避免拉低 tok/s
 		if record.Success && record.TTFTMs == 0 {
 			weightedSuccesses += 1.0

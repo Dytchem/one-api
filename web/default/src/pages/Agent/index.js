@@ -99,7 +99,30 @@ const Agent = () => {
     }
   };
   const persist = (list) => {
-    localStorage.setItem(storageKey, JSON.stringify(list));
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(list));
+    } catch (e) {
+      // 溢出时降级：压缩工具结果后重试，仍失败则只保留最近消息
+      try {
+        const compact = list.map((s) => ({
+          ...s,
+          messages: (s.messages || []).map((m) => ({
+            ...m,
+            parts: (m.parts || []).map((p) =>
+              p.type === 'tool' ? { ...p, result: String(p.result || '').slice(0, 500) } : p
+            ),
+          })),
+        }));
+        localStorage.setItem(storageKey, JSON.stringify(compact));
+      } catch (e2) {
+        try {
+          const minimal = list.map((s) => ({ ...s, messages: (s.messages || []).slice(-4) }));
+          localStorage.setItem(storageKey, JSON.stringify(minimal));
+        } catch (e3) {
+          // 忽略
+        }
+      }
+    }
   };
 
   const loadTokens = async () => {
@@ -654,6 +677,13 @@ const Agent = () => {
     controllerRef.current?.abort();
     resumeControllerRef.current?.abort();
     if (activeId) {
+      // 通知 bridge 中止后台执行（仅用户主动停止；刷新断线不触发，保证续传）
+      fetch('/api/agent/stop', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: activeId }),
+      }).catch(() => {});
+
       updateSession(
         activeId,
         (msgs) => {

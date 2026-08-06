@@ -279,9 +279,22 @@ async function handleChat(req, res) {
     }
 
     let holder = sessions.get(session_id);
-    // 工具调用凭据：当前登录用户自己的 access_token（每次 /chat 请求更新）
-    const tools = makeTools({ getToken: () => holder?.accessToken || process.env.ONEAPI_ADMIN_TOKEN || '' });
+    // 会话归属校验：session_id 绑定的用户必须与请求用户一致，防止跨用户会话窃取
+    if (holder && holder.userId && body.user_id && holder.userId !== body.user_id) {
+      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
+      writeSse(res, { type: 'error', message: '会话不属于当前用户' });
+      writeSse(res, { type: 'done' });
+      res.end();
+      return;
+    }
+    // 工具调用凭据：当前登录用户自己的 access_token（每次 /chat 请求更新），
+    // 不使用部署级管理员令牌，避免任意用户通过 Agent 以管理员身份操作
+    const tools = makeTools({ getToken: () => holder?.accessToken || '' });
     if (!holder) {
+      // 占位（防并发首请求双创建）：创建完成前 resume/后续请求见 busy 状态
+      const placeholder = { busy: true, events: [], subscribers: new Set(), lastActive: Date.now(), userId: body.user_id || 0, pending: true };
+      sessions.set(session_id, placeholder);
+      try {
       // compaction: pi 原生上下文压缩，保持默认开启，防止历史膨胀
       const settingsManager = SettingsManager.inMemory({});
       const loader = new DefaultResourceLoader({
@@ -296,6 +309,7 @@ async function handleChat(req, res) {
         thinkingLevel: 'off',
         modelRegistry,
         resourceLoader: loader,
+        // 工具调用凭据：当前登录用户自己的 access_token（每次 /chat 请求更新）
         customTools: tools,
         channelId: channel_id || 0,
         sessionManager: SessionManager.inMemory(),
@@ -305,6 +319,7 @@ async function handleChat(req, res) {
         session,
         busy: false,
         busySince: 0,
+        userId: body.user_id || 0,
         modelRegistry,
         authStorage,
         tokenKey: token_key || '',
@@ -313,12 +328,17 @@ async function handleChat(req, res) {
         subscribers: new Set(),
         toolCount: 0,
         loopAborted: false,
+        epoch: 0,
+        lastActive: Date.now(),
       };
       if (thinking_level) {
         try { session.setThinkingLevel(thinking_level); } catch (e) { /* 非法等级忽略 */ }
       }
       sessions.set(session_id, holder);
 
+      // 迁移占位期间（创建过程）挂上的订阅者，然后覆盖占位
+      for (const sub of placeholder.subscribers) holder.subscribers.add(sub);
+      sessions.set(session_id, holder);
       session.subscribe((event) => {
         const emit = (obj) => {
           holder.events.push(obj);
@@ -354,6 +374,11 @@ async function handleChat(req, res) {
             break;
         }
       });
+      } catch (e) {
+        // 创建失败：清理占位，避免悬挂的 busy 会话
+        sessions.delete(session_id);
+        throw e;
+      }
     } else {
       if (holder.busy) {
         // 上一轮仍在执行（页面刷新后重发等）：中止旧执行，新消息取代之
@@ -378,6 +403,9 @@ async function handleChat(req, res) {
       if (access_token && access_token !== holder.accessToken) {
         holder.accessToken = access_token;
       }
+      if (!holder.userId && body.user_id) {
+        holder.userId = body.user_id;
+      }
       // 工具集可能随版本更新：运行时同步，旧会话立即获得新工具
       try {
         await holder.session.setTools(tools);
@@ -388,10 +416,14 @@ async function handleChat(req, res) {
     holder.busySince = Date.now();
     holder.toolCount = 0;
     holder.loopAborted = false;
+    holder.lastActive = Date.now();
     // 本 prompt 的事件缓冲（/resume 按此重放当前执行进度）
     holder.events = [];
     holder.subscribers.add(res);
     res.on('close', () => holder.subscribers.delete(res));
+    // epoch：本执行代次；被新消息取代后旧执行的 finally 不再触碰新状态
+    holder.epoch = (holder.epoch || 0) + 1;
+    const epoch = holder.epoch;
     try {
       await Promise.race([
         holder.session.prompt(message),
@@ -401,14 +433,17 @@ async function handleChat(req, res) {
       ]);
     } catch (e) {
       try { holder.session.abort(); } catch (_) { /* ignore */ }
-      writeSse(res, { type: 'error', message: e.message || String(e) });
+      if (epoch === holder.epoch) writeSse(res, { type: 'error', message: e.message || String(e) });
     } finally {
-      holder.busy = false;
-      const subs = [...holder.subscribers];
-      holder.subscribers.clear();
-      for (const sub of subs) {
-        writeSse(sub, { type: 'done' });
-        sub.end();
+      if (epoch === holder.epoch) {
+        holder.busy = false;
+        holder.lastActive = Date.now();
+        const subs = [...holder.subscribers];
+        holder.subscribers.clear();
+        for (const sub of subs) {
+          writeSse(sub, { type: 'done' });
+          sub.end();
+        }
       }
     }
   } catch (e) {
@@ -428,8 +463,19 @@ async function handleResume(req, res) {
     res.end(JSON.stringify({ error: 'invalid json' }));
     return;
   }
-  const { session_id } = body;
+  const { session_id, user_id } = body;
   const holder = sessions.get(session_id);
+  if (holder && holder.userId && user_id && holder.userId !== user_id) {
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+    writeSse(res, { type: 'done' });
+    res.end();
+    return;
+  }
   if (!holder) {
     // 会话不存在 = 该轮已结束：返回 200 + done，前端静默收尾（不报 404 错误）
     res.writeHead(200, {
@@ -448,6 +494,7 @@ async function handleResume(req, res) {
     Connection: 'keep-alive',
     'X-Accel-Buffering': 'no',
   });
+  holder.lastActive = Date.now();
   // 重放已产生的事件
   for (const e of holder.events) writeSse(res, e);
   if (!holder.busy) {
@@ -475,7 +522,7 @@ async function handleChatV1(req, res) {
     res.end(JSON.stringify({ error: 'invalid json' }));
     return;
   }
-  const { session_id, model, messages, token_key, channel_id, thinking_level } = body;
+  const { session_id, model, messages, token_key, channel_id, thinking_level, user_id } = body;
   console.log(`[chat/v1] session=${session_id} model=${model} msgs=${Array.isArray(messages) ? messages.length : 0} channel=${channel_id || '-'} thinking=${thinking_level || '-'}`);
   if (!session_id || !model || !Array.isArray(messages) || messages.length === 0 || !token_key) {
     res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -489,9 +536,18 @@ async function handleChatV1(req, res) {
     'X-Accel-Buffering': 'no',
   });
   let holder = chatSessions.get(session_id);
+  if (holder && holder.userId && user_id && holder.userId !== user_id) {
+    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
+    writeSse(res, { type: 'error', message: '会话不属于当前用户' });
+    writeSse(res, { type: 'done' });
+    res.end();
+    return;
+  }
   if (!holder) {
-    holder = { events: [], busy: false, subscribers: new Set(), controller: null };
+    holder = { events: [], busy: false, subscribers: new Set(), controller: null, epoch: 0, lastActive: Date.now(), userId: user_id || 0 };
     chatSessions.set(session_id, holder);
+  } else if (!holder.userId && user_id) {
+    holder.userId = user_id;
   }
   if (holder.busy) {
     // 上一轮仍在执行（刷新后重发等）：中止旧执行，新消息取代
@@ -506,12 +562,16 @@ async function handleChatV1(req, res) {
   }
   holder.events = [];
   holder.busy = true;
+  holder.lastActive = Date.now();
   holder.subscribers.add(res);
   res.on('close', () => holder.subscribers.delete(res));
+  holder.epoch = (holder.epoch || 0) + 1;
+  const epoch = holder.epoch;
 
   const emit = (obj) => {
     holder.events.push(obj);
     if (holder.events.length > 2000) holder.events.shift();
+    holder.lastActive = Date.now();
     for (const sub of holder.subscribers) writeSse(sub, obj);
     scheduleSave();
   };
@@ -563,15 +623,18 @@ async function handleChatV1(req, res) {
       }
     }
   } catch (e) {
-    if (e.name !== 'AbortError') emit({ type: 'error', message: e.message || String(e) });
+    if (e.name !== 'AbortError' && epoch === holder.epoch) emit({ type: 'error', message: e.message || String(e) });
   } finally {
-    holder.busy = false;
-    holder.controller = null;
-    const subs = [...holder.subscribers];
-    holder.subscribers.clear();
-    for (const sub of subs) {
-      writeSse(sub, { type: 'done' });
-      sub.end();
+    if (epoch === holder.epoch) {
+      holder.busy = false;
+      holder.controller = null;
+      holder.lastActive = Date.now();
+      const subs = [...holder.subscribers];
+      holder.subscribers.clear();
+      for (const sub of subs) {
+        writeSse(sub, { type: 'done' });
+        sub.end();
+      }
     }
   }
 }
@@ -581,10 +644,25 @@ function handleChatResume(req, res) {
   let session_id = '';
   req.on('data', (c) => chunks.push(c));
   req.on('end', () => {
+    let user_id = 0;
     try {
-      session_id = JSON.parse(Buffer.concat(chunks).toString('utf8')).session_id;
+      const p = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      session_id = p.session_id;
+      user_id = p.user_id || 0;
     } catch (_) { /* ignore */ }
     const holder = chatSessions.get(session_id);
+    if (holder && holder.userId && user_id && holder.userId !== user_id) {
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+        'X-Accel-Buffering': 'no',
+      });
+      writeSse(res, { type: 'done' });
+      res.end();
+      return;
+    }
+    if (holder) holder.lastActive = Date.now();
     console.log(`[chat/v1/resume] session=${session_id} exists=${!!holder} busy=${holder?.busy || false} events=${holder?.events?.length || 0}`);
     if (!holder) {
       // 会话不存在 = 该轮已结束：返回 200 + done，前端静默收尾（不报 404 错误）
@@ -612,6 +690,43 @@ function handleChatResume(req, res) {
     }
     holder.subscribers.add(res);
     res.on('close', () => holder.subscribers.delete(res));
+  });
+}
+
+
+// ---- 停止生成（用户点击停止：中止后台执行，区别于刷新断线）----
+function handleStop(req, res) {
+  const chunks = [];
+  req.on('data', (c) => chunks.push(c));
+  req.on('end', () => {
+    let sid = '';
+    let kind = 'agent';
+    let user_id = 0;
+    try {
+      const p = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      sid = p.session_id;
+      kind = p.kind || 'agent';
+      user_id = p.user_id || 0;
+    } catch (_) { /* ignore */ }
+    const holder = kind === 'chat' ? chatSessions.get(sid) : sessions.get(sid);
+    if (holder) {
+      if (holder.userId && user_id && holder.userId !== user_id) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'session belongs to another user' }));
+        return;
+      }
+      try { holder.session?.abort(); } catch (_) { /* ignore */ }
+      try { holder.controller?.abort(); } catch (_) { /* ignore */ }
+      const subs = [...holder.subscribers];
+      holder.subscribers.clear();
+      for (const sub of subs) {
+        try { writeSse(sub, { type: 'error', message: '已停止' }); sub.end(); } catch (_) { /* ignore */ }
+      }
+      holder.busy = false;
+      holder.lastActive = Date.now();
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true }));
   });
 }
 
@@ -669,6 +784,8 @@ const server = http.createServer((req, res) => {
     handleChatV1(req, res);
   } else if (req.method === 'POST' && req.url === '/chat/v1/resume') {
     handleChatResume(req, res);
+  } else if (req.method === 'POST' && req.url === '/stop') {
+    handleStop(req, res);
   } else if (req.method === 'POST' && req.url === '/sync-models') {
     syncModels().then((n) => {
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -683,8 +800,8 @@ const server = http.createServer((req, res) => {
 loadSessions();
 setInterval(scheduleSave, 15000);
 
-server.listen(PORT, '0.0.0.0', () => {
-  console.log(`pi-bridge listening on :${PORT}, one-api base: ${ONEAPI_BASE}`);
+server.listen(PORT, '127.0.0.1', () => {
+  console.log(`pi-bridge listening on 127.0.0.1:${PORT}, one-api base: ${ONEAPI_BASE}`);
   if (ONEAPI_ADMIN_TOKEN) syncModels();
   else console.warn('[models] ONEAPI_ADMIN_TOKEN 未配置，模型表不会自动同步');
 });
