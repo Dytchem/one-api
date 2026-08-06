@@ -55,6 +55,24 @@ func isFailContent(content string) bool {
 	return false
 }
 
+// markLogFailed dyt-93: 失败标记写入时集中判定（消费/测试日志，以及渠道尝试系统日志）
+func markLogFailed(log *Log) {
+	if log.Type == LogTypeConsume || log.Type == LogTypeTest ||
+		(log.Type == LogTypeSystem && strings.HasPrefix(log.Content, "渠道尝试")) {
+		log.IsFailed = isFailContent(log.Content)
+	}
+}
+
+// BackfillFailFlags dyt-93: 一次性历史回填（升级到含 is_failed 列的版本后执行一次）
+func BackfillFailFlags() {
+	err := LOG_DB.Model(&Log{}).
+		Where("type IN (2, 4, 5) AND is_failed = ? AND (content LIKE '%探测失败%' OR content LIKE '%回复为空%' OR content LIKE '%状态：失败%' OR content LIKE '%状态: 失败%' OR content LIKE '%请求失败%' OR content LIKE '%HTTP %')", false).
+		Update("is_failed", true).Error
+	if err != nil {
+		logger.SysError("failed to backfill is_failed flags: " + err.Error())
+	}
+}
+
 const (
 	LogTypeUnknown = iota
 	LogTypeTopup
@@ -69,10 +87,7 @@ func recordLogHelper(ctx context.Context, log *Log) {
 	requestId := helper.GetRequestID(ctx)
 	log.RequestId = requestId
 	// dyt-93: 失败标记写入时集中判定（消费/测试日志，以及渠道尝试系统日志）
-	if log.Type == LogTypeConsume || log.Type == LogTypeTest ||
-		(log.Type == LogTypeSystem && strings.HasPrefix(log.Content, "渠道尝试")) {
-		log.IsFailed = isFailContent(log.Content)
-	}
+	markLogFailed(log)
 	err := LOG_DB.Create(log).Error
 	if err != nil {
 		logger.Error(ctx, "failed to record log: "+err.Error())
@@ -85,10 +100,7 @@ func recordLogHelper(ctx context.Context, log *Log) {
 func recordLogHelperWithId(ctx context.Context, log *Log) int64 {
 	requestId := helper.GetRequestID(ctx)
 	log.RequestId = requestId
-	if log.Type == LogTypeConsume || log.Type == LogTypeTest ||
-		(log.Type == LogTypeSystem && strings.HasPrefix(log.Content, "渠道尝试")) {
-		log.IsFailed = isFailContent(log.Content)
-	}
+	markLogFailed(log)
 	err := LOG_DB.Create(log).Error
 	if err != nil {
 		logger.Error(ctx, "failed to record log: "+err.Error())

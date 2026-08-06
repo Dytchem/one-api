@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"github.com/songquanpeng/one-api/common/config"
 	"github.com/songquanpeng/one-api/common/logger"
+	"github.com/songquanpeng/one-api/common/random"
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 var (
@@ -42,6 +44,22 @@ func Init() {
 			logger.FatalLog("SESSION_SECRET is set to the example value \"random_string\", refusing to start. Please set a random secret (e.g. openssl rand -hex 32).")
 		} else {
 			config.SessionSecret = os.Getenv("SESSION_SECRET")
+		}
+	}
+	// dyt-93: 未显式设置 SESSION_SECRET 时，从数据目录读取/生成并持久化，
+	// 保证首次启动自动生成随机密钥、重启不变（compose 不支持命令替换，不能依赖 ${VAR:-$(cmd)}）。
+	// 容器 WORKDIR=/data（持久卷）；本地运行则落在运行目录。
+	if config.SessionSecret == "" || os.Getenv("SESSION_SECRET") == "" {
+		secretFile := filepath.Join(filepath.Dir(SQLitePath), "session_secret")
+		if data, err := os.ReadFile(secretFile); err == nil {
+			config.SessionSecret = strings.TrimSpace(string(data))
+		} else {
+			config.SessionSecret = random.GetRandomString(32)
+			if err := os.MkdirAll(filepath.Dir(secretFile), 0755); err == nil {
+				if err := os.WriteFile(secretFile, []byte(config.SessionSecret), 0600); err != nil {
+					logger.SysError("failed to persist session secret to " + secretFile + ": " + err.Error())
+				}
+			}
 		}
 	}
 	if os.Getenv("SQLITE_PATH") != "" {

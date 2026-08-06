@@ -208,7 +208,22 @@ function makeTools({ getToken }) {
       }
     }),
     tool('add_channel', 'Add Channel (admin)', '新增渠道（管理员），channel 对象包含 name/type/key/models/group/base_url 等字段', Type.Object({ channel: Type.Record(Type.String(), Type.Any(), { description: '渠道配置对象' }) }), async (a) => call('/api/channel/', { method: 'POST', body: a.channel })),
-    tool('update_channel', 'Update Channel (admin)', '更新渠道（管理员），channel 对象必须包含 id，其余字段为要修改的内容；key 留空表示不修改（列表接口返回的 key 已脱敏，直接回传会误清空密钥）', Type.Object({ channel: Type.Record(Type.String(), Type.Any(), { description: '渠道配置对象（含 id）' }) }), async (a) => call('/api/channel/', { method: 'PUT', body: a.channel })),
+    tool('update_channel', 'Update Channel (admin)', '更新渠道（管理员）：channel 对象必须包含 id，其余字段为要修改的内容；内部先读取现有配置合并后全量提交，未修改字段保持不变（key 无法通过本工具修改）', Type.Object({ channel: Type.Record(Type.String(), Type.Any(), { description: '渠道配置对象（含 id）' }) }), async (a) => {
+      // dyt-93: 后端 PUT 为全量语义，部分提交会把 status/type/models 等抹零。
+      // 这里先 GET 现有配置合并后提交；key 置空走后端"空 key 保留"逻辑，避免脱敏 key 覆盖密钥
+      const cur = await call(`/api/channel/${a.channel.id}`);
+      try {
+        const m = cur.content?.[0]?.text?.match(/\{.*\}$/s);
+        const j = JSON.parse(m ? m[0] : '{}');
+        if (j.success && j.data && typeof j.data === 'object') {
+          const merged = { ...j.data, ...a.channel, key: '' };
+          return call('/api/channel/', { method: 'PUT', body: merged });
+        }
+        return { content: [{ type: 'text', text: '读取渠道详情失败，无法安全更新' }], details: {} };
+      } catch (e) {
+        return { content: [{ type: 'text', text: '读取渠道详情解析失败，已取消更新以防字段被清空' }], details: {} };
+      }
+    }),
     tool('delete_channel', 'Delete Channel (admin)', '删除渠道（管理员）', Type.Object({ id: Type.Number({ description: '渠道 ID' }) }), async (a) => call(`/api/channel/${a.id}/`, { method: 'DELETE' })),
     tool('clone_channel', 'Clone Channel (admin)', '复制渠道（管理员）：保留全部配置与 Key 创建新渠道，新渠道默认启用（复制渠道请用本工具，不要用 add_channel 手动重建，避免密钥脱敏无法复制）', Type.Object({ id: Type.Number({ description: '要复制的渠道 ID' }) }), async (a) => call(`/api/channel/clone/${a.id}`, { method: 'POST' })),
     tool('fetch_channel_models', 'Fetch Channel Models (admin)', '从渠道上游探测模型列表（管理员）', Type.Object({ id: Type.Number({ description: '渠道 ID' }) }), async (a) => call(`/api/channel/fetch-models/${a.id}`)),
@@ -255,6 +270,7 @@ async function readBody(req, res) {
     if (total > BODY_LIMIT) {
       res.writeHead(413, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'payload too large' }));
+      req.destroy(); // 终止连接，停止继续传输
       return null;
     }
     chunks.push(c);
@@ -314,7 +330,7 @@ async function handleChat(req, res) {
 
     let holder = sessions.get(session_id);
     // 会话归属校验：session_id 绑定的用户必须与请求用户一致，防止跨用户会话窃取
-    if (holder && holder.userId && body.user_id && holder.userId !== body.user_id) {
+    if (holder && holder.userId > 0 && Number(body.user_id) !== holder.userId) {
       // 注意：SSE 头已在上面 writeHead，这里只写事件与结束，不能再次 writeHead
       writeSse(res, { type: 'error', message: '会话不属于当前用户' });
       writeSse(res, { type: 'done' });
@@ -463,6 +479,11 @@ async function handleChat(req, res) {
       } catch (_) { /* 忽略 */ }
     }
 
+    // dyt-93: 新消息 = 新意图：若非执行中（busy），清除停止标记，
+    // 避免"停止后首条消息被吞"（仅占位期创建中被打断的场景才拦截）
+    if (holder.stopped && !holder.busy) {
+      holder.stopped = false;
+    }
     holder.busy = true;
     holder.busySince = Date.now();
     holder.toolCount = 0;
@@ -525,7 +546,7 @@ async function handleResume(req, res) {
   }
   const { session_id, user_id } = body;
   const holder = sessions.get(session_id);
-  if (holder && holder.userId && user_id && holder.userId !== user_id) {
+  if (holder && holder.userId > 0 && Number(user_id) !== holder.userId) {
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
@@ -596,7 +617,7 @@ async function handleChatV1(req, res) {
     'X-Accel-Buffering': 'no',
   });
   let holder = chatSessions.get(session_id);
-  if (holder && holder.userId && user_id && holder.userId !== user_id) {
+  if (holder && holder.userId > 0 && Number(user_id) !== holder.userId) {
     // 注意：SSE 头已在上面 writeHead，这里只写事件与结束，不能再次 writeHead
     writeSse(res, { type: 'error', message: '会话不属于当前用户' });
     writeSse(res, { type: 'done' });
@@ -700,18 +721,18 @@ async function handleChatV1(req, res) {
 }
 
 function handleChatResume(req, res) {
-  const chunks = [];
+  const rawPromise = readBody(req, res).catch(() => null);
   let session_id = '';
-  req.on('data', (c) => chunks.push(c));
-  req.on('end', () => {
+  rawPromise.then((raw) => {
+    if (raw === null) return;
     let user_id = 0;
     try {
-      const p = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      const p = JSON.parse(raw);
       session_id = p.session_id;
       user_id = p.user_id || 0;
     } catch (_) { /* ignore */ }
     const holder = chatSessions.get(session_id);
-    if (holder && holder.userId && user_id && holder.userId !== user_id) {
+    if (holder && holder.userId > 0 && Number(user_id) !== holder.userId) {
       res.writeHead(200, {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',
@@ -756,21 +777,21 @@ function handleChatResume(req, res) {
 
 // ---- 停止生成（用户点击停止：中止后台执行，区别于刷新断线）----
 function handleStop(req, res) {
-  const chunks = [];
-  req.on('data', (c) => chunks.push(c));
-  req.on('end', () => {
+  const rawPromise = readBody(req, res).catch(() => null);
+  rawPromise.then((raw) => {
+    if (raw === null) return;
     let sid = '';
     let kind = 'agent';
     let user_id = 0;
     try {
-      const p = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      const p = JSON.parse(raw);
       sid = p.session_id;
       kind = p.kind || 'agent';
       user_id = p.user_id || 0;
     } catch (_) { /* ignore */ }
     const holder = kind === 'chat' ? chatSessions.get(sid) : sessions.get(sid);
     if (holder) {
-      if (holder.userId && user_id && holder.userId !== user_id) {
+      if (holder.userId > 0 && Number(user_id) !== holder.userId) {
         res.writeHead(403, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'session belongs to another user' }));
         return;
@@ -792,8 +813,6 @@ function handleStop(req, res) {
     res.end(JSON.stringify({ ok: true }));
   });
 }
-
-
 // ---- 会话事件持久化（容器重启后 resume 仍可重放历史）----
 const SESSION_STORE = process.env.SESSION_STORE || '/data/pi-sessions.json';
 

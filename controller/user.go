@@ -765,4 +765,3 @@ func EmailBind(c *gin.Context) {
 	})
 	return
 }
-

@@ -15,8 +15,8 @@ services:
       # 数据库连接串：可注释掉以使用 SQLite（数据存 /data）
       - SQL_DSN=${MYSQL_DSN:-oneapi:${MYSQL_PASSWORD:-123456}@tcp(db:3306)/one-api}
       - REDIS_CONN_STRING=redis://redis
-      # 会话签名密钥：未设置时自动生成（每次 compose up 会变化，持久化请手动 export SESSION_SECRET）
-      - SESSION_SECRET=${SESSION_SECRET:-$(openssl rand -hex 32)}
+      # 会话签名密钥：不设置则首次启动自动生成并持久化到 ./data/oneapi/session_secret（重启不变）
+      - SESSION_SECRET=${SESSION_SECRET:-}
       - TZ=Asia/Shanghai
 #      - NODE_TYPE=slave  # 多机部署时从节点取消注释该行
 #      - SYNC_FREQUENCY=60  # 需要定期从数据库加载数据时取消注释该行

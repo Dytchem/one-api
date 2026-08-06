@@ -51,7 +51,8 @@ func authHelper(c *gin.Context, minRole int) {
 			return
 		}
 	}
-	if status.(int) == model.UserStatusDisabled || blacklist.IsUserBanned(id.(int)) {
+	// dyt-93: 已删除用户（status=3）同样拒绝，防止删除后旧 cookie/会话在服务重启后复活
+	if status.(int) == model.UserStatusDisabled || status.(int) == model.UserStatusDeleted || blacklist.IsUserBanned(id.(int)) {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
 			"message": "用户已被封禁",

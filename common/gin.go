@@ -15,7 +15,8 @@ func GetRequestBody(c *gin.Context) ([]byte, error) {
 	if requestBody != nil {
 		return requestBody.([]byte), nil
 	}
-	requestBody, err := io.ReadAll(c.Request.Body)
+	// dyt-93: 请求体上限 64MB，防任意认证用户大 body 打爆内存
+	requestBody, err := io.ReadAll(io.LimitReader(c.Request.Body, 64<<20))
 	if err != nil {
 		return nil, err
 	}

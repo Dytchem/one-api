@@ -156,6 +156,8 @@ func migrateDB() error {
 	if err = DB.AutoMigrate(&Log{}); err != nil {
 		return err
 	}
+	// dyt-93: is_failed 历史回填（幂等：只处理 is_failed=false 且命中失败关键字的行）
+	BackfillFailFlags()
 	if err = DB.AutoMigrate(&Channel{}); err != nil {
 		return err
 	}

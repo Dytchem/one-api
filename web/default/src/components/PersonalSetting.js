@@ -125,7 +125,7 @@ const PersonalSetting = () => {
 
     if (success) {
       showSuccess('账户已删除！');
-      await API.get('/api/user/logout');
+      await API.post('/api/user/logout');
       userDispatch({ type: 'logout' });
       localStorage.removeItem('user');
       navigate('/login');

@@ -197,8 +197,9 @@ func (user *User) Update(updatePassword bool) error {
 			}
 		}
 	}
-	// dyt-93: 部分字段更新的调用方（UpdateSelf/EmailBind/AffCode 等）只填充部分字段，
-	// 直接用 Select 全列会把其余字段清零；这里用 DB 现值补齐零值字段后再显式更新。
+	// dyt-93: 部分字段更新的调用方（UpdateSelf/EmailBind/AffCode/GenerateAccessToken/
+	// 第三方登录绑定 等）只填充部分字段，直接用 Select 全列会把其余字段清零；
+	// 这里用 DB 现值补齐零值字段后再显式更新。
 	// 注意 Role/Status/Group 的合法值均非零，零值可安全视为"未传"。
 	var existing User
 	if e := DB.First(&existing, "id = ?", user.Id).Error; e == nil {
@@ -220,13 +221,43 @@ func (user *User) Update(updatePassword bool) error {
 		if user.Group == "" {
 			user.Group = existing.Group
 		}
+		if user.Email == "" {
+			user.Email = existing.Email
+		}
+		if user.GitHubId == "" {
+			user.GitHubId = existing.GitHubId
+		}
+		if user.WeChatId == "" {
+			user.WeChatId = existing.WeChatId
+		}
+		if user.LarkId == "" {
+			user.LarkId = existing.LarkId
+		}
+		if user.OidcId == "" {
+			user.OidcId = existing.OidcId
+		}
+		if user.AccessToken == "" {
+			user.AccessToken = existing.AccessToken
+		}
+		if user.AffCode == "" {
+			user.AffCode = existing.AffCode
+		}
 	}
-	err = DB.Model(user).Select("username", "password", "display_name", "role", "status", "group").Updates(user).Error
+	err = DB.Model(user).Select(
+		"username", "password", "display_name", "role", "status", "group",
+		"email", "github_id", "wechat_id", "lark_id", "oidc_id", "access_token", "aff_code",
+	).Updates(user).Error
 	return err
 }
 
 // UpdateUserQuota 显式更新额度（支持清零），供管理员修改额度场景使用
 func UpdateUserQuota(userId int, quota int64) error {
+	// dyt-93: 清 Redis 配额缓存，避免调低额度后用户仍可超额消耗最长 SyncFrequency
+	if common.RedisEnabled {
+		if err := common.RedisDel(fmt.Sprintf("user_quota:%d", userId)); err != nil {
+			logger.SysError("failed to clear user_quota cache: " + err.Error())
+		}
+	}
 	return DB.Model(&User{}).Where("id = ?", userId).Update("quota", quota).Error
 }
 
