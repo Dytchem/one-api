@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Card, Table, Button, Modal, Label, Input, Select, Message } from 'semantic-ui-react';
+import { Card, Table, Button, Modal, Label, Input, Form, Pagination, Dropdown, Message } from 'semantic-ui-react';
 import { useTranslation } from 'react-i18next';
 import {
   API,
@@ -9,9 +9,8 @@ import {
   copy,
   timestamp2string,
 } from '../../helpers';
-
-// 渠道名缓存
-const channelCache = {};
+import { ITEMS_PER_PAGE_OPTIONS } from '../../constants';
+import { renderColorLabel } from '../../helpers/render';
 
 const FailLog = () => {
   const { t } = useTranslation();
@@ -24,13 +23,14 @@ const FailLog = () => {
   const [selectedLog, setSelectedLog] = useState(null);
   const [payloadData, setPayloadData] = useState(null);
   const [payloadLoading, setPayloadLoading] = useState(false);
+  // 与其他列表页一致：每页条数可选并持久化
+  const [itemsPerPage, setItemsPerPage] = useState(() => parseInt(localStorage.getItem('itemsPerPage') || '10'));
 
-  const pageSize = 50;
-
-  const fetchLogs = async (p = 0) => {
+  const fetchLogs = async (p = 0, size) => {
     setLoading(true);
+    const sizeParam = size !== undefined ? size : itemsPerPage;
     try {
-      const params = { p, size: pageSize };
+      const params = { p, size: sizeParam };
       if (channelFilter) params.channel = channelFilter;
       if (modelFilter) params.model_name = modelFilter;
       const res = await API.get('/api/log/fail/list', { params });
@@ -57,9 +57,17 @@ const FailLog = () => {
     setPage(0);
   };
 
-  const handlePageChange = (newPage) => {
+  const onPageChange = (e, { activePage }) => {
+    const newPage = activePage - 1;
     setPage(newPage);
     fetchLogs(newPage);
+  };
+
+  const handleItemsPerPageChange = (e, { value }) => {
+    setItemsPerPage(value);
+    localStorage.setItem('itemsPerPage', value.toString());
+    setPage(0);
+    fetchLogs(0, value);
   };
 
   const handleRowClick = async (log) => {
@@ -90,14 +98,37 @@ const FailLog = () => {
     return null;
   };
 
-  // 预览保留 OpenRouter 风格的关键上下文，完整内容在详情中查看
+  // 预览保留关键上下文，完整内容在详情中查看
   const getPreview = (content) => {
     if (!content) return '';
     const compact = content.replace(/\s+/g, ' ').trim();
     return compact.length > 180 ? compact.substring(0, 180) + '…' : compact;
   };
 
-  // 格式化时间
+  // 与日志列表同款：两行显示 (日期 / 时间)，点击复制请求 ID
+  const renderTimestamp = (timestamp, request_id) => {
+    const s = timestamp2string(timestamp);
+    const parts = s.split(' ');
+    const date = parts[0] || '';
+    const time = parts[1] || '';
+    return (
+      <code
+        onClick={async () => {
+          if (await copy(request_id)) {
+            showNotice(`已复制请求 ID：${request_id}`);
+          } else {
+            showWarning(`请求 ID 复制失败：${request_id}`);
+          }
+        }}
+        style={{ cursor: 'pointer', fontSize: '11px', lineHeight: '1.2', whiteSpace: 'nowrap' }}
+      >
+        <div>{date}</div>
+        <div>{time}</div>
+      </code>
+    );
+  };
+
+  // 格式化时间（详情弹窗用）
   const formatTime = (ts) => {
     return timestamp2string(ts);
   };
@@ -112,7 +143,7 @@ const FailLog = () => {
     }
   };
 
-  const totalPages = Math.ceil(total / pageSize);
+  const totalPages = Math.ceil(total / itemsPerPage);
 
   return (
     <div className='dashboard-container'>
@@ -125,38 +156,70 @@ const FailLog = () => {
             </span>
           </Card.Header>
 
-          {/* 筛选栏 */}
-          <div className='fail-log-filters' style={{ marginBottom: 16, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'nowrap' }}>
-            <Input
-              placeholder={t('fail_log.channel_placeholder', '渠道ID')}
-              value={channelFilter}
-              onChange={(e) => setChannelFilter(e.target.value)}
-              size='small'
-              style={{ width: 100 }}
-            />
-            <Input
-              placeholder={t('fail_log.model_placeholder', '模型名')}
-              value={modelFilter}
-              onChange={(e) => setModelFilter(e.target.value)}
-              size='small'
-              style={{ width: 120 }}
-            />
-            <Button size='small' primary onClick={handleSearch} loading={loading}>
-              {t('fail_log.search', '搜索')}
-            </Button>
-          </div>
+          {/* 筛选栏 —— 与日志列表同款 Form.Group */}
+          <Form>
+            <Form.Group className='logs-filter-group'>
+              <Form.Input
+                fluid
+                label={t('fail_log.channel', '渠道ID')}
+                size={'small'}
+                width={3}
+                value={channelFilter}
+                placeholder={t('fail_log.channel_placeholder', '渠道ID')}
+                onChange={(e) => setChannelFilter(e.target.value)}
+              />
+              <Form.Input
+                fluid
+                label={t('fail_log.model', '模型')}
+                size={'small'}
+                width={3}
+                value={modelFilter}
+                placeholder={t('fail_log.model_placeholder', '模型名')}
+                onChange={(e) => setModelFilter(e.target.value)}
+              />
+              <Form.Button
+                fluid
+                label={t('fail_log.search', '搜索')}
+                size={'small'}
+                width={2}
+                loading={loading}
+                onClick={handleSearch}
+              >
+                {t('log.buttons.submit')}
+              </Form.Button>
+            </Form.Group>
+          </Form>
 
-          {/* 列表 */}
-          <Table celled compact selectable size='small' className='fail-logs-table' style={{ fontSize: '13px' }}>
+          {/* 列表 —— 与日志列表同款表格样式 */}
+          <Table
+            basic={'very'}
+            compact
+            size='small'
+            className={`logs-table fail-logs-table`}
+          >
             <Table.Header>
               <Table.Row>
-                <Table.HeaderCell>{t('log.time', '时间')}</Table.HeaderCell>
-                <Table.HeaderCell>ID</Table.HeaderCell>
-                <Table.HeaderCell>{t('fail_log.channel', '渠道')}</Table.HeaderCell>
-                <Table.HeaderCell>{t('fail_log.model', '模型')}</Table.HeaderCell>
-                <Table.HeaderCell>{t('fail_log.status', '状态码')}</Table.HeaderCell>
-                <Table.HeaderCell>{t('fail_log.preview', '预览')}</Table.HeaderCell>
-                <Table.HeaderCell>{t('fail_log.payload', 'Payload')}</Table.HeaderCell>
+                <Table.HeaderCell style={{ whiteSpace: 'nowrap', textAlign: 'right' }} width={1}>
+                  {t('log.time', '时间')}
+                </Table.HeaderCell>
+                <Table.HeaderCell style={{ whiteSpace: 'nowrap' }} width={1}>
+                  ID
+                </Table.HeaderCell>
+                <Table.HeaderCell style={{ whiteSpace: 'nowrap' }} width={1}>
+                  {t('fail_log.channel', '渠道')}
+                </Table.HeaderCell>
+                <Table.HeaderCell style={{ whiteSpace: 'nowrap' }} width={2}>
+                  {t('fail_log.model', '模型')}
+                </Table.HeaderCell>
+                <Table.HeaderCell style={{ whiteSpace: 'nowrap' }} width={1}>
+                  {t('fail_log.status', '状态码')}
+                </Table.HeaderCell>
+                <Table.HeaderCell style={{ whiteSpace: 'nowrap' }}>
+                  {t('fail_log.preview', '预览')}
+                </Table.HeaderCell>
+                <Table.HeaderCell style={{ whiteSpace: 'nowrap', textAlign: 'center' }} width={1}>
+                  {t('fail_log.payload', 'Payload')}
+                </Table.HeaderCell>
               </Table.Row>
             </Table.Header>
             <Table.Body>
@@ -169,13 +232,15 @@ const FailLog = () => {
                     style={{ cursor: 'pointer' }}
                     active={selectedLog && selectedLog.id === log.id}
                   >
-                    <Table.Cell title={formatTime(log.time)}>{formatTime(log.time)}</Table.Cell>
+                    <Table.Cell>
+                      {renderTimestamp(log.time, log.request_id)}
+                    </Table.Cell>
                     <Table.Cell>{log.id}</Table.Cell>
                     <Table.Cell>
-                      <Label basic size='mini'>{log.channel_id}</Label>
+                      <Label basic>{log.channel_id}</Label>
                     </Table.Cell>
-                    <Table.Cell title={log.model_name}>
-                      {log.model_name}
+                    <Table.Cell>
+                      {log.model_name ? renderColorLabel(log.model_name) : ''}
                     </Table.Cell>
                     <Table.Cell>
                       {badge ? (
@@ -190,8 +255,21 @@ const FailLog = () => {
                         <Label size='mini' color='red'>-</Label>
                       )}
                     </Table.Cell>
-                    <Table.Cell title={log.content}>
-                      {getPreview(log.content)}
+                    <Table.Cell>
+                      <span
+                        style={{
+                          wordBreak: 'break-word',
+                          color: '#555',
+                          lineHeight: '1.4',
+                          display: '-webkit-box',
+                          WebkitLineClamp: 3,
+                          WebkitBoxOrient: 'vertical',
+                          overflow: 'hidden',
+                        }}
+                        title={log.content}
+                      >
+                        {getPreview(log.content)}
+                      </span>
                     </Table.Cell>
                     <Table.Cell style={{ textAlign: 'center' }}>
                       {log.has_payload ? '📋' : '-'}
@@ -207,24 +285,31 @@ const FailLog = () => {
                 </Table.Row>
               )}
             </Table.Body>
-          </Table>
 
-          {/* 分页 */}
-          {totalPages > 1 && (
-            <div style={{ textAlign: 'center', marginTop: 12 }}>
-              <Button.Group size='small'>
-                <Button disabled={page <= 0} onClick={() => handlePageChange(page - 1)}>
-                  {t('fail_log.prev', '上一页')}
-                </Button>
-                <Button disabled>
-                  {page + 1} / {totalPages}
-                </Button>
-                <Button disabled={page >= totalPages - 1} onClick={() => handlePageChange(page + 1)}>
-                  {t('fail_log.next', '下一页')}
-                </Button>
-              </Button.Group>
-            </div>
-          )}
+            {/* 分页 —— 与日志列表同款：每页条数选择 + Pagination */}
+            <Table.Footer>
+              <Table.Row>
+                <Table.HeaderCell colSpan='7'>
+                  <Dropdown
+                    selection
+                    options={ITEMS_PER_PAGE_OPTIONS}
+                    value={itemsPerPage}
+                    onChange={handleItemsPerPageChange}
+                    placeholder={t('common.page_size') || '每页显示'}
+                    style={{ marginRight: '10px' }}
+                  />
+                  <Pagination
+                    floated='right'
+                    activePage={page + 1}
+                    onPageChange={onPageChange}
+                    size='small'
+                    siblingRange={1}
+                    totalPages={totalPages > 0 ? totalPages : 1}
+                  />
+                </Table.HeaderCell>
+              </Table.Row>
+            </Table.Footer>
+          </Table>
         </Card.Content>
       </Card>
 

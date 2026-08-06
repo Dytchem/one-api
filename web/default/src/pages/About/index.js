@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { Card } from 'semantic-ui-react';
 import { API, showError } from '../../helpers';
 import { marked } from 'marked';
+import { APP_REPO_URL } from '../../constants';
 
 const About = () => {
   const { t } = useTranslation();
@@ -40,8 +41,8 @@ const About = () => {
               <Card.Header className='header'>{t('about.title')}</Card.Header>
               <p>{t('about.description')}</p>
               {t('about.repository')}
-              <a href='https://github.com/Dytchem/one-api'>
-                https://github.com/Dytchem/one-api
+              <a href={APP_REPO_URL}>
+                {APP_REPO_URL}
               </a>
             </Card.Content>
           </Card>

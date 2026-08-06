@@ -39,6 +39,7 @@ const UsersTable = () => {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [activePage, setActivePage] = useState(1);
+  const [hasMore, setHasMore] = useState(true);
   const [itemsPerPage, setItemsPerPage] = useState(() => parseInt(localStorage.getItem('itemsPerPage') || '10'));
   const [searchKeyword, setSearchKeyword] = useState('');
   const [searching, setSearching] = useState(false);
@@ -50,6 +51,7 @@ const UsersTable = () => {
     const res = await API.get(`/api/user/?p=${startIdx}&order=${orderParam}&size=${sizeParam}`);
     const { success, message, data } = res.data;
     if (success) {
+      setHasMore(data.length >= sizeParam);
       if (startIdx === 0) {
         setUsers(data);
       } else {
@@ -145,6 +147,7 @@ const UsersTable = () => {
     const { success, message, data } = res.data;
     if (success) {
       setUsers(data);
+      setHasMore(false);
       setActivePage(1);
     } else {
       showError(message);
@@ -401,7 +404,7 @@ const UsersTable = () => {
                 totalPages={
                   users.length === 0
                     ? 1
-                    : Math.ceil(users.length / itemsPerPage)
+                    : Math.ceil(users.length / itemsPerPage) + (hasMore ? 1 : 0)
                 }
               />
             </Table.HeaderCell>

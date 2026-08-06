@@ -20,6 +20,28 @@ function renderTimestamp(timestamp) {
   return <>{timestamp2string(timestamp)}</>;
 }
 
+// 健康度/响应时间渐变配色：score 0→1 映射 hue 0(红)→120(绿)，数值连续渐变而非分段跳变
+function scoreHsl(score, light = 42) {
+  const s = Math.max(0, Math.min(1, score));
+  const hue = Math.round(s * 120);
+  return `hsl(${hue}, 70%, ${light}%)`;
+}
+
+// 响应时间 0→5000ms+ 映射 hue 120(绿)→0(红)
+function timeHsl(millis) {
+  const t = Math.max(0, Math.min(1, millis / 5000));
+  const hue = Math.round((1 - t) * 120);
+  return `hsl(${hue}, 70%, 42%)`;
+}
+
+function gradLabelStyle(hsl) {
+  return {
+    backgroundColor: hsl,
+    borderColor: hsl,
+    color: '#fff',
+  };
+}
+
 function renderType(type, t) {
   // 每次渲染重新构建，避免切换语言后缓存旧文案
   const type2label = new Map();
@@ -80,6 +102,7 @@ const ChannelsTable = () => {
   const [healthData, setHealthData] = useState({});
   const [loading, setLoading] = useState(true);
   const [activePage, setActivePage] = useState(1);
+  const [hasMore, setHasMore] = useState(true);
   const [itemsPerPage, setItemsPerPage] = useState(() => parseInt(localStorage.getItem('itemsPerPage') || '10'));
   const [searchKeyword, setSearchKeyword] = useState('');
   const [searching, setSearching] = useState(false);
@@ -117,6 +140,7 @@ const ChannelsTable = () => {
     const res = await API.get(`/api/channel/?p=${startIdx}&order=${orderParam}&sort=${sortParam}&size=${sizeParam}`);
     const { success, message, data } = res.data;
     if (success) {
+      setHasMore(data.length >= sizeParam);
       let localChannels = data.map(processChannelData);
       if (startIdx === 0) {
         setChannels(localChannels);
@@ -290,31 +314,12 @@ const ChannelsTable = () => {
           {t('channel.table.not_tested')}
         </Label>
       );
-    } else if (responseTime <= 1000) {
-      return (
-        <Label basic color='green'>
-          {time}
-        </Label>
-      );
-    } else if (responseTime <= 3000) {
-      return (
-        <Label basic color='olive'>
-          {time}
-        </Label>
-      );
-    } else if (responseTime <= 5000) {
-      return (
-        <Label basic color='yellow'>
-          {time}
-        </Label>
-      );
-    } else {
-      return (
-        <Label basic color='red'>
-          {time}
-        </Label>
-      );
     }
+    return (
+      <Label style={gradLabelStyle(timeHsl(responseTime))}>
+        {time}
+      </Label>
+    );
   };
 
 
@@ -323,44 +328,19 @@ const ChannelsTable = () => {
     if (!h) {
       return <Label basic color='grey'>{t('channel.table.health_no_data')}</Label>;
     }
+    const healthContent = <div>
+      {t('channel.table.health_score')}: {h.health_score.toFixed(2)}<br/>
+      {t('channel.table.health_success_rate')}: {(h.success_rate * 100).toFixed(0)}%<br/>
+      {t('channel.table.health_tok_per_sec')}: {h.tok_per_sec > 0 ? h.tok_per_sec.toFixed(1) : '-'} tok/s<br/>
+      {t('channel.table.health_ttft')}: {h.avg_ttft_ms > 0 ? `${h.avg_ttft_ms}ms` : '-'}
+    </div>;
     if (h.degraded) {
       return (
         <Popup
-          trigger={<Label basic color='red'>{t('channel.table.health_degraded')}</Label>}
+          trigger={<Label style={gradLabelStyle('hsl(0, 80%, 45%)')}>{t('channel.table.health_degraded')}</Label>}
           content={<div>
             <b>{t('channel.table.health_degraded_popup')}</b><br/>
-            {t('channel.table.health_score')}: {h.health_score.toFixed(2)}<br/>
-            {t('channel.table.health_success_rate')}: {(h.success_rate * 100).toFixed(0)}%<br/>
-            {t('channel.table.health_tok_per_sec')}: {h.tok_per_sec > 0 ? h.tok_per_sec.toFixed(1) : '-'}<br/>
-            {t('channel.table.health_ttft')}: {h.avg_ttft_ms > 0 ? `${h.avg_ttft_ms}ms` : '-'}
-          </div>}
-          basic
-        />
-      );
-    }
-    if (h.health_score >= 0.8) {
-      return (
-        <Popup
-          trigger={<Label basic color='green'>{(h.health_score * 100).toFixed(0)}%</Label>}
-          content={<div>
-            {t('channel.table.health_score')}: {h.health_score.toFixed(2)}<br/>
-            {t('channel.table.health_success_rate')}: {(h.success_rate * 100).toFixed(0)}%<br/>
-            {t('channel.table.health_tok_per_sec')}: {h.tok_per_sec > 0 ? h.tok_per_sec.toFixed(1) : '-'} tok/s<br/>
-            {t('channel.table.health_ttft')}: {h.avg_ttft_ms > 0 ? `${h.avg_ttft_ms}ms` : '-'}
-          </div>}
-          basic
-        />
-      );
-    }
-    if (h.health_score >= 0.5) {
-      return (
-        <Popup
-          trigger={<Label basic color='yellow'>{(h.health_score * 100).toFixed(0)}%</Label>}
-          content={<div>
-            {t('channel.table.health_score')}: {h.health_score.toFixed(2)}<br/>
-            {t('channel.table.health_success_rate')}: {(h.success_rate * 100).toFixed(0)}%<br/>
-            {t('channel.table.health_tok_per_sec')}: {h.tok_per_sec > 0 ? h.tok_per_sec.toFixed(1) : '-'} tok/s<br/>
-            {t('channel.table.health_ttft')}: {h.avg_ttft_ms > 0 ? `${h.avg_ttft_ms}ms` : '-'}
+            {healthContent}
           </div>}
           basic
         />
@@ -368,13 +348,8 @@ const ChannelsTable = () => {
     }
     return (
       <Popup
-        trigger={<Label basic color='orange'>{(h.health_score * 100).toFixed(0)}%</Label>}
-        content={<div>
-          {t('channel.table.health_score')}: {h.health_score.toFixed(2)}<br/>
-          {t('channel.table.health_success_rate')}: {(h.success_rate * 100).toFixed(0)}%<br/>
-          {t('channel.table.health_tok_per_sec')}: {h.tok_per_sec > 0 ? h.tok_per_sec.toFixed(1) : '-'} tok/s<br/>
-          {t('channel.table.health_ttft')}: {h.avg_ttft_ms > 0 ? `${h.avg_ttft_ms}ms` : '-'}
-        </div>}
+        trigger={<Label style={gradLabelStyle(scoreHsl(h.health_score))}>{(h.health_score * 100).toFixed(0)}%</Label>}
+        content={healthContent}
         basic
       />
     );
@@ -394,6 +369,7 @@ const ChannelsTable = () => {
     if (success) {
       let localChannels = data.map(processChannelData);
       setChannels(localChannels);
+      setHasMore(false);
       setActivePage(1);
     setActivePage(1);
     } else {
@@ -756,6 +732,7 @@ const ChannelsTable = () => {
                       </Popup>
                       <Button
                         size={'tiny'}
+                        color={channel.status === 1 ? 'orange' : 'green'}
                         onClick={() => {
                           manageChannel(
                             channel.id,
@@ -770,6 +747,7 @@ const ChannelsTable = () => {
                       </Button>
                       <Button
                         size={'tiny'}
+                        color='blue'
                         as={Link}
                         to={'/channel/edit/' + channel.id}
                       >
@@ -851,7 +829,7 @@ const ChannelsTable = () => {
                 totalPages={
                   channels.length === 0
                     ? 1
-                    : Math.ceil(channels.length / itemsPerPage)
+                    : Math.ceil(channels.length / itemsPerPage) + (hasMore ? 1 : 0)
                 }
               />
               <Button size='tiny' onClick={refresh} loading={loading}>

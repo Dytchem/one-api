@@ -10,6 +10,7 @@ import Setting from './pages/Setting';
 import EditUser from './pages/User/EditUser';
 import AddUser from './pages/User/AddUser';
 import { API, getLogo, getSystemName, showError, showNotice } from './helpers';
+import { APP_VERSION } from './constants';
 import PasswordResetForm from './components/PasswordResetForm';
 import GitHubOAuth from './components/GitHubOAuth';
 import PasswordResetConfirm from './components/PasswordResetConfirm';
@@ -58,9 +59,9 @@ function App() {
           localStorage.removeItem('chat_link');
         }
         if (
-          data.version !== process.env.REACT_APP_VERSION &&
+          data.version !== APP_VERSION &&
           data.version !== 'v0.0.0' &&
-          process.env.REACT_APP_VERSION !== ''
+          APP_VERSION !== ''
         ) {
           showNotice(
             `新版本可用：${data.version}，请使用快捷键 Shift + F5 刷新页面`

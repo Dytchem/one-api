@@ -12,6 +12,7 @@ import {
 import { Link } from 'react-router-dom';
 import { API, showError, showSuccess, verifyJSON } from '../helpers';
 import { marked } from 'marked';
+import { APP_VERSION, APP_REPO_API_URL, APP_REPO_URL } from '../constants';
 
 const OtherSetting = () => {
   const { t } = useTranslation();
@@ -95,15 +96,13 @@ const OtherSetting = () => {
   };
 
   const openGitHubRelease = () => {
-    window.location = 'https://github.com/songquanpeng/one-api/releases/latest';
+    window.location = `${APP_REPO_RELEASES_URL}/latest`;
   };
 
   const checkUpdate = async () => {
-    const res = await API.get(
-      'https://api.github.com/repos/songquanpeng/one-api/releases/latest'
-    );
+    const res = await API.get(`${APP_REPO_API_URL}/releases/latest`);
     const { tag_name, body } = res.data;
-    if (tag_name === process.env.REACT_APP_VERSION) {
+    if (tag_name === APP_VERSION) {
       showSuccess(`已是最新版本：${tag_name}`);
     } else {
       setUpdateData({
@@ -152,7 +151,7 @@ const OtherSetting = () => {
               label={
                 <label>
                   {t('setting.other.system.theme.title')}（
-                  <Link to='https://github.com/songquanpeng/one-api/blob/main/web/README.md'>
+                  <Link to={`${APP_REPO_URL}/blob/main/web/README.md`}>
                     {t('setting.other.system.theme.link')}
                   </Link>
                   ）

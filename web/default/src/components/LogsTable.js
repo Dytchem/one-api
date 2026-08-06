@@ -105,12 +105,15 @@ function renderType(log) {
 }
 
 function getColorByElapsedTime(elapsedTime) {
-  if (elapsedTime === undefined || 0) return 'black';
-  if (elapsedTime < 1000) return 'green';
-  if (elapsedTime < 3000) return 'olive';
-  if (elapsedTime < 5000) return 'yellow';
-  if (elapsedTime < 10000) return 'orange';
-  return 'red';
+  if (elapsedTime === undefined || elapsedTime === 0) return 'black';
+  // 0→10000ms 映射 hue 120(绿)→0(红)，连续渐变
+  const t = Math.max(0, Math.min(1, elapsedTime / 10000));
+  const hue = Math.round((1 - t) * 120);
+  return {
+    backgroundColor: `hsl(${hue}, 70%, 42%)`,
+    borderColor: `hsl(${hue}, 70%, 42%)`,
+    color: '#fff',
+  };
 }
 
 function processContent(content, type, log) {
@@ -146,9 +149,8 @@ function renderDetail(log) {
       <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
         {log.elapsed_time ? (
           <Label
-            basic
             size={'mini'}
-            color={getColorByElapsedTime(log.elapsed_time)}
+            style={getColorByElapsedTime(log.elapsed_time)}
           >
             {log.elapsed_time} ms
           </Label>
@@ -174,6 +176,7 @@ const LogsTable = () => {
   const [showStat, setShowStat] = useState(false);
   const [loading, setLoading] = useState(true);
   const [activePage, setActivePage] = useState(1);
+  const [hasMore, setHasMore] = useState(true);
   const [itemsPerPage, setItemsPerPage] = useState(() => parseInt(localStorage.getItem('itemsPerPage') || '10'));
   const [orderBy, setOrderBy] = useState('');
   const [searchKeyword, setSearchKeyword] = useState('');
@@ -278,6 +281,8 @@ const LogsTable = () => {
     const res = await API.get(url);
     const { success, message, data } = res.data;
     if (success) {
+      // 返回满一页说明可能还有更多（服务端无总数，靠此推断，保证"下一页"可点）
+      setHasMore(data.length >= sizeParam);
       if (startIdx === 0) {
         setLogs(data);
       } else {
@@ -323,6 +328,7 @@ const LogsTable = () => {
     const { success, message, data } = res.data;
     if (success) {
       setLogs(data);
+      setHasMore(false);
       setActivePage(1);
     } else {
       showError(message);
@@ -689,7 +695,7 @@ const LogsTable = () => {
                 totalPages={
                   logs.length === 0
                     ? 1
-                    : Math.ceil(logs.length / itemsPerPage)
+                    : Math.ceil(logs.length / itemsPerPage) + (hasMore ? 1 : 0)
                 }
               />
             </Table.HeaderCell>

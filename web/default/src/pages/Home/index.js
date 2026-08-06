@@ -7,6 +7,7 @@ import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import { UserContext } from '../../context/User';
 import { Link } from 'react-router-dom';
+import { APP_REPO_URL } from '../../constants';
 
 const Home = () => {
   const { t } = useTranslation();
@@ -134,7 +135,7 @@ const Home = () => {
                             {t('home.system_status.info.source')}
                           </span>
                           <a
-                            href='https://github.com/Dytchem/one-api'
+                            href={APP_REPO_URL}
                             target='_blank'
                             style={{ color: '#2185d0' }}
                           >

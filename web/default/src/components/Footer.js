@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Container, Segment } from 'semantic-ui-react';
 import { getFooterHTML, getSystemName } from '../helpers';
+import { APP_VERSION, APP_REPO_URL, APP_AUTHOR_URL } from '../constants';
 
 const Footer = () => {
   const { t } = useTranslation();
@@ -38,11 +39,11 @@ const Footer = () => {
           ></div>
         ) : (
           <div className='custom-footer'>
-            <a href='https://github.com/Dytchem/one-api' target='_blank'>
-              {systemName} {process.env.REACT_APP_VERSION}{' '}
+            <a href={APP_REPO_URL} target='_blank'>
+              {systemName} {APP_VERSION}{' '}
             </a>
             {t('footer.built_by')}{' '}
-            <a href='https://github.com/Dytchem' target='_blank'>
+            <a href={APP_AUTHOR_URL} target='_blank'>
               {t('footer.built_by_name')}
             </a>{' '}
             {t('footer.license')}{' '}

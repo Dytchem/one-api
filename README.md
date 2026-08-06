@@ -85,7 +85,7 @@ docker run -d --name one-api --restart unless-stopped \
   -p 3000:3000 \
   -e SQL_DSN='user:password@tcp(mysql:3306)/one-api?charset=utf8mb4&parseTime=True&loc=Local' \
   -e SESSION_SECRET='replace-with-a-long-random-string' \
-  ghcr.io/dytchem/one-api:v0.6.11-dyt-91
+  ghcr.io/dytchem/one-api:<版本号见根目录 VERSION 文件>
 ```
 
 > 也可使用 SQLite（不传 `SQL_DSN` 即可，数据存 `/data`，建议挂载卷）。
@@ -111,7 +111,7 @@ OpenAI 兼容：`POST /v1/chat/completions`、`POST /v1/models` 等，`Authoriza
 ## 镜像
 
 - GitHub Container Registry：`ghcr.io/dytchem/one-api`
-- 当前版本：`v0.6.11-dyt-91`，跟随 [Releases](https://github.com/Dytchem/one-api/releases)
+- 当前版本：见根目录 [VERSION](VERSION) 文件（构建时自动注入 UI 与镜像 tag），发布记录跟随 [Releases](https://github.com/Dytchem/one-api/releases)
 
 ## License
 

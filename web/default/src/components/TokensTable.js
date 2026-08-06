@@ -82,6 +82,7 @@ const TokensTable = () => {
   const [tokens, setTokens] = useState([]);
   const [loading, setLoading] = useState(true);
   const [activePage, setActivePage] = useState(1);
+  const [hasMore, setHasMore] = useState(true);
   const [searchKeyword, setSearchKeyword] = useState('');
   const [searching, setSearching] = useState(false);
   const [showTopUpModal, setShowTopUpModal] = useState(false);
@@ -93,6 +94,7 @@ const TokensTable = () => {
     const res = await API.get(`/api/token/?p=${startIdx}&order=${orderParam}`);
     const { success, message, data } = res.data;
     if (success) {
+      setHasMore(data.length >= ITEMS_PER_PAGE);
       if (startIdx === 0) {
         setTokens(data);
       } else {
@@ -266,6 +268,7 @@ const TokensTable = () => {
     const { success, message, data } = res.data;
     if (success) {
       setTokens(data);
+      setHasMore(false);
       setActivePage(1);
     } else {
       showError(message);
@@ -521,7 +524,7 @@ const TokensTable = () => {
                 totalPages={
                   tokens.length === 0
                     ? 1
-                    : Math.ceil(tokens.length / ITEMS_PER_PAGE)
+                    : Math.ceil(tokens.length / ITEMS_PER_PAGE) + (hasMore ? 1 : 0)
                 }
               />
             </Table.HeaderCell>
