@@ -45,7 +45,9 @@ func streamAgentBridge(c *gin.Context, path string, body map[string]any) {
 		return
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
-	client := &http.Client{Timeout: 30 * time.Second}
+	// 注意：SSE 透传不能用总超时（bridge 侧 Agent 最长执行 5 分钟，30s 总超时会掐断长回复），
+	// 依赖 c.Request.Context() 在客户端断开时取消即可
+	client := &http.Client{Timeout: 0}
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		if c.Request.Context().Err() != nil {

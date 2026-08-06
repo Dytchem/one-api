@@ -150,11 +150,19 @@ func (channel *Channel) Insert() error {
 
 func (channel *Channel) Update() error {
 	var err error
-	err = DB.Model(channel).Updates(channel).Error
+	// dyt-93: 显式 Select 更新列，使 models/group/balance 等"清空/清零"操作生效
+	// （原 Updates(struct) 会跳过零值，前端清空模型/分组会假成功）
+	err = DB.Model(channel).Select(
+		"type", "key", "status", "name", "weight", "base_url", "other",
+		"balance", "models", "group", "model_mapping", "priority", "config", "system_prompt",
+	).Updates(channel).Error
 	if err != nil {
 		return err
 	}
-	DB.Model(channel).First(channel, "id = ?", channel.Id)
+	// dyt-93: 回读不返回密钥
+	DB.Model(channel).Select("id", "type", "status", "name", "weight", "created_time", "test_time",
+		"response_time", "base_url", "other", "balance", "balance_updated_time", "models", "group",
+		"used_quota", "model_mapping", "priority", "config", "system_prompt").First(channel, "id = ?", channel.Id)
 	err = channel.UpdateAbilities()
 	return err
 }

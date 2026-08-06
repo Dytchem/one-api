@@ -88,7 +88,7 @@ const Header = () => {
   const logo = getLogo();
 
   async function logout() {
-    await API.get('/api/user/logout');
+    await API.post('/api/user/logout');
     showSuccess('注销成功!');
     userDispatch({ type: 'logout' });
     localStorage.removeItem('user');

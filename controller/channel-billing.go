@@ -434,14 +434,11 @@ func updateAllChannelsBalance() error {
 }
 
 func UpdateAllChannelsBalance(c *gin.Context) {
-	//err := updateAllChannelsBalance()
-	//if err != nil {
-	//	c.JSON(http.StatusOK, gin.H{
-	//		"success": false,
-	//		"message": err.Error(),
-	//	})
-	//	return
-	//}
+	// dyt-93: 恢复异步批量更新（原实现被注释，按钮点击恒"成功"但实际什么都没做）
+	// 同步执行会因上游逐个请求（RequestInterval 间隔）阻塞接口，异步 + 立即返回
+	go func() {
+		_ = updateAllChannelsBalance()
+	}()
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",

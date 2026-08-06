@@ -24,7 +24,7 @@ const FailLog = () => {
   const [payloadData, setPayloadData] = useState(null);
   const [payloadLoading, setPayloadLoading] = useState(false);
   // 与其他列表页一致：每页条数可选并持久化
-  const [itemsPerPage, setItemsPerPage] = useState(() => parseInt(localStorage.getItem('itemsPerPage') || '10'));
+  const [itemsPerPage, setItemsPerPage] = useState(() => parseInt(localStorage.getItem('itemsPerPage') || '10') || 10);
 
   const fetchLogs = async (p = 0, size) => {
     setLoading(true);

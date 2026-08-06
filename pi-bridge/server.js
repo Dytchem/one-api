@@ -16,7 +16,7 @@ import {
 import { Type } from 'typebox';
 
 const PORT = parseInt(process.env.PORT || '3005', 10);
-const ONEAPI_BASE = process.env.ONEAPI_BASE || 'http://100.64.0.114:3003';
+const ONEAPI_BASE = process.env.ONEAPI_BASE || 'http://127.0.0.1:3000';
 // dyt-92: 管理员 token 必须显式配置；缺失时仅保留本地工具能力并警告（模型表不自动同步）。
 // 该 token 用于 /v1/models 同步，泄露会导致模型枚举，故不提供硬编码兜底。
 const ONEAPI_ADMIN_TOKEN = process.env.ONEAPI_ADMIN_TOKEN || '';
@@ -245,17 +245,34 @@ function makeTools({ getToken }) {
 // ---- session 管理 ----
 const sessions = new Map(); // session_id -> { session, busy }
 
+// dyt-93: 请求体统一读取，上限 16MB（仅监听 127.0.0.1，但防内网其他进程/代理打爆内存）
+const BODY_LIMIT = 16 * 1024 * 1024;
+async function readBody(req, res) {
+  const chunks = [];
+  let total = 0;
+  for await (const c of req) {
+    total += c.length;
+    if (total > BODY_LIMIT) {
+      res.writeHead(413, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'payload too large' }));
+      return null;
+    }
+    chunks.push(c);
+  }
+  return Buffer.concat(chunks).toString('utf8');
+}
+
 function writeSse(res, obj) {
   if (res.writableEnded) return;
   try { res.write(`data: ${JSON.stringify(obj)}\n\n`); } catch (_) { /* client disconnected */ }
 }
 
 async function handleChat(req, res) {
-  const chunks = [];
-  for await (const c of req) chunks.push(c);
+  const raw = await readBody(req, res);
+  if (raw === null) return;
   let body;
   try {
-    body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    body = JSON.parse(raw);
   } catch (e) {
     res.writeHead(400, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'invalid json' }));
@@ -496,11 +513,11 @@ async function handleChat(req, res) {
 }
 
 async function handleResume(req, res) {
-  const chunks = [];
-  for await (const c of req) chunks.push(c);
+  const raw = await readBody(req, res);
+  if (raw === null) return;
   let body;
   try {
-    body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    body = JSON.parse(raw);
   } catch (e) {
     res.writeHead(400, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'invalid json' }));
@@ -555,11 +572,11 @@ async function handleResume(req, res) {
 const chatSessions = new Map(); // session_id -> { events, busy, subscribers, controller }
 
 async function handleChatV1(req, res) {
-  const chunks = [];
-  for await (const c of req) chunks.push(c);
+  const raw = await readBody(req, res);
+  if (raw === null) return;
   let body;
   try {
-    body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    body = JSON.parse(raw);
   } catch (e) {
     res.writeHead(400, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'invalid json' }));
@@ -844,7 +861,7 @@ setInterval(() => {
       toEvict--;
     }
   }
-}, 3600 * 1000);
+}, 30 * 60 * 1000);
 
 function scheduleSave() {
   if (saveTimer) return;
@@ -889,25 +906,7 @@ const server = http.createServer((req, res) => {
 loadSessions();
 setInterval(scheduleSave, 15000);
 
-const SESSION_MAX_IDLE = 24 * 3600 * 1000;
-const SESSION_MAX_BUSY = 60 * 60 * 1000;
-
-setInterval(() => {
-  const cutoff = Date.now() - SESSION_MAX_IDLE;
-  const busyCutoff = Date.now() - SESSION_MAX_BUSY;
-  for (const [sid, h] of sessions) {
-    if (!h.busy && h.lastActive && h.lastActive < cutoff) sessions.delete(sid);
-    else if (h.busy && h.busySince && h.busySince < busyCutoff) {
-      h.busy = false;
-      h.busySince = 0;
-      h.subscribers.clear();
-      sessions.delete(sid);
-    }
-  }
-  for (const [sid, h] of chatSessions) {
-    if (!h.busy && h.lastActive && h.lastActive < cutoff) chatSessions.delete(sid);
-  }
-}, 30 * 60 * 1000);
+// dyt-93: 清理逻辑已在上方统一（agent/chat 会话、busy 卡死、全局上限），此处不再重复声明
 
 function shutdown() {
   console.log('[shutdown] closing server...');

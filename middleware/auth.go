@@ -173,7 +173,25 @@ func TokenAuth() func(c *gin.Context) {
 		}
 
 		// set channel id for proxy relay
+		// dyt-93: proxy 路径对非 admin 同样做启用 + 分组校验，防止越权使用任意渠道
+		// （proxy 的 target 是任意路径，模型白名单无法校验，故仅校验渠道可用性与分组）
 		if channelId := c.Param("channelid"); channelId != "" {
+			if !model.IsAdmin(token.UserId) {
+				ch, err := model.GetChannelById(helper.String2Int(channelId), true)
+				if err != nil {
+					abortWithMessage(c, http.StatusBadRequest, "无效的渠道 Id")
+					return
+				}
+				if ch.Status != model.ChannelStatusEnabled {
+					abortWithMessage(c, http.StatusForbidden, "该渠道已被禁用")
+					return
+				}
+				userGroup, err := model.CacheGetUserGroup(token.UserId)
+				if err != nil || !channelGroupAllowed(ch.Group, userGroup) {
+					abortWithMessage(c, http.StatusForbidden, "该渠道对当前用户不可用")
+					return
+				}
+			}
 			c.Set(ctxkey.SpecificChannelId, channelId)
 		}
 
@@ -214,6 +232,12 @@ func channelGroupAllowed(channelGroup, userGroup string) bool {
 func extractChannelId(c *gin.Context) string {
 	requestBody, err := common.GetRequestBody(c)
 	if err != nil || len(requestBody) == 0 {
+		return ""
+	}
+	// dyt-93: 超大请求（>1MB）跳过 channel_id 提取，避免 map 反序列化+重序列化
+	// 破坏 body（键序打乱/大整数精度丢失/重复键合并）；此时 channel_id 随透传发给上游，
+	// 与旧版行为一致。聊天页正常请求体远小于该阈值。
+	if len(requestBody) > 1<<20 {
 		return ""
 	}
 	var data map[string]any

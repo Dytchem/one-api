@@ -427,6 +427,14 @@ func UpdateUser(c *gin.Context) {
 		return
 	}
 	if originUser.Quota != updatedUser.Quota {
+		// dyt-93: 额度单独显式更新（Updates 会跳过零值，无法清零）
+		if err := model.UpdateUserQuota(updatedUser.Id, updatedUser.Quota); err != nil {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": err.Error(),
+			})
+			return
+		}
 		model.RecordLog(ctx, originUser.Id, model.LogTypeManage, fmt.Sprintf("管理员将用户额度从 %s修改为 %s", common.LogQuota(originUser.Quota), common.LogQuota(updatedUser.Quota)))
 	}
 	c.JSON(http.StatusOK, gin.H{

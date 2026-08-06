@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"fmt"
+	"math/rand"
 	"net/http"
 	"strconv"
 
@@ -51,8 +52,32 @@ func Distribute() func(c *gin.Context) {
 			if abilityErr == nil && len(abilities) > 0 {
 				filtered := monitor.FilterAbilities(abilities, nil)
 				if len(filtered) > 0 {
+					// dyt-93: 健康度最高的前 k 个按 score 加权随机选择——
+					// 原实现固定取 filtered[0]，全部流量压向单一"最健康"渠道（Weight 失效 + 故障雪崩）
+					k := 3
+					if len(filtered) < k {
+						k = len(filtered)
+					}
+					pool := filtered[:k]
+					var total float64
+					weights := make([]float64, len(pool))
+					for i, a := range pool {
+						w := monitor.GlobalPerformanceStore.GetHealthScore(a.ChannelId)
+						w = w*w + 0.1 // 退化渠道保留小概率
+						weights[i] = w
+						total += w
+					}
+					r := rand.Float64() * total
+					pick := 0
+					for i, w := range weights {
+						r -= w
+						if r <= 0 {
+							pick = i
+							break
+						}
+					}
 					// dyt-63: 必须取完整渠道（含 key），否则转发时 Authorization 为空，上游报"无效的令牌"
-					channel, err = model.GetChannelById(filtered[0].ChannelId, true)
+					channel, err = model.GetChannelById(pool[pick].ChannelId, true)
 				}
 			}
 

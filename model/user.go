@@ -197,8 +197,37 @@ func (user *User) Update(updatePassword bool) error {
 			}
 		}
 	}
-	err = DB.Model(user).Updates(user).Error
+	// dyt-93: 部分字段更新的调用方（UpdateSelf/EmailBind/AffCode 等）只填充部分字段，
+	// 直接用 Select 全列会把其余字段清零；这里用 DB 现值补齐零值字段后再显式更新。
+	// 注意 Role/Status/Group 的合法值均非零，零值可安全视为"未传"。
+	var existing User
+	if e := DB.First(&existing, "id = ?", user.Id).Error; e == nil {
+		if user.Username == "" {
+			user.Username = existing.Username
+		}
+		if user.Password == "" {
+			user.Password = existing.Password
+		}
+		if user.DisplayName == "" {
+			user.DisplayName = existing.DisplayName
+		}
+		if user.Role == 0 {
+			user.Role = existing.Role
+		}
+		if user.Status == 0 {
+			user.Status = existing.Status
+		}
+		if user.Group == "" {
+			user.Group = existing.Group
+		}
+	}
+	err = DB.Model(user).Select("username", "password", "display_name", "role", "status", "group").Updates(user).Error
 	return err
+}
+
+// UpdateUserQuota 显式更新额度（支持清零），供管理员修改额度场景使用
+func UpdateUserQuota(userId int, quota int64) error {
+	return DB.Model(&User{}).Where("id = ?", userId).Update("quota", quota).Error
 }
 
 func (user *User) Delete() error {

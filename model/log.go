@@ -37,6 +37,22 @@ type Log struct {
 	CacheCreationTokens   int `json:"cache_creation_tokens" gorm:"default:0"`
 	CacheCreation5mTokens int `json:"cache_creation_5m_tokens" gorm:"default:0"`
 	CacheCreation1hTokens int `json:"cache_creation_1h_tokens" gorm:"default:0"`
+
+	// dyt-93: 失败标记（写入时一次判定，替代查询时全表 LIKE 扫描）
+	IsFailed bool `json:"is_failed" gorm:"index:idx_is_failed;default:false"`
+}
+
+// isFailContent 与旧 GetFailLogs 的 LIKE 判定保持一致
+func isFailContent(content string) bool {
+	if strings.Contains(content, "探测失败") || strings.Contains(content, "回复为空") ||
+		strings.Contains(content, "状态：失败") || strings.Contains(content, "状态: 失败") ||
+		strings.Contains(content, "请求失败") {
+		return true
+	}
+	if strings.Contains(content, "HTTP ") {
+		return true
+	}
+	return false
 }
 
 const (
@@ -52,6 +68,11 @@ const (
 func recordLogHelper(ctx context.Context, log *Log) {
 	requestId := helper.GetRequestID(ctx)
 	log.RequestId = requestId
+	// dyt-93: 失败标记写入时集中判定（消费/测试日志，以及渠道尝试系统日志）
+	if log.Type == LogTypeConsume || log.Type == LogTypeTest ||
+		(log.Type == LogTypeSystem && strings.HasPrefix(log.Content, "渠道尝试")) {
+		log.IsFailed = isFailContent(log.Content)
+	}
 	err := LOG_DB.Create(log).Error
 	if err != nil {
 		logger.Error(ctx, "failed to record log: "+err.Error())
@@ -64,6 +85,10 @@ func recordLogHelper(ctx context.Context, log *Log) {
 func recordLogHelperWithId(ctx context.Context, log *Log) int64 {
 	requestId := helper.GetRequestID(ctx)
 	log.RequestId = requestId
+	if log.Type == LogTypeConsume || log.Type == LogTypeTest ||
+		(log.Type == LogTypeSystem && strings.HasPrefix(log.Content, "渠道尝试")) {
+		log.IsFailed = isFailContent(log.Content)
+	}
 	err := LOG_DB.Create(log).Error
 	if err != nil {
 		logger.Error(ctx, "failed to record log: "+err.Error())
@@ -437,13 +462,15 @@ func BatchHasPayload(logIds []int64) map[int64]bool {
 }
 
 // GetFailLogs 失败日志分页列表：探测、渠道尝试和测试失败都纳入。
+// dyt-93: 改用写入时判定的 is_failed 索引列（历史数据该列为 false，不再回填），
+// ORDER BY id DESC 保证同秒日志分页稳定（created_at 为秒级整数）。
 func GetFailLogs(channelId int, modelName string, startTimestamp, endTimestamp int64, offset, size int) ([]*Log, int64, error) {
 	var logs []*Log
 	var total int64
 
 	query := LOG_DB.Model(&Log{}).
 		Where("type IN (2, 4, 5)").
-		Where("(content LIKE '%探测失败%' OR content LIKE '%回复为空%' OR content LIKE '%状态：失败%' OR content LIKE '%状态: 失败%' OR content LIKE '%请求失败%' OR content LIKE '%HTTP %')")
+		Where("is_failed = ?", true)
 
 	if channelId > 0 {
 		query = query.Where("channel_id = ?", channelId)
@@ -461,9 +488,9 @@ func GetFailLogs(channelId int, modelName string, startTimestamp, endTimestamp i
 	// count
 	query.Count(&total)
 
-	// order by time desc, paginate
+	// order by id desc（单调稳定），paginate
 	err := query.
-		Order("created_at DESC").
+		Order("id DESC").
 		Offset(offset).Limit(size).
 		Find(&logs).Error
 

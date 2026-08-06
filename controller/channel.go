@@ -528,6 +528,8 @@ func UpdateChannel(c *gin.Context) {
 		})
 		return
 	}
+	// dyt-93: 响应不回传密钥
+	channel.Key = ""
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",

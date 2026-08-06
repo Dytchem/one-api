@@ -40,7 +40,7 @@ const UsersTable = () => {
   const [loading, setLoading] = useState(true);
   const [activePage, setActivePage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
-  const [itemsPerPage, setItemsPerPage] = useState(() => parseInt(localStorage.getItem('itemsPerPage') || '10'));
+  const [itemsPerPage, setItemsPerPage] = useState(() => parseInt(localStorage.getItem('itemsPerPage') || '10') || 10);
   const [searchKeyword, setSearchKeyword] = useState('');
   const [searching, setSearching] = useState(false);
   const [orderBy, setOrderBy] = useState(() => localStorage.getItem('userOrderBy') || '');
@@ -55,7 +55,8 @@ const UsersTable = () => {
       if (startIdx === 0) {
         setUsers(data);
       } else {
-        let newUsers = users;
+        // dyt-93: 不可变更新（原代码直接 push 修改 state 引用）
+        let newUsers = [...users];
         newUsers.push(...data);
         setUsers(newUsers);
       }

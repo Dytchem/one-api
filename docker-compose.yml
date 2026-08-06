@@ -2,7 +2,7 @@ version: '3.4'
 
 services:
   one-api:
-    image: "${REGISTRY:-docker.io}/justsong/one-api:latest"
+    image: "${REGISTRY:-ghcr.io}/dytchem/one-api:latest"
     container_name: one-api
     restart: always
     command: --log-dir /app/logs
@@ -12,13 +12,14 @@ services:
       - ./data/oneapi:/data
       - ./logs:/app/logs
     environment:
-      - SQL_DSN=oneapi:123456@tcp(db:3306)/one-api  # 修改此行，或注释掉以使用 SQLite 作为数据库
+      # 数据库连接串：可注释掉以使用 SQLite（数据存 /data）
+      - SQL_DSN=${MYSQL_DSN:-oneapi:${MYSQL_PASSWORD:-123456}@tcp(db:3306)/one-api}
       - REDIS_CONN_STRING=redis://redis
-      - SESSION_SECRET=random_string  # 修改为随机字符串
+      # 会话签名密钥：未设置时自动生成（每次 compose up 会变化，持久化请手动 export SESSION_SECRET）
+      - SESSION_SECRET=${SESSION_SECRET:-$(openssl rand -hex 32)}
       - TZ=Asia/Shanghai
 #      - NODE_TYPE=slave  # 多机部署时从节点取消注释该行
 #      - SYNC_FREQUENCY=60  # 需要定期从数据库加载数据时取消注释该行
-#      - FRONTEND_BASE_URL=https://openai.justsong.cn  # 多机部署时从节点取消注释该行
     depends_on:
       - redis
       - db
@@ -39,11 +40,9 @@ services:
     container_name: mysql
     volumes:
       - ./data/mysql:/var/lib/mysql  # 挂载目录，持久化存储
-    ports:
-      - '3306:3306'
     environment:
       TZ: Asia/Shanghai   # 设置时区
-      MYSQL_ROOT_PASSWORD: 'OneAPI@justsong' # 设置 root 用户的密码
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-OneAPI@justsong} # 强烈建议覆盖 root 密码
       MYSQL_USER: oneapi   # 创建专用用户
-      MYSQL_PASSWORD: '123456'    # 设置专用用户密码
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-123456}    # 强烈建议覆盖专用用户密码
       MYSQL_DATABASE: one-api   # 自动创建数据库

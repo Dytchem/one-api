@@ -105,7 +105,9 @@ function renderType(log) {
 }
 
 function getColorByElapsedTime(elapsedTime) {
-  if (elapsedTime === undefined || elapsedTime === 0) return 'black';
+  if (elapsedTime === undefined || elapsedTime === 0) {
+    return { backgroundColor: '#767676', borderColor: '#767676', color: '#fff' };
+  }
   // 0→10000ms 映射 hue 120(绿)→0(红)，连续渐变
   const t = Math.max(0, Math.min(1, elapsedTime / 10000));
   const hue = Math.round((1 - t) * 120);
@@ -177,7 +179,7 @@ const LogsTable = () => {
   const [loading, setLoading] = useState(true);
   const [activePage, setActivePage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
-  const [itemsPerPage, setItemsPerPage] = useState(() => parseInt(localStorage.getItem('itemsPerPage') || '10'));
+  const [itemsPerPage, setItemsPerPage] = useState(() => parseInt(localStorage.getItem('itemsPerPage') || '10') || 10);
   const [orderBy, setOrderBy] = useState('');
   const [searchKeyword, setSearchKeyword] = useState('');
   const [searching, setSearching] = useState(false);

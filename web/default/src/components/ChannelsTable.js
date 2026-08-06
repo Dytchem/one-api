@@ -103,7 +103,7 @@ const ChannelsTable = () => {
   const [loading, setLoading] = useState(true);
   const [activePage, setActivePage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
-  const [itemsPerPage, setItemsPerPage] = useState(() => parseInt(localStorage.getItem('itemsPerPage') || '10'));
+  const [itemsPerPage, setItemsPerPage] = useState(() => parseInt(localStorage.getItem('itemsPerPage') || '10') || 10);
   const [searchKeyword, setSearchKeyword] = useState('');
   const [searching, setSearching] = useState(false);
   const [updatingBalance, setUpdatingBalance] = useState(false);
@@ -360,7 +360,6 @@ const ChannelsTable = () => {
       // if keyword is blank, load files instead.
       await loadChannels(0);
       setActivePage(1);
-    setActivePage(1);
       return;
     }
     setSearching(true);
@@ -371,7 +370,6 @@ const ChannelsTable = () => {
       setChannels(localChannels);
       setHasMore(false);
       setActivePage(1);
-    setActivePage(1);
     } else {
       showError(message);
     }
@@ -386,7 +384,7 @@ const ChannelsTable = () => {
   };
 
   const testChannel = async (id, name, idx, m) => {
-    const res = await API.get(`/api/channel/test/${id}?model=${m}`);
+    const res = await API.post(`/api/channel/test/${id}?model=${m}`);
     const { success, message, time, model } = res.data;
     if (success) {
       let newChannels = [...channels];
@@ -398,17 +396,13 @@ const ChannelsTable = () => {
         t('channel.messages.test_success', { name, model, time, message })
       );
     } else {
+      // dyt-93: 失败时不写 response_time（原代码无条件再 set 一次，失败时 time 为 undefined → NaN）
       showError(message);
     }
-    let newChannels = [...channels];
-    let realIdx = (activePage - 1) * itemsPerPage + idx;
-    newChannels[realIdx].response_time = time * 1000;
-    newChannels[realIdx].test_time = Date.now() / 1000;
-    setChannels(newChannels);
   };
 
   const testChannels = async (scope) => {
-    const res = await API.get(`/api/channel/test?scope=${scope}`);
+    const res = await API.post(`/api/channel/test?scope=${scope}`);
     const { success, message } = res.data;
     if (success) {
       showInfo(t('channel.messages.test_all_started'));
@@ -431,7 +425,7 @@ const ChannelsTable = () => {
   };
 
   const updateChannelBalance = async (id, name, idx) => {
-    const res = await API.get(`/api/channel/update_balance/${id}/`);
+    const res = await API.post(`/api/channel/update_balance/${id}/`);
     const { success, message, balance } = res.data;
     if (success) {
       let newChannels = [...channels];
@@ -447,7 +441,7 @@ const ChannelsTable = () => {
 
   const updateAllChannelsBalance = async () => {
     setUpdatingBalance(true);
-    const res = await API.get(`/api/channel/update_balance`);
+    const res = await API.post(`/api/channel/update_balance`);
     const { success, message } = res.data;
     if (success) {
       showInfo(t('channel.messages.all_balance_updated'));
