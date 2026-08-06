@@ -77,9 +77,8 @@ func streamAgentBridge(c *gin.Context, path string, body map[string]any) {
 	c.Header("X-Accel-Buffering", "no")
 	ct := resp.Header.Get("Content-Type")
 	if ct != "" && !strings.Contains(ct, "text/event-stream") {
-		buf := new(bytes.Buffer)
-		_, _ = buf.ReadFrom(resp.Body)
-		c.JSON(http.StatusBadGateway, gin.H{"success": false, "message": "bridge returned non-SSE response"})
+		buf, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+		c.JSON(http.StatusBadGateway, gin.H{"success": false, "message": "bridge returned non-SSE response: " + string(buf)})
 		return
 	}
 	flusher, ok := c.Writer.(http.Flusher)

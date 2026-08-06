@@ -163,17 +163,24 @@ var MetricFailChanSize = env.Int("METRIC_FAIL_CHAN_SIZE", 128)
 
 // Channel health metrics: sliding window + circuit breaker
 var ChannelHealthEnabled = env.Bool("CHANNEL_HEALTH_ENABLED", true)
-var ChannelHealthWindowSize = env.Int("CHANNEL_HEALTH_WINDOW_SIZE", 20)   // 滑动窗口大小
+var ChannelHealthWindowSize = env.Int("CHANNEL_HEALTH_WINDOW_SIZE", 20)      // 滑动窗口大小
 var ChannelHealthFailWeight = env.Float64("CHANNEL_HEALTH_FAIL_WEIGHT", 3.0) // 失败权重（失败一次相当于失败权重次成功）
 var CircuitBreakerThreshold = env.Int("CIRCUIT_BREAKER_THRESHOLD", 3)        // 连续失败熔断阈值
-var CircuitBreakerCooldown = env.Int("CIRCUIT_BREAKER_COOLDOWN", 60)        // 熔断冷却时间（秒）
+var CircuitBreakerCooldown = env.Int("CIRCUIT_BREAKER_COOLDOWN", 60)         // 熔断冷却时间（秒）
 
 var InitialRootToken = os.Getenv("INITIAL_ROOT_TOKEN")
 
 var InitialRootAccessToken = os.Getenv("INITIAL_ROOT_ACCESS_TOKEN")
 
 // dyt-64: pi agent 桥接服务地址（http://127.0.0.1:3005）
-var AgentBridgeURL = os.Getenv("AGENT_BRIDGE_URL")
+// AgentBridgeURL 默认容器内自部署的 pi-bridge（同容器/同机部署无需配置）；
+// 与 entrypoint.sh 的 BRIDGE_PORT 默认值 3005 保持一致
+var AgentBridgeURL = func() string {
+	if v := os.Getenv("AGENT_BRIDGE_URL"); v != "" {
+		return v
+	}
+	return "http://127.0.0.1:3005"
+}()
 
 var GeminiVersion = env.String("GEMINI_VERSION", "v1")
 

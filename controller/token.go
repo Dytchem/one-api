@@ -90,6 +90,7 @@ func GetToken(c *gin.Context) {
 }
 
 func GetTokenStatus(c *gin.Context) {
+	// 无路由引用，保留仅因兼容旧 API 调用（部分 SDK 会轮询此端点）
 	tokenId := c.GetInt(ctxkey.TokenId)
 	userId := c.GetInt(ctxkey.Id)
 	token, err := model.GetTokenByIds(tokenId, userId)

@@ -281,7 +281,7 @@ func FetchChannelModels(c *gin.Context) {
 		}
 		defer resp.Body.Close()
 
-		body, err := io.ReadAll(resp.Body)
+		body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20)) // dyt-93: 模型列表响应限 1MB
 		if err != nil {
 			return nil, fmt.Errorf("读取响应失败: %v", err)
 		}
@@ -436,7 +436,7 @@ func FetchChannelModelsByID(c *gin.Context) {
 		}
 		defer resp.Body.Close()
 
-		body, err := io.ReadAll(resp.Body)
+		body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20)) // dyt-93: 模型列表响应限 1MB
 		if err != nil {
 			return nil, fmt.Errorf("读取响应失败: %v", err)
 		}
@@ -548,6 +548,11 @@ func UpdateChannelStatus(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"success": false, "message": "无效参数"})
 		return
 	}
+	// dyt-93: 值域校验（0/其他非法值会让渠道进入未定义状态）
+	if req.Status != model.ChannelStatusEnabled && req.Status != model.ChannelStatusManuallyDisabled && req.Status != model.ChannelStatusAutoDisabled {
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": "无效的状态值"})
+		return
+	}
 	if err := model.UpdateChannelStatus(req.Id, req.Status); err != nil {
 		c.JSON(http.StatusOK, gin.H{"success": false, "message": err.Error()})
 		return
@@ -600,8 +605,12 @@ type ChannelHealthResponse struct {
 
 // GetChannelHealth 返回所有渠道的健康度指标
 func GetChannelHealth(c *gin.Context) {
-	channels, err := model.GetAllChannels(0, 0, "all", "", "")
-	if err != nil {
+	// dyt-93: 只投影 id/status（健康面板只需要这两个），避免全量含 key 返回
+	var channels []struct {
+		Id     int `gorm:"column:id"`
+		Status int `gorm:"column:status"`
+	}
+	if err := model.DB.Model(&model.Channel{}).Select("id", "status").Find(&channels).Error; err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
 			"message": err.Error(),

@@ -180,15 +180,48 @@ func (channel *Channel) UpdateResponseTime(responseTime int64) {
 
 // dyt-93: 单字段更新（行内操作专用，避免部分 PUT 走全量 Select 把其余字段清零）
 func UpdateChannelStatus(id int, status int) error {
-	return DB.Model(&Channel{}).Where("id = ?", id).Update("status", status).Error
+	// 与 UpdateChannelStatusById 一致：同步 ability 表 + 刷新内存缓存，
+	// 否则行内禁用后健康路由仍会选中该渠道
+	err := UpdateAbilityStatus(id, status == ChannelStatusEnabled)
+	if err != nil {
+		logger.SysError("failed to update ability status: " + err.Error())
+	}
+	err = DB.Model(&Channel{}).Where("id = ?", id).Update("status", status).Error
+	if err != nil {
+		return err
+	}
+	if config.MemoryCacheEnabled {
+		InitChannelCache()
+	}
+	return nil
 }
 
 func UpdateChannelPriority(id int, priority int64) error {
-	return DB.Model(&Channel{}).Where("id = ?", id).Update("priority", priority).Error
+	// dyt-93: 同步 ability.priority（健康路由按 ability 表 MAX(priority) 选渠道），
+	// 行内改优先级立即在分配路径生效
+	err := DB.Model(&Ability{}).Where("channel_id = ?", id).Update("priority", priority).Error
+	if err != nil {
+		logger.SysError("failed to update ability priority: " + err.Error())
+	}
+	err = DB.Model(&Channel{}).Where("id = ?", id).Update("priority", priority).Error
+	if err != nil {
+		return err
+	}
+	if config.MemoryCacheEnabled {
+		InitChannelCache()
+	}
+	return nil
 }
 
 func UpdateChannelWeight(id int, weight uint) error {
-	return DB.Model(&Channel{}).Where("id = ?", id).Update("weight", weight).Error
+	err := DB.Model(&Channel{}).Where("id = ?", id).Update("weight", weight).Error
+	if err != nil {
+		return err
+	}
+	if config.MemoryCacheEnabled {
+		InitChannelCache()
+	}
+	return nil
 }
 
 func (channel *Channel) UpdateBalance(balance float64) {

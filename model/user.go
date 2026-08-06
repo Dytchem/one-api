@@ -79,10 +79,11 @@ func GetAllUsers(startIdx int, num int, order string) (users []*User, err error)
 }
 
 func SearchUsers(keyword string) (users []*User, err error) {
+	// dyt-93: 同 GetAllUsers，不返回 access_token
 	if !common.UsingPostgreSQL {
-		err = DB.Omit("password").Where("id = ? or username LIKE ? or email LIKE ? or display_name LIKE ?", keyword, keyword+"%", keyword+"%", keyword+"%").Find(&users).Error
+		err = DB.Omit("password", "access_token").Where("id = ? or username LIKE ? or email LIKE ? or display_name LIKE ?", keyword, keyword+"%", keyword+"%", keyword+"%").Find(&users).Error
 	} else {
-		err = DB.Omit("password").Where("username LIKE ? or email LIKE ? or display_name LIKE ?", keyword+"%", keyword+"%", keyword+"%").Find(&users).Error
+		err = DB.Omit("password", "access_token").Where("username LIKE ? or email LIKE ? or display_name LIKE ?", keyword+"%", keyword+"%", keyword+"%").Find(&users).Error
 	}
 	return users, err
 }

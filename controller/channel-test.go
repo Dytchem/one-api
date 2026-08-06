@@ -287,6 +287,10 @@ func testChannels(ctx context.Context, notify bool, scope string) error {
 	testAllChannelsLock.Unlock()
 	channels, err := model.GetAllChannels(0, 0, scope, "", "")
 	if err != nil {
+		// dyt-93: 失败必须复位运行锁，否则"测试已在运行中"永久卡死
+		testAllChannelsLock.Lock()
+		testAllChannelsRunning = false
+		testAllChannelsLock.Unlock()
 		return err
 	}
 	var disableThreshold = int64(config.ChannelDisableThreshold * 1000)

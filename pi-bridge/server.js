@@ -241,10 +241,38 @@ function makeTools({ getToken }) {
     tool('update_channel_balance', 'Update Channel Balance (admin)', '刷新渠道余额（管理员）', Type.Object({ id: Type.Number({ description: '渠道 ID，缺省 0 为全部' }) }), async (a) => call(`/api/channel/update_balance/${a.id || 0}`)),
     tool('delete_disabled_channels', 'Delete Disabled Channels (admin)', '删除所有已禁用渠道（管理员）', Type.Object({}), async () => call('/api/channel/disabled', { method: 'DELETE' })),
     tool('add_token', 'Add Token', '新增 API 令牌（自己的），token 对象包含 name/expired_time/remain_quota/limit_quota/model_limit_enabled 等字段', Type.Object({ token: Type.Record(Type.String(), Type.Any(), { description: '令牌配置对象' }) }), async (a) => call('/api/token/', { method: 'POST', body: a.token })),
-    tool('update_token', 'Update Token', '更新 API 令牌（自己的），token 对象必须包含 id，其余字段为要修改的内容', Type.Object({ token: Type.Record(Type.String(), Type.Any(), { description: '令牌配置对象（含 id）' }) }), async (a) => call('/api/token/', { method: 'PUT', body: a.token })),
+    tool('update_token', 'Update Token', '更新 API 令牌（自己的）：token 对象必须包含 id，其余字段为要修改的内容；内部先读取现有配置合并后全量提交，未修改字段保持不变', Type.Object({ token: Type.Record(Type.String(), Type.Any(), { description: '令牌配置对象（含 id）' }) }), async (a) => {
+      // dyt-93: 后端 PUT 是全量语义，部分提交会把 expired_time/remain_quota 等置 0
+      const cur = await call(`/api/token/${a.token.id}`);
+      try {
+        const m = cur.content?.[0]?.text?.match(/\{.*\}$/s);
+        const j = JSON.parse(m ? m[0] : '{}');
+        if (j.success && j.data && typeof j.data === 'object') {
+          const merged = { ...j.data, ...a.token };
+          return call('/api/token/', { method: 'PUT', body: merged });
+        }
+        return { content: [{ type: 'text', text: '读取令牌详情失败，无法安全更新' }], details: {} };
+      } catch (e) {
+        return { content: [{ type: 'text', text: '读取令牌详情解析失败，已取消更新以防字段被置零' }], details: {} };
+      }
+    }),
     tool('delete_token', 'Delete Token', '删除 API 令牌（自己的）', Type.Object({ id: Type.Number({ description: '令牌 ID' }) }), async (a) => call(`/api/token/${a.id}`, { method: 'DELETE' })),
     tool('add_user', 'Add User (admin)', '新增用户（管理员），user 对象包含 username/password/display_name/quota 等字段', Type.Object({ user: Type.Record(Type.String(), Type.Any(), { description: '用户配置对象' }) }), async (a) => call('/api/user/', { method: 'POST', body: a.user })),
-    tool('update_user', 'Update User (admin)', '更新用户（管理员），user 对象必须包含 id，其余字段为要修改的内容', Type.Object({ user: Type.Record(Type.String(), Type.Any(), { description: '用户配置对象（含 id）' }) }), async (a) => call('/api/user/', { method: 'PUT', body: a.user })),
+    tool('update_user', 'Update User (admin)', '更新用户（管理员）：user 对象必须包含 id，其余字段为要修改的内容；内部先读取现有配置合并后全量提交，未修改字段保持不变', Type.Object({ user: Type.Record(Type.String(), Type.Any(), { description: '用户配置对象（含 id）' }) }), async (a) => {
+      // dyt-93: 后端 PUT 为全量语义且 role/quota 差异即触发更新（部分提交会把未传字段清零/降权）
+      const cur = await call(`/api/user/${a.user.id}`);
+      try {
+        const m = cur.content?.[0]?.text?.match(/\{.*\}$/s);
+        const j = JSON.parse(m ? m[0] : '{}');
+        if (j.success && j.data && typeof j.data === 'object') {
+          const merged = { ...j.data, ...a.user, password: a.user.password || '' };
+          return call('/api/user/', { method: 'PUT', body: merged });
+        }
+        return { content: [{ type: 'text', text: '读取用户详情失败，无法安全更新' }], details: {} };
+      } catch (e) {
+        return { content: [{ type: 'text', text: '读取用户详情解析失败，已取消更新以防字段被清零' }], details: {} };
+      }
+    }),
     tool('delete_user', 'Delete User (admin)', '删除用户（管理员）', Type.Object({ id: Type.Number({ description: '用户 ID' }) }), async (a) => call(`/api/user/${a.id}`, { method: 'DELETE' })),
     tool('manage_user', 'Manage User (admin)', '管理用户（管理员）：重置密码/调整额度等，body 含 id 与要修改的字段', Type.Object({ body: Type.Record(Type.String(), Type.Any(), { description: '管理操作对象（含 id）' }) }), async (a) => call('/api/user/manage', { method: 'POST', body: a.body })),
     tool('get_options', 'System Options (admin)', '获取系统配置（管理员，只读）', Type.Object({}), async () => call('/api/option/')),

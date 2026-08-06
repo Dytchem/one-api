@@ -3,6 +3,7 @@ package model
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -49,11 +50,11 @@ func isFailContent(content string) bool {
 		strings.Contains(content, "请求失败") {
 		return true
 	}
-	if strings.Contains(content, "HTTP ") {
-		return true
-	}
-	return false
+	// dyt-93: 收紧为 "HTTP 数字"，避免误伤内容含 "HTTP " 字样的成功日志
+	return failHttpRegex.MatchString(content)
 }
+
+var failHttpRegex = regexp.MustCompile(`HTTP [1-5]\d\d`)
 
 // markLogFailed dyt-93: 失败标记写入时集中判定（消费/测试日志，以及渠道尝试系统日志）
 func markLogFailed(log *Log) {
@@ -63,14 +64,20 @@ func markLogFailed(log *Log) {
 	}
 }
 
-// BackfillFailFlags dyt-93: 一次性历史回填（升级到含 is_failed 列的版本后执行一次）
+// BackfillFailFlags dyt-93: is_failed 历史回填（只执行一次，用 option 标记）
 func BackfillFailFlags() {
+	var flag Option
+	if err := DB.Where("key = ?", "backfill_is_failed_done").First(&flag).Error; err == nil {
+		return // 已完成
+	}
 	err := LOG_DB.Model(&Log{}).
 		Where("type IN (2, 4, 5) AND is_failed = ? AND (content LIKE '%探测失败%' OR content LIKE '%回复为空%' OR content LIKE '%状态：失败%' OR content LIKE '%状态: 失败%' OR content LIKE '%请求失败%' OR content LIKE '%HTTP %')", false).
 		Update("is_failed", true).Error
 	if err != nil {
 		logger.SysError("failed to backfill is_failed flags: " + err.Error())
+		return
 	}
+	UpdateOption("backfill_is_failed_done", "1")
 }
 
 const (
@@ -93,7 +100,7 @@ func recordLogHelper(ctx context.Context, log *Log) {
 		logger.Error(ctx, "failed to record log: "+err.Error())
 		return
 	}
-	logger.Infof(ctx, "record log: %+v", log)
+	logger.Debugf(ctx, "record log: %+v", log)
 }
 
 // recordLogHelperWithId dyt-20: 返回创建的 log id
@@ -106,7 +113,7 @@ func recordLogHelperWithId(ctx context.Context, log *Log) int64 {
 		logger.Error(ctx, "failed to record log: "+err.Error())
 		return 0
 	}
-	logger.Infof(ctx, "record log: %+v", log)
+	logger.Debugf(ctx, "record log: %+v", log)
 	return int64(log.Id)
 }
 

@@ -63,10 +63,12 @@ func Init() {
 			config.SessionSecret = secret
 		} else {
 			config.SessionSecret = random.GetRandomString(32)
-			if err := os.MkdirAll(filepath.Dir(secretFile), 0755); err == nil {
-				if err := os.WriteFile(secretFile, []byte(config.SessionSecret), 0600); err != nil {
-					logger.SysError("failed to persist session secret to " + secretFile + ": " + err.Error())
-				}
+			// dyt-93: 持久化失败必须拒绝启动——否则每次重启密钥变化，所有会话静默失效
+			if err := os.MkdirAll(filepath.Dir(secretFile), 0755); err != nil {
+				logger.FatalLog("cannot create data directory for session secret (" + secretFile + "): " + err.Error())
+			}
+			if err := os.WriteFile(secretFile, []byte(config.SessionSecret), 0600); err != nil {
+				logger.FatalLog("cannot persist session secret to " + secretFile + ": " + err.Error())
 			}
 		}
 	}
