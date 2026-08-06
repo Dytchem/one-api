@@ -215,7 +215,8 @@ function makeTools({ getToken }) {
     tool('list_channels', 'Channels (admin)', '列出所有渠道（管理员）', Type.Object({}), async () => call('/api/channel/?p=0&size=100')),
     tool('get_channel', 'Channel Detail (admin)', '获取渠道详情（管理员）', Type.Object({ id: Type.Number({ description: '渠道 ID' }) }), async (a) => call(`/api/channel/${a.id}`)),
     tool('test_channel', 'Test Channel (admin)', '通过 one-api 管理 API 测试渠道连通性（管理员），会记录测试日志', Type.Object({ id: Type.Number({ description: '渠道 ID' }) }), async (a) => {
-      const r = await call(`/api/channel/test/${a.id}`);
+      // dyt-99: 后端是 POST /test/:id（GET 会 405）
+      const r = await call(`/api/channel/test/${a.id}`, { method: 'POST' });
       const raw = r.content?.[0]?.text || '';
       try {
         const m = raw.match(/\{.*\}$/s);
@@ -245,7 +246,7 @@ function makeTools({ getToken }) {
         return { content: [{ type: 'text', text: '读取渠道详情解析失败，已取消更新以防字段被清空' }], details: {} };
       }
     }),
-    tool('delete_channel', 'Delete Channel (admin)', '删除渠道（管理员）', Type.Object({ id: Type.Number({ description: '渠道 ID' }) }), async (a) => call(`/api/channel/${a.id}/`, { method: 'DELETE' })),
+    tool('delete_channel', 'Delete Channel (admin)', '删除渠道（管理员）', Type.Object({ id: Type.Number({ description: '渠道 ID' }) }), async (a) => call(`/api/channel/${a.id}`, { method: 'DELETE' })),
     tool('clone_channel', 'Clone Channel (admin)', '复制渠道（管理员）：保留全部配置与 Key 创建新渠道，新渠道默认启用（复制渠道请用本工具，不要用 add_channel 手动重建，避免密钥脱敏无法复制）', Type.Object({ id: Type.Number({ description: '要复制的渠道 ID' }) }), async (a) => call(`/api/channel/clone/${a.id}`, { method: 'POST' })),
     tool('fetch_channel_models', 'Fetch Channel Models (admin)', '从渠道上游探测模型列表（管理员）', Type.Object({ id: Type.Number({ description: '渠道 ID' }) }), async (a) => call(`/api/channel/fetch-models/${a.id}`)),
     tool('sort_channels', 'Sort Channels (admin)', '渠道排序（管理员）：body 为渠道 ID 数组，顺序即展示/分配优先级', Type.Object({ ids: Type.Array(Type.Number(), { description: '渠道 ID 数组，按期望顺序排列' }) }), async (a) => {
@@ -259,7 +260,7 @@ function makeTools({ getToken }) {
       }
       return { content: [{ type: 'text', text: '排序完成：\n' + results.join('\n') }], details: {} };
     }),
-    tool('update_channel_balance', 'Update Channel Balance (admin)', '刷新渠道余额（管理员）', Type.Object({ id: Type.Number({ description: '渠道 ID，缺省 0 为全部' }) }), async (a) => call(`/api/channel/update_balance/${a.id || 0}`)),
+    tool('update_channel_balance', 'Update Channel Balance (admin)', '刷新渠道余额（管理员）', Type.Object({ id: Type.Number({ description: '渠道 ID，缺省 0 为全部' }) }), async (a) => call(`/api/channel/update_balance/${a.id || 0}`, { method: 'POST' })),
     tool('delete_disabled_channels', 'Delete Disabled Channels (admin)', '删除所有已禁用渠道（管理员）', Type.Object({}), async () => call('/api/channel/disabled', { method: 'DELETE' })),
     tool('add_token', 'Add Token', '新增 API 令牌（自己的），token 对象包含 name/expired_time/remain_quota/limit_quota/model_limit_enabled 等字段', Type.Object({ token: Type.Record(Type.String(), Type.Any(), { description: '令牌配置对象' }) }), async (a) => call('/api/token/', { method: 'POST', body: a.token })),
     tool('update_token', 'Update Token', '更新 API 令牌（自己的）：token 对象必须包含 id，其余字段为要修改的内容；内部先读取现有配置合并后全量提交，未修改字段保持不变', Type.Object({ token: Type.Record(Type.String(), Type.Any(), { description: '令牌配置对象（含 id）' }) }), async (a) => {
