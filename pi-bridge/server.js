@@ -878,8 +878,13 @@ function loadSessions() {
       const evs = Array.isArray(rec) ? rec : (rec && rec.events) || [];
       const holder = chatSessions.get(sid) || { events: [], busy: false, subscribers: new Set(), controller: null, lastActive: Date.now() };
       holder.events = Array.isArray(evs) ? evs : [];
-      // dyt-93: 恢复 userId，保证重启后会话归属校验仍生效；旧数据无 userId 视为孤儿会话
-      if (!Array.isArray(rec) && rec && rec.userId) holder.userId = rec.userId;
+      // dyt-93: 恢复 userId，保证重启后会话归属校验仍生效；旧数据无 userId 的孤儿会话
+      // 直接丢弃（否则任意用户猜中 session_id 即可 resume 重放对话全文）
+      if (!Array.isArray(rec) && rec && rec.userId) {
+        holder.userId = rec.userId;
+      } else {
+        continue;
+      }
       holder.lastActive = holder.lastActive || Date.now();
       chatSessions.set(sid, holder);
     }
