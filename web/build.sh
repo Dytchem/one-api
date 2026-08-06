@@ -8,6 +8,6 @@ while IFS= read -r theme; do
     rm -r build/$theme
     cd "$theme"
     npm install
-    DISABLE_ESLINT_PLUGIN='true' REACT_APP_VERSION=$version npm run build
+    DISABLE_ESLINT_PLUGIN='true' REACT_APP_VERSION=$version INLINE_RUNTIME_CHUNK='false' npm run build
     cd ..
 done < THEMES

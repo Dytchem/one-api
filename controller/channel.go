@@ -653,10 +653,18 @@ func isSafeIP(ip net.IP, blockPrivate bool) bool {
 
 // newSSRFSafeClient 创建钉住已校验 IP 的 HTTP client，拨号时按序尝试固定 IP（防 DNS rebinding），
 // 同时保留 Host 头与 SNI（TLS 虚拟主机正常）。
-// 注意：显式禁用代理（Proxy: nil）——若走 HTTP(S)_PROXY，代理会自行解析 hostname，
-// 钉住的 IP 不参与拨号，DNS rebinding 防护失效。
+// 代理策略：默认禁用（HTTP_PROXY 会自行解析域名绕过钉 IP）；显式设置 FETCH_MODELS_PROXY 时走该代理。
 func newSSRFSafeClient(pinnedIPs []net.IP) *http.Client {
 	dialer := &net.Dialer{Timeout: 10 * time.Second}
+	proxyURL := http.ProxyFromEnvironment
+	if fetchProxy := os.Getenv("FETCH_MODELS_PROXY"); fetchProxy != "" {
+		if u, err := url.Parse(fetchProxy); err == nil {
+			proxyURL = http.ProxyURL(u)
+		}
+	} else {
+		// 未显式配置则禁用环境代理，保证钉 IP 生效
+		proxyURL = nil
+	}
 	return &http.Client{
 		Timeout: 15 * time.Second,
 		Transport: &http.Transport{
@@ -675,7 +683,7 @@ func newSSRFSafeClient(pinnedIPs []net.IP) *http.Client {
 				}
 				return nil, lastErr
 			},
-			Proxy:               nil,
+			Proxy:               proxyURL,
 			TLSHandshakeTimeout: 10 * time.Second,
 		},
 	}

@@ -18,7 +18,7 @@ COPY ./VERSION .
 COPY ./web .
 
 # dyt-55: 预建产物目录（.dockerignore 不再携带 web/build，mv 目标父目录需存在）
-RUN set -e && mkdir -p /web/build && DISABLE_ESLINT_PLUGIN='true' REACT_APP_VERSION=$(cat ./VERSION) npm run build --prefix /web/default
+RUN set -e && mkdir -p /web/build && DISABLE_ESLINT_PLUGIN='true' REACT_APP_VERSION=$(cat ./VERSION) INLINE_RUNTIME_CHUNK='false' npm run build --prefix /web/default
 
 # pi-bridge（内置 agent/chat 后台会话服务）：仅依赖文件变化时重装
 COPY ./pi-bridge/package.json ./pi-bridge/package-lock.json /pi-bridge/
