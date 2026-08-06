@@ -454,6 +454,7 @@ async function handleChat(req, res) {
     // 占位期（创建中）用户已点停止：本次不再执行
     if (holder.stopped) {
       holder.stopped = false;
+      holder.busy = false;
       writeSse(res, { type: 'error', message: '已停止' });
       writeSse(res, { type: 'done' });
       res.end();
