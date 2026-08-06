@@ -31,16 +31,51 @@
 
 一个 AI 网关服务：把各类模型渠道（DeepSeek、MiMo、Gemini、Agnes、OpenCode 等）统一接入，用一套令牌对外提供 OpenAI 兼容接口。
 
-Fork 自 [songquanpeng/one-api](https://github.com/songquanpeng/one-api)，在此基础上深度定制。
+Fork 自 [songquanpeng/one-api](https://github.com/songquanpeng/one-api)，在此基础上深度定制：内置 Chat 与 Agent 能力、渠道与探测机制完善、日志系统重构、安全加固、统一画布界面。
 
-## 功能
+## 主要变更（自 fork 以来）
 
-- **渠道管理**：多渠道接入、自动测速、优先级与权重、模型映射
-- **令牌管理**：一键生成多令牌，额度/速率控制，独立计费与日志
-- **内置 Chat**：网页聊天，支持多模态附件、思考等级、指定渠道
-- **内置 Agent**：网页 AI Agent，工具调用操作 one-api（查渠道、测渠道、管理渠道、查日志等），请求后台执行、断点续传
-- **统一画布**：所有设备渲染同一 1440px 画布，任意端所见一致
-- **单容器部署**：Chat/Agent 后台服务内置同一镜像，一条命令启动
+### 内置 Chat 与 Agent
+
+- **内置 Chat**：网页聊天，支持多模态附件（图片/音频/视频）、思考等级、指定渠道与令牌
+- **内置 AI Agent**：工具调用直接操作 one-api（查询/测试/管理渠道、查看日志等）
+- **后台执行**：请求在 bridge 后台运行，UI 只是订阅者——刷新/离开页面不中断生成，回来自动续传
+- **零配置部署**：Chat/Agent 服务内置同一镜像，一条命令启动
+
+### 渠道与模型
+
+- 新增 12+ 常用提供商渠道模板与模型建议
+- 支持 OpenAI Responses API
+- 模型映射可视化编辑、一键拉取模型列表
+- 渠道复制、渠道排序白名单
+- 探测与 fallback 机制完善：失败自动禁用渠道（可关闭）、空响应自动重试、tool_calls 流不再误判失败、探测超时可配置
+
+### 日志系统
+
+- 日志详情显示真实内容（探测显示请求、消费显示回复）
+- 失败请求/响应完整保留（log_payloads）+ UI 失败日志页 + 流异常检测
+- 记录 cache_read/cache_creation tokens（不计费）
+- log_payloads 自动清理（默认 7 天 TTL，`LOG_PAYLOAD_TTL_HOURS` 可配）
+- 用户断开请求时同步断开上游，新增对应日志类型
+- 日志 UI 细节：tok/s 列、列宽与对齐、状态徽章、按 attempt 拆分错误
+
+### 安全加固
+
+- 依赖升级：Go 1.22、gin、sonic、golang-jwt v5、marked
+- Dockerfile 固定基础镜像版本，可复现构建
+- CORS 白名单、SMTP TLS 严格校验、crypto/rand 替换 math/rand
+- panic 不再打印 request body、RelayTimeout 默认 300s
+- Cookie 安全配置、防邮箱枚举、禁止用户主动清 token 缓存、启动日志不打印默认密码
+
+### 界面与体验
+
+- 统一画布：所有设备渲染同一 1440px 画布，任意端所见一致
+- 手机端布局修复、页面白屏防护
+
+### 部署与运维
+
+- 自用模式：移除计费逻辑
+- 单容器部署（Chat/Agent 与网关同镜像）、CI/CD 构建优化、语义化版本管理
 
 ## 快速开始
 
@@ -59,12 +94,7 @@ docker run -d --name one-api --restart unless-stopped \
 
 ### 使用 Agent
 
-Agent 需要配置管理员令牌用于工具调用：
-
-```bash
--e ONEAPI_ADMIN_TOKEN='sk-xxxx'        # 管理员令牌（Agent 工具全权限）
--e AGENT_BRIDGE_URL='http://127.0.0.1:3005'   # 默认即可，勿改
-```
+Agent 无需额外配置：工具调用凭据使用登录用户的 access_token，模型列表自动同步。
 
 ### 代理出口
 
