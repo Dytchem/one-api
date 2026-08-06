@@ -101,7 +101,7 @@ docker run -d --name one-api --restart unless-stopped \
 
 ### 使用 Agent
 
-Agent 无需额外配置：工具调用凭据使用登录用户的 access_token，模型列表自动同步（需配置 `ONEAPI_ADMIN_TOKEN` 供 bridge 同步模型表）。
+Agent 无需额外配置：工具调用凭据与模型表同步都使用**登录用户自己的令牌**（前端自动选用当前账号的第一个可用令牌），模型列表自动同步。`ONEAPI_ADMIN_TOKEN` 仅作可选兜底（未配置也能正常工作，部署参数无需传 key）。
 
 ### 代理出口
 

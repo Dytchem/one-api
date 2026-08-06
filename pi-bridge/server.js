@@ -130,9 +130,12 @@ async function syncModels(token) {
   }
 }
 
-async function ensureModels(force) {
+// dyt-99: ensureModels 优先使用调用方传入的用户令牌同步（网页端登录用户的 key），
+// 无令牌时才回退 ONEAPI_ADMIN_TOKEN（可选兜底，部署不再强制配置）
+async function ensureModels(force, token) {
   if (fs.existsSync(MODELS_PATH) && !force && Date.now() - lastSync < 60_000) return;
-  await syncModels();
+  const n = await syncModels(token);
+  if (n > 0) console.log(`[models] synced ${n} models`);
 }
 
 // ---- 网络搜索（AnySearch MCP，匿名调用）----
@@ -373,7 +376,7 @@ async function handleChat(req, res) {
   });
 
   try {
-    await ensureModels(false);
+    await ensureModels(false, token_key);
 
     const authStorage = AuthStorage.inMemory();
     if (token_key) authStorage.setRuntimeApiKey('oneapi', token_key);
@@ -1039,5 +1042,5 @@ server.listen(PORT, '127.0.0.1', () => {
       '建议与 one-api 的 AGENT_BRIDGE_SECRET 成对配置以启用鉴权');
   }
   if (ONEAPI_ADMIN_TOKEN) syncModels();
-  else console.warn('[models] ONEAPI_ADMIN_TOKEN 未配置，模型表不会自动同步');
+  else console.log('[models] ONEAPI_ADMIN_TOKEN 未配置（可选）：模型表由登录用户令牌在首次请求时自动同步');
 });
