@@ -306,7 +306,8 @@ const Agent = () => {
         const decoder = new TextDecoder();
         let buffer = '';
         let lastData = Date.now();
-      idleGuard = setInterval(() => {
+        let idleGuard = null;
+        idleGuard = setInterval(() => {
           if (Date.now() - lastData > 60000) controller.abort();
         }, 10000);
         while (true) {
@@ -595,7 +596,7 @@ const Agent = () => {
       const decoder = new TextDecoder();
       let buffer = '';
       let lastData = Date.now();
-      const idleGuard = setInterval(() => {
+      idleGuard = setInterval(() => {
         if (Date.now() - lastData > 60000) controller.abort();
       }, 10000);
       while (true) {
