@@ -785,8 +785,9 @@ function loadSessions() {
     const raw = fs.readFileSync(SESSION_STORE, 'utf8');
     const data = JSON.parse(raw);
     for (const [sid, evs] of Object.entries(data.chat || {})) {
-      const holder = chatSessions.get(sid) || { events: [], busy: false, subscribers: new Set(), controller: null };
+      const holder = chatSessions.get(sid) || { events: [], busy: false, subscribers: new Set(), controller: null, lastActive: Date.now() };
       holder.events = Array.isArray(evs) ? evs : [];
+      holder.lastActive = holder.lastActive || Date.now();
       chatSessions.set(sid, holder);
     }
     for (const [sid, evs] of Object.entries(data.agent || {})) {
@@ -809,9 +810,13 @@ const BUSY_STALE_MS = 3600 * 1000;
 setInterval(() => {
   const cutoff = Date.now() - 24 * 3600 * 1000;
   const busyCutoff = Date.now() - BUSY_STALE_MS;
+  const abortHolder = (h) => {
+    try { h.session?.abort?.(); } catch (e) { /* ignore */ }
+    try { h.controller?.abort?.(); } catch (e) { /* ignore */ }
+  };
   for (const [sid, h] of sessions) {
     if (h.busy && h.lastActive && h.lastActive < busyCutoff) {
-      try { h.controller?.abort?.(); } catch (e) { /* ignore */ }
+      abortHolder(h);
       sessions.delete(sid);
       continue;
     }
@@ -819,7 +824,7 @@ setInterval(() => {
   }
   for (const [sid, h] of chatSessions) {
     if (h.busy && h.lastActive && h.lastActive < busyCutoff) {
-      try { h.controller?.abort?.(); } catch (e) { /* ignore */ }
+      abortHolder(h);
       chatSessions.delete(sid);
       continue;
     }

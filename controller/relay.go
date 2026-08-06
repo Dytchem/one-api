@@ -192,11 +192,14 @@ func RelayNotFound(c *gin.Context) {
 }
 
 // redactRequestBody 脱敏日志中的敏感字段（api_key / key / authorization 等），防止 DEBUG 日志泄露密钥
+var relayRedactRegex = regexp.MustCompile(`(?i)("(?:api_key|key|authorization|password|secret|token)"\s*:\s*")([^"]*)(")`)
+
 func redactRequestBody(body []byte) string {
 	s := string(body)
-	s = regexp.MustCompile(`(?i)("(?:api_key|key|authorization|password|secret|token)"\s*:\s*")([^"]*)(")`).ReplaceAllString(s, `${1}***${3}`)
-	if len(s) > 2048 {
-		s = s[:2048] + "...(truncated)"
+	s = relayRedactRegex.ReplaceAllString(s, `${1}***${3}`)
+	runes := []rune(s)
+	if len(runes) > 2048 {
+		s = string(runes[:2048]) + "...(truncated)"
 	}
 	return s
 }

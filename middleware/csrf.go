@@ -36,7 +36,12 @@ func CSRFMiddleware() gin.HandlerFunc {
 
 		// Skip for API key authenticated requests (Bearer token)
 		authHeader := c.GetHeader("Authorization")
-		if strings.HasPrefix(authHeader, "Bearer ") || strings.HasPrefix(authHeader, "sk-") {
+		authFields := strings.Fields(authHeader)
+		if len(authFields) == 2 && strings.EqualFold(authFields[0], "Bearer") {
+			c.Next()
+			return
+		}
+		if len(authFields) == 1 && strings.HasPrefix(authFields[0], "sk-") {
 			c.Next()
 			return
 		}

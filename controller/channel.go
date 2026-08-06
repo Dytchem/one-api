@@ -1,12 +1,14 @@
 package controller
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -239,7 +241,8 @@ func FetchChannelModels(c *gin.Context) {
 	}
 
 	// Validate URL to prevent SSRF
-	if err := validateURL(req.BaseURL); err != nil {
+	pinnedIP, err := validateURL(req.BaseURL)
+	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
 			"message": "无效的 API 地址: " + err.Error(),
@@ -256,10 +259,6 @@ func FetchChannelModels(c *gin.Context) {
 
 	// Helper: try one URL, return parsed models or nil+error
 	tryURL := func(modelURL string) ([]string, error) {
-		// Re-validate the constructed model URL
-		if err := validateURL(modelURL); err != nil {
-			return nil, fmt.Errorf("无效的模型接口地址: %v", err)
-		}
 		httpReq, err := http.NewRequest(http.MethodGet, modelURL, nil)
 		if err != nil {
 			return nil, fmt.Errorf("创建请求失败: %v", err)
@@ -275,7 +274,7 @@ func FetchChannelModels(c *gin.Context) {
 		httpReq.Header.Set("Content-Type", "application/json")
 		httpReq.Header.Set("Accept", "application/json")
 
-		client := &http.Client{Timeout: 15 * time.Second}
+		client := newSSRFSafeClient(pinnedIP)
 		resp, err := client.Do(httpReq)
 		if err != nil {
 			return nil, fmt.Errorf("请求目标接口失败: %v", err)
@@ -390,7 +389,8 @@ func FetchChannelModelsByID(c *gin.Context) {
 	}
 
 	// Validate base URL to prevent SSRF (even from DB, defense in depth)
-	if err := validateURL(baseURL); err != nil {
+	pinnedIP, err := validateURL(baseURL)
+	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
 			"message": "渠道配置的 API 地址无效: " + err.Error(),
@@ -415,10 +415,6 @@ func FetchChannelModelsByID(c *gin.Context) {
 	// We call ourselves by constructing a request - but since we're in the same
 	// process, let's just inline the fetch logic directly
 	tryURL := func(modelURL string) ([]string, error) {
-		// Validate model URL to prevent SSRF
-		if err := validateURL(modelURL); err != nil {
-			return nil, fmt.Errorf("无效的模型接口地址: %v", err)
-		}
 		httpReq, err := http.NewRequest(http.MethodGet, modelURL, nil)
 		if err != nil {
 			return nil, fmt.Errorf("创建请求失败: %v", err)
@@ -433,7 +429,7 @@ func FetchChannelModelsByID(c *gin.Context) {
 		httpReq.Header.Set("Content-Type", "application/json")
 		httpReq.Header.Set("Accept", "application/json")
 
-		client := &http.Client{Timeout: 15 * time.Second}
+		client := newSSRFSafeClient(pinnedIP)
 		resp, err := client.Do(httpReq)
 		if err != nil {
 			return nil, fmt.Errorf("请求目标接口失败: %v", err)
@@ -543,12 +539,12 @@ func UpdateChannel(c *gin.Context) {
 // ChannelHealthResponse 健康度指标响应
 type ChannelHealthResponse struct {
 	ChannelId   int     `json:"channel_id"`
-	Degraded    bool    `json:"degraded"`           // 是否熔断中
-	HealthScore float64 `json:"health_score"`        // 健康度 0.0~1.0
-	SuccessRate float64 `json:"success_rate"`         // 成功率 0.0~1.0
-	TokPerSec   float64 `json:"tok_per_sec"`         // 平均吞吐量 tok/s
-	AvgTTFT     int64   `json:"avg_ttft_ms"`         // 平均首次响应时间 ms
-	RecordCount int     `json:"record_count"`        // 窗口内记录数
+	Degraded    bool    `json:"degraded"`     // 是否熔断中
+	HealthScore float64 `json:"health_score"` // 健康度 0.0~1.0
+	SuccessRate float64 `json:"success_rate"` // 成功率 0.0~1.0
+	TokPerSec   float64 `json:"tok_per_sec"`  // 平均吞吐量 tok/s
+	AvgTTFT     int64   `json:"avg_ttft_ms"`  // 平均首次响应时间 ms
+	RecordCount int     `json:"record_count"` // 窗口内记录数
 }
 
 // GetChannelHealth 返回所有渠道的健康度指标
@@ -588,53 +584,88 @@ func GetChannelHealth(c *gin.Context) {
 }
 
 // validateURL validates URL to prevent SSRF attacks
-func validateURL(rawURL string) error {
+// 返回校验后的 IP（已钉住，供 DialContext 使用，防止 DNS rebinding），nil 表示校验失败
+// 默认阻断：回环/未指定/链路本地/组播/云元数据；私网（RFC1918）默认放行
+// （one-api 常见部署是对接内网 LLM 网关），可设 SSRF_BLOCK_PRIVATE=true 启用严格模式
+func validateURL(rawURL string) (net.IP, error) {
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
-		return fmt.Errorf("URL 解析失败: %v", err)
+		return nil, fmt.Errorf("URL 解析失败: %v", err)
 	}
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return fmt.Errorf("仅支持 http/https 协议")
+		return nil, fmt.Errorf("仅支持 http/https 协议")
 	}
 
 	host := parsed.Hostname()
 	if host == "" {
-		return fmt.Errorf("主机名为空")
+		return nil, fmt.Errorf("主机名为空")
 	}
+
+	blockPrivate := os.Getenv("SSRF_BLOCK_PRIVATE") == "true"
 
 	// Block localhost and loopback
 	if host == "localhost" || host == "127.0.0.1" || host == "::1" {
-		return fmt.Errorf("禁止访问本地回环地址")
+		return nil, fmt.Errorf("禁止访问本地回环地址")
 	}
 
-	// Block private IP ranges (RFC 1918)
 	ip := net.ParseIP(host)
 	if ip != nil {
-		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
-			return fmt.Errorf("禁止访问私有/内网 IP 地址")
+		if !isSafeIP(ip, blockPrivate) {
+			return nil, fmt.Errorf("禁止访问该 IP 地址")
 		}
-		// Block cloud metadata services
-		if ip.Equal(net.IPv4(169, 254, 169, 254)) || // AWS/GCP/Azure metadata
-			ip.Equal(net.IPv4(169, 254, 170, 2)) { // Azure IMDS
-			return fmt.Errorf("禁止访问云元数据服务")
-		}
+		return ip, nil
 	}
 
 	// DNS resolution check for hostnames (block private IPs via DNS)
-	if ip == nil {
-		ips, err := net.LookupIP(host)
-		if err != nil {
-			return fmt.Errorf("域名解析失败: %v", err)
-		}
-		for _, resolvedIP := range ips {
-			if resolvedIP.IsLoopback() || resolvedIP.IsPrivate() || resolvedIP.IsLinkLocalUnicast() || resolvedIP.IsLinkLocalMulticast() {
-				return fmt.Errorf("域名解析到私有/内网 IP 地址")
-			}
-			if resolvedIP.Equal(net.IPv4(169, 254, 169, 254)) || resolvedIP.Equal(net.IPv4(169, 254, 170, 2)) {
-				return fmt.Errorf("域名解析到云元数据服务")
-			}
+	ips, err := net.LookupIP(host)
+	if err != nil {
+		return nil, fmt.Errorf("域名解析失败: %v", err)
+	}
+	for _, resolvedIP := range ips {
+		if !isSafeIP(resolvedIP, blockPrivate) {
+			return nil, fmt.Errorf("域名解析到受限 IP 地址")
 		}
 	}
+	if len(ips) == 0 {
+		return nil, fmt.Errorf("域名未解析到任何 IP")
+	}
+	// 钉住第一个安全 IP，拨号时不再重新解析（防 DNS rebinding）
+	return ips[0], nil
+}
 
-	return nil
+// isSafeIP 判断 IP 是否可外访：
+// 无条件排除：回环/未指定/链路本地/组播/云元数据（169.254.0.0/16）
+// blockPrivate=true 时额外排除 RFC1918 私网
+func isSafeIP(ip net.IP, blockPrivate bool) bool {
+	if ip.IsLoopback() || ip.IsUnspecified() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast() {
+		return false
+	}
+	if ip4 := ip.To4(); ip4 != nil && ip4[0] == 169 && ip4[1] == 254 {
+		// 169.254.0.0/16 链路本地网段（含云元数据 169.254.169.254 / 169.254.170.2）
+		return false
+	}
+	if blockPrivate && ip.IsPrivate() {
+		return false
+	}
+	return true
+}
+
+// newSSRFSafeClient 创建钉住已校验 IP 的 HTTP client，拨号时使用固定 IP（防 DNS rebinding），
+// 同时保留 Host 头与 SNI（TLS 虚拟主机正常）
+func newSSRFSafeClient(pinnedIP net.IP) *http.Client {
+	dialer := &net.Dialer{Timeout: 10 * time.Second}
+	return &http.Client{
+		Timeout: 15 * time.Second,
+		Transport: &http.Transport{
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				_, port, err := net.SplitHostPort(addr)
+				if err != nil {
+					port = "443"
+				}
+				return dialer.DialContext(ctx, network, net.JoinHostPort(pinnedIP.String(), port))
+			},
+			Proxy:               http.ProxyFromEnvironment,
+			TLSHandshakeTimeout: 10 * time.Second,
+		},
+	}
 }

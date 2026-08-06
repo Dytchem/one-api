@@ -1,6 +1,8 @@
 package middleware
 
 import (
+	"os"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -11,11 +13,13 @@ func SecurityHeaders() gin.HandlerFunc {
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("X-Frame-Options", "DENY")
 		h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
-		h.Set("X-XSS-Protection", "1; mode=block")
-		// 允许 inline style（KaTeX 依赖）、图片等；仅限制脚本来源
-		h.Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; connect-src 'self' https:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
-		// HSTS：仅在 HTTPS 下启用（由反向代理 TLS 终止，此处统一设置无害）
-		h.Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		// 允许 inline style（KaTeX 依赖）、http/https 图片与 API（支持 LAN 纯 HTTP 部署）；
+		// unsafe-eval：CRA/webpack 运行时及部分库（moment/date-fns 等）依赖 new Function
+		h.Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https: http:; connect-src 'self' https: http:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'")
+		// HSTS：仅建议在 HTTPS 反代部署时启用（通过环境变量 SESSION_COOKIE_SECURE 一并控制）
+		if os.Getenv("SESSION_COOKIE_SECURE") == "true" {
+			h.Set("Strict-Transport-Security", "max-age=31536000")
+		}
 		c.Next()
 	}
 }

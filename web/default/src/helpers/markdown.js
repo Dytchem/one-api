@@ -19,10 +19,13 @@ DOMPurify.addHook('afterSanitizeAttributes', (node) => {
 });
 
 const renderFormula = (expr, displayMode) => {
+  // 含中日韩文字的片段视为普通文本（如 $中文内容$、$价格5元$），不按公式渲染
+  if (/[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]/.test(expr)) return null;
   try {
     return katex.renderToString(expr, {
       displayMode,
-      throwOnError: false,
+      // 解析失败抛异常走 catch → 原样显示，避免渲染成红色 katex-error 标记
+      throwOnError: true,
     });
   } catch (e) {
     return null;
@@ -52,9 +55,9 @@ export function renderMarkdown(content) {
     });
 
   // 3. 行内公式 $...$（首字符不限字母：支持 $3uv+p=0$、$(u+v)^3$ 等；
-  //    排除 $$ 块（块级已处理）、\$ 转义、以及 $5 / $5.99 等价格写法）或 \(...\)
+  //    排除 $$ 块（块级已处理）、\$ 转义、以及 $5 / $5.99 等价格写法；闭合 $ 后不跟数字）或 \(...\)
   out = out
-    .replace(/(^|[^\\$])\$(?!\$)([^\s$][^$\n]*?)\$(?![\d.])/g, (m, pre, expr) => {
+    .replace(/(^|[^\\$])\$(?!\$)([^\s$][^$\n]*?)\$(?!\d)/g, (m, pre, expr) => {
       const trimmed = expr.trim();
       if (/^\d+(?:[.,]\d+)*$/.test(trimmed)) return m;
       const html = renderFormula(trimmed, false);

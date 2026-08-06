@@ -4,6 +4,7 @@ import { Card, Grid, Header } from 'semantic-ui-react';
 import { API, showError, showNotice, timestamp2string } from '../../helpers';
 import { StatusContext } from '../../context/Status';
 import { marked } from 'marked';
+import DOMPurify from 'dompurify';
 import { UserContext } from '../../context/User';
 import { Link } from 'react-router-dom';
 
@@ -20,7 +21,7 @@ const Home = () => {
     if (success) {
       let oldNotice = localStorage.getItem('notice');
       if (data !== oldNotice && data !== '') {
-        const htmlNotice = marked(data);
+        const htmlNotice = DOMPurify.sanitize(marked(data));
         showNotice(htmlNotice, true);
         localStorage.setItem('notice', data);
       }
@@ -36,7 +37,7 @@ const Home = () => {
     if (success) {
       let content = data;
       if (!data.startsWith('https://')) {
-        content = marked.parse(data);
+        content = DOMPurify.sanitize(marked.parse(data));
       }
       setHomePageContent(content);
       localStorage.setItem('home_page_content', content);

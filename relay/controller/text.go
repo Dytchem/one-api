@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -33,6 +34,18 @@ import (
 	"github.com/songquanpeng/one-api/relay/model"
 	"github.com/songquanpeng/one-api/relay/relaymode"
 )
+
+// debugBodyRedactRegex 脱敏 DEBUG 日志中的请求体敏感字段（api_key / key / authorization 等）
+var debugBodyRedactRegex = regexp.MustCompile(`(?i)("(?:api_key|key|authorization|password|secret|token)"\s*:\s*")([^"]*)(")`)
+
+func redactDebugBody(body []byte) string {
+	s := debugBodyRedactRegex.ReplaceAllString(string(body), `${1}***${3}`)
+	runes := []rune(s)
+	if len(runes) > 2048 {
+		s = string(runes[:2048]) + "...(truncated)"
+	}
+	return s
+}
 
 // isProbeCompatible 探测只对 OpenAI 兼容 SSE 渠道启用。
 // 其他渠道（Anthropic/Gemini/AwsClaude/Zhipu/Ali/Baidu/Xunfei 等）的 DoRequest
@@ -756,7 +769,7 @@ func getRequestBody(c *gin.Context, meta *meta.Meta, textRequest *model.GeneralO
 		logger.Debugf(c.Request.Context(), "converted request json_ marshal_ failed: %s\n", err.Error())
 		return nil, err
 	}
-	logger.Debugf(c.Request.Context(), "converted request: \n%s", string(jsonData))
+	logger.Debugf(c.Request.Context(), "converted request: \n%s", redactDebugBody(jsonData))
 	requestBody = bytes.NewBuffer(jsonData)
 	return requestBody, nil
 }
