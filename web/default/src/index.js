@@ -43,6 +43,11 @@ function CanvasApp() {
   const location = useLocation();
 
   useEffect(() => {
+    document.body.classList.add('canvas-inner');
+    return () => document.body.classList.remove('canvas-inner');
+  }, []);
+
+  useEffect(() => {
     const report = () => {
       postHeight();
       window.parent?.postMessage(
@@ -96,7 +101,7 @@ function AppViewport() {
     }
   }, [location]);
 
-  // 接收 iframe 内部的高度与路由消息
+  // 接收 iframe 内部的高度与路由消息（即时更新）
   useEffect(() => {
     const handleMessage = (event) => {
       if (!event.data || typeof event.data !== 'object') return;
@@ -111,6 +116,20 @@ function AppViewport() {
     };
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
+  }, []);
+
+  // 同源 iframe：轮询读取内层文档真实高度，兜底修正消息同步不及时导致的裁切
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      const frame = frameRef.current;
+      if (!frame?.contentDocument) return;
+      const doc = frame.contentDocument.documentElement;
+      const height = Math.ceil(doc.scrollHeight);
+      if (height > 0) {
+        setFrameHeight(height);
+      }
+    }, 300);
+    return () => window.clearInterval(timer);
   }, []);
 
   return (

@@ -33,6 +33,11 @@ body.canvas-frame-mode {
     padding-top: 0;
 }
 
+/* 内层画布不出现内部滚动条（高度由外层精确同步，滚动交给外层） */
+body.canvas-inner {
+    overflow-y: hidden;
+}
+
 body::-webkit-scrollbar {
     display: none;
 }
