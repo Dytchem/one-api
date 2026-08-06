@@ -131,7 +131,8 @@ const Agent = () => {
       if (res.data.success) {
         const list = res.data.data || [];
         setTokens(list);
-        const usable = list.find((tk) => tk.status === 1 && tk.remain_quota > 0);
+        // dyt-93: 无限额度令牌（remain_quota=-1）也可用（原条件 remain_quota > 0 会跳过它们）
+        const usable = list.find((tk) => tk.status === 1 && (tk.remain_quota < 0 || tk.remain_quota > 0));
         const prefs = loadPrefs();
         const remembered = prefs.tokenId ? list.find((tk) => tk.id === prefs.tokenId) : null;
         setToken(remembered || usable || list[0] || null);

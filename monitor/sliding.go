@@ -11,11 +11,11 @@ import (
 
 // RequestRecord 单次请求的性能记录
 type RequestRecord struct {
-	Success         bool
-	PromptTokens    int
+	Success          bool
+	PromptTokens     int
 	CompletionTokens int
-	ElapsedMs       int64  // 总耗时（ms）
-	TTFTMs          int64  // 首个 token 等待时间（ms），0 表示非流式
+	ElapsedMs        int64 // 总耗时（ms）
+	TTFTMs           int64 // 首个 token 等待时间（ms），0 表示非流式
 }
 
 // ChannelMetrics 单个渠道的滑动窗口数据
@@ -27,14 +27,14 @@ type ChannelMetrics struct {
 	size    int             // 窗口大小
 
 	// 熔断器状态
-	consecutiveFailures int       // 连续失败计数
-	degradedSince       int64      // 进入 degraded 状态的时间戳（unix sec），0 表示正常
+	consecutiveFailures int   // 连续失败计数
+	degradedSince       int64 // 进入 degraded 状态的时间戳（unix sec），0 表示正常
 }
 
 // PerformanceStore 全局渠道性能存储
 type PerformanceStore struct {
-	mu       sync.RWMutex
-	channels map[int]*ChannelMetrics // channelId -> metrics
+	mu         sync.RWMutex
+	channels   map[int]*ChannelMetrics // channelId -> metrics
 	windowSize int
 	failWeight float64
 }
@@ -88,11 +88,11 @@ func (s *PerformanceStore) RecordRequest(channelId int, promptTokens, completion
 
 	// 写入环形缓冲区
 	m.records[m.head] = RequestRecord{
-		Success:         true,
-		PromptTokens:    promptTokens,
+		Success:          true,
+		PromptTokens:     promptTokens,
 		CompletionTokens: completionTokens,
-		ElapsedMs:       elapsedMs,
-		TTFTMs:          ttftMs,
+		ElapsedMs:        elapsedMs,
+		TTFTMs:           ttftMs,
 	}
 	m.head = (m.head + 1) % m.size
 	if m.count < m.size {
@@ -258,8 +258,10 @@ func (s *PerformanceStore) GetChannelSpeed(channelId int) float64 {
 	var totalElapsedMs int64
 	hasData := false
 
+	// dyt-93: 与 GetHealthScore 一致，从最旧到最新按写入顺序读取
+	start := (m.head - m.count + m.size) % m.size
 	for i := 0; i < m.count; i++ {
-		record := m.records[i]
+		record := m.records[(start+i)%m.size]
 		if record.Success && record.ElapsedMs > 0 && record.TTFTMs == 0 {
 			totalCompletionTokens += record.CompletionTokens
 			totalElapsedMs += record.ElapsedMs
@@ -294,8 +296,10 @@ func (s *PerformanceStore) GetRecentTTFT(channelId int) int64 {
 	var totalTTFT int64
 	var count int
 
+	// dyt-93: 从最旧到最新按写入顺序读取
+	start := (m.head - m.count + m.size) % m.size
 	for i := 0; i < m.count; i++ {
-		record := m.records[i]
+		record := m.records[(start+i)%m.size]
 		if record.Success && record.TTFTMs > 0 {
 			totalTTFT += record.TTFTMs
 			count++
@@ -327,8 +331,10 @@ func (s *PerformanceStore) GetRecentSuccessRate(channelId int) float64 {
 	defer m.mu.RUnlock()
 
 	successes := 0
+	// dyt-93: 从最旧到最新按写入顺序读取
+	start := (m.head - m.count + m.size) % m.size
 	for i := 0; i < m.count; i++ {
-		if m.records[i].Success {
+		if m.records[(start+i)%m.size].Success {
 			successes++
 		}
 	}

@@ -17,6 +17,9 @@ services:
       - REDIS_CONN_STRING=redis://redis
       # 会话签名密钥：不设置则首次启动自动生成并持久化到 ./data/oneapi/session_secret（重启不变）
       - SESSION_SECRET=${SESSION_SECRET:-}
+      # Agent / 聊天（pi-bridge）配置：容器内默认即可，无需改动
+      # - AGENT_BRIDGE_URL=http://127.0.0.1:3005
+      # - BRIDGE_PORT=3005
       - TZ=Asia/Shanghai
 #      - NODE_TYPE=slave  # 多机部署时从节点取消注释该行
 #      - SYNC_FREQUENCY=60  # 需要定期从数据库加载数据时取消注释该行

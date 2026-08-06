@@ -214,29 +214,26 @@ const ChannelsTable = () => {
         res = await API.delete(`/api/channel/${id}/`);
         break;
       case 'enable':
-        data.status = 1;
-        res = await API.put('/api/channel/', data);
+        res = await API.put('/api/channel/status', { id, status: 1 });
         break;
       case 'disable':
-        data.status = 2;
-        res = await API.put('/api/channel/', data);
+        res = await API.put('/api/channel/status', { id, status: 2 });
         break;
       case 'priority':
         if (value === '') {
           return;
         }
-        data.priority = parseInt(value);
-        res = await API.put('/api/channel/', data);
+        res = await API.put('/api/channel/priority', { id, priority: parseInt(value) });
         break;
       case 'weight':
         if (value === '') {
           return;
         }
-        data.weight = parseInt(value);
-        if (data.weight < 0) {
-          data.weight = 0;
+        let weight = parseInt(value);
+        if (weight < 0) {
+          weight = 0;
         }
-        res = await API.put('/api/channel/', data);
+        res = await API.put('/api/channel/weight', { id, weight });
         break;
       case 'clone':
         res = await API.post(`/api/channel/clone/${id}/`);
@@ -255,8 +252,8 @@ const ChannelsTable = () => {
       let realIdx = (activePage - 1) * itemsPerPage + idx;
       if (action === 'delete') {
         newChannels[realIdx].deleted = true;
-      } else {
-        newChannels[realIdx].status = channel.status;
+      } else if (action === 'enable' || action === 'disable') {
+        newChannels[realIdx].status = action === 'enable' ? 1 : 2;
       }
       setChannels(newChannels);
     } else {

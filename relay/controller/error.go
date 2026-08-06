@@ -74,8 +74,10 @@ func RelayErrorHandler(resp *http.Response) (ErrorWithStatusCode *model.ErrorWit
 	}
 	responseBody, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
+		_ = resp.Body.Close()
 		return
 	}
+	_ = resp.Body.Close()
 	if len(responseBody) == 1<<20 {
 		// 上游返回了超大错误体（WAF/代理 502 页等），截断防止内存 DoS
 		ErrorWithStatusCode.Error.Message = "upstream error response body too large (>1MB), truncated"
@@ -83,10 +85,6 @@ func RelayErrorHandler(resp *http.Response) (ErrorWithStatusCode *model.ErrorWit
 	}
 	if config.DebugEnabled {
 		logger.SysLog(fmt.Sprintf("error happened, status code: %d, response: \n%s", resp.StatusCode, string(responseBody)))
-	}
-	err = resp.Body.Close()
-	if err != nil {
-		return
 	}
 	var errResponse GeneralErrorResponse
 	err = json.Unmarshal(responseBody, &errResponse)

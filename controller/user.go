@@ -426,6 +426,16 @@ func UpdateUser(c *gin.Context) {
 		})
 		return
 	}
+	// dyt-93: 角色单独显式更新（role=0=RoleGuestUser 是合法值，Update 的零值补齐会吞掉）
+	if updatedUser.Role != originUser.Role {
+		if err := model.UpdateUserRole(updatedUser.Id, updatedUser.Role); err != nil {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": err.Error(),
+			})
+			return
+		}
+	}
 	if originUser.Quota != updatedUser.Quota {
 		// dyt-93: 额度单独显式更新（Updates 会跳过零值，无法清零）
 		if err := model.UpdateUserQuota(updatedUser.Id, updatedUser.Quota); err != nil {

@@ -39,6 +39,10 @@ func Init() {
 		os.Exit(0)
 	}
 
+	if os.Getenv("SQLITE_PATH") != "" {
+		SQLitePath = os.Getenv("SQLITE_PATH")
+	}
+
 	if os.Getenv("SESSION_SECRET") != "" {
 		if os.Getenv("SESSION_SECRET") == "random_string" {
 			logger.FatalLog("SESSION_SECRET is set to the example value \"random_string\", refusing to start. Please set a random secret (e.g. openssl rand -hex 32).")
@@ -48,11 +52,15 @@ func Init() {
 	}
 	// dyt-93: 未显式设置 SESSION_SECRET 时，从数据目录读取/生成并持久化，
 	// 保证首次启动自动生成随机密钥、重启不变（compose 不支持命令替换，不能依赖 ${VAR:-$(cmd)}）。
-	// 容器 WORKDIR=/data（持久卷）；本地运行则落在运行目录。
+	// 注意：SQLITE_PATH 解析须在 SESSION_SECRET 处理之前（上面已处理）。
 	if config.SessionSecret == "" || os.Getenv("SESSION_SECRET") == "" {
 		secretFile := filepath.Join(filepath.Dir(SQLitePath), "session_secret")
 		if data, err := os.ReadFile(secretFile); err == nil {
-			config.SessionSecret = strings.TrimSpace(string(data))
+			secret := strings.TrimSpace(string(data))
+			if secret == "" {
+				logger.FatalLog("session secret file " + secretFile + " is empty, refusing to start. Remove it to generate a new one.")
+			}
+			config.SessionSecret = secret
 		} else {
 			config.SessionSecret = random.GetRandomString(32)
 			if err := os.MkdirAll(filepath.Dir(secretFile), 0755); err == nil {
@@ -61,9 +69,6 @@ func Init() {
 				}
 			}
 		}
-	}
-	if os.Getenv("SQLITE_PATH") != "" {
-		SQLitePath = os.Getenv("SQLITE_PATH")
 	}
 	if *LogDir != "" {
 		var err error

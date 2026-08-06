@@ -159,7 +159,7 @@ func testChannel(ctx context.Context, channel *model.Channel, request *relaymode
 		}
 	}()
 
-	logger.SysLog(string(jsonData))
+	logger.SysLog(controller.RedactDebugBody(jsonData))
 	requestBody := bytes.NewBuffer(jsonData)
 	c.Request.Body = io.NopCloser(requestBody)
 	resp, err := adaptor.DoRequest(c, meta, requestBody)
@@ -294,6 +294,15 @@ func testChannels(ctx context.Context, notify bool, scope string) error {
 		disableThreshold = 10000000 // a impossible value
 	}
 	go func() {
+		// dyt-93: goroutine 加 recover，任一渠道测试 panic 不再导致 testAllChannelsRunning 永久卡死
+		defer func() {
+			if r := recover(); r != nil {
+				logger.SysError(fmt.Sprintf("testChannels panic: %v", r))
+			}
+			testAllChannelsLock.Lock()
+			testAllChannelsRunning = false
+			testAllChannelsLock.Unlock()
+		}()
 		for _, channel := range channels {
 			isChannelEnabled := channel.Status == model.ChannelStatusEnabled
 			tik := time.Now()
@@ -318,9 +327,6 @@ func testChannels(ctx context.Context, notify bool, scope string) error {
 			channel.UpdateResponseTime(milliseconds)
 			time.Sleep(config.RequestInterval)
 		}
-		testAllChannelsLock.Lock()
-		testAllChannelsRunning = false
-		testAllChannelsLock.Unlock()
 		if notify {
 			err := message.Notify(message.ByAll, "渠道测试完成", "", "渠道测试完成，如果没有收到禁用通知，说明所有渠道都正常")
 			if err != nil {

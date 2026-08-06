@@ -227,7 +227,17 @@ function makeTools({ getToken }) {
     tool('delete_channel', 'Delete Channel (admin)', '删除渠道（管理员）', Type.Object({ id: Type.Number({ description: '渠道 ID' }) }), async (a) => call(`/api/channel/${a.id}/`, { method: 'DELETE' })),
     tool('clone_channel', 'Clone Channel (admin)', '复制渠道（管理员）：保留全部配置与 Key 创建新渠道，新渠道默认启用（复制渠道请用本工具，不要用 add_channel 手动重建，避免密钥脱敏无法复制）', Type.Object({ id: Type.Number({ description: '要复制的渠道 ID' }) }), async (a) => call(`/api/channel/clone/${a.id}`, { method: 'POST' })),
     tool('fetch_channel_models', 'Fetch Channel Models (admin)', '从渠道上游探测模型列表（管理员）', Type.Object({ id: Type.Number({ description: '渠道 ID' }) }), async (a) => call(`/api/channel/fetch-models/${a.id}`)),
-    tool('sort_channels', 'Sort Channels (admin)', '渠道排序（管理员）：body 为渠道 ID 数组，顺序即展示/分配优先级', Type.Object({ ids: Type.Array(Type.Number(), { description: '渠道 ID 数组，按期望顺序排列' }) }), async (a) => call('/api/channel/sort', { method: 'POST', body: a.ids })),
+    tool('sort_channels', 'Sort Channels (admin)', '渠道排序（管理员）：body 为渠道 ID 数组，顺序即展示/分配优先级', Type.Object({ ids: Type.Array(Type.Number(), { description: '渠道 ID 数组，按期望顺序排列' }) }), async (a) => {
+      // dyt-93: Go 侧无 /api/channel/sort 接口，逐渠道更新 priority 模拟排序
+      const results = [];
+      const n = a.ids.length;
+      for (let i = 0; i < n; i++) {
+        const priority = n - i; // 首位最高
+        const r = await call('/api/channel/priority', { method: 'PUT', body: { id: a.ids[i], priority } });
+        results.push(`#${a.ids[i]}=${priority} ${r.content?.[0]?.text?.slice(0, 60) || ''}`);
+      }
+      return { content: [{ type: 'text', text: '排序完成：\n' + results.join('\n') }], details: {} };
+    }),
     tool('update_channel_balance', 'Update Channel Balance (admin)', '刷新渠道余额（管理员）', Type.Object({ id: Type.Number({ description: '渠道 ID，缺省 0 为全部' }) }), async (a) => call(`/api/channel/update_balance/${a.id || 0}`)),
     tool('delete_disabled_channels', 'Delete Disabled Channels (admin)', '删除所有已禁用渠道（管理员）', Type.Object({}), async () => call('/api/channel/disabled', { method: 'DELETE' })),
     tool('add_token', 'Add Token', '新增 API 令牌（自己的），token 对象包含 name/expired_time/remain_quota/limit_quota/model_limit_enabled 等字段', Type.Object({ token: Type.Record(Type.String(), Type.Any(), { description: '令牌配置对象' }) }), async (a) => call('/api/token/', { method: 'POST', body: a.token })),
@@ -245,7 +255,8 @@ function makeTools({ getToken }) {
     tool('list_logs', 'Logs (admin)', '查询使用日志（管理员）', Type.Object({ modelName: Type.Optional(Type.String({ description: '按模型筛选' })), channelId: Type.Optional(Type.Number({ description: '按渠道筛选' })) }), async (a) => {
       const q = new URLSearchParams({ p: '0', size: '20' });
       if (a.modelName) q.set('model_name', a.modelName);
-      if (a.channelId) q.set('channel_id', String(a.channelId));
+      // dyt-93: 后端参数名是 channel（不是 channel_id）
+      if (a.channelId) q.set('channel', String(a.channelId));
       return call(`/api/log/?${q.toString()}`);
     }),
     tool('get_fail_logs', 'Fail Logs (admin)', '查询最近失败日志（管理员）', Type.Object({}), async () => call('/api/log/fail/list?p=0&size=20')),
@@ -333,6 +344,13 @@ async function handleChat(req, res) {
     if (holder && holder.userId > 0 && Number(body.user_id) !== holder.userId) {
       // 注意：SSE 头已在上面 writeHead，这里只写事件与结束，不能再次 writeHead
       writeSse(res, { type: 'error', message: '会话不属于当前用户' });
+      writeSse(res, { type: 'done' });
+      res.end();
+      return;
+    }
+    // dyt-93: 孤儿会话（持久化恢复且无 userId 归属，旧数据）禁止继续对话
+    if (holder && !holder.pending && holder.userId <= 0) {
+      writeSse(res, { type: 'error', message: '会话已失效，请新开会话' });
       writeSse(res, { type: 'done' });
       res.end();
       return;
@@ -724,7 +742,11 @@ function handleChatResume(req, res) {
   const rawPromise = readBody(req, res).catch(() => null);
   let session_id = '';
   rawPromise.then((raw) => {
-    if (raw === null) return;
+    if (raw === null) {
+      // dyt-93: 请求被拒绝（超限）或读取出错时收尾响应，防止客户端悬挂
+      try { if (!res.writableEnded) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'bad request' })); } } catch (_) { /* ignore */ }
+      return;
+    }
     let user_id = 0;
     try {
       const p = JSON.parse(raw);
@@ -779,7 +801,10 @@ function handleChatResume(req, res) {
 function handleStop(req, res) {
   const rawPromise = readBody(req, res).catch(() => null);
   rawPromise.then((raw) => {
-    if (raw === null) return;
+    if (raw === null) {
+      try { if (!res.writableEnded) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'bad request' })); } } catch (_) { /* ignore */ }
+      return;
+    }
     let sid = '';
     let kind = 'agent';
     let user_id = 0;
@@ -820,9 +845,13 @@ function loadSessions() {
   try {
     const raw = fs.readFileSync(SESSION_STORE, 'utf8');
     const data = JSON.parse(raw);
-    for (const [sid, evs] of Object.entries(data.chat || {})) {
+    for (const [sid, rec] of Object.entries(data.chat || {})) {
+      // dyt-93: 兼容旧格式（纯数组）与新格式（{events, userId}）
+      const evs = Array.isArray(rec) ? rec : (rec && rec.events) || [];
       const holder = chatSessions.get(sid) || { events: [], busy: false, subscribers: new Set(), controller: null, lastActive: Date.now() };
       holder.events = Array.isArray(evs) ? evs : [];
+      // dyt-93: 恢复 userId，保证重启后会话归属校验仍生效；旧数据无 userId 视为孤儿会话
+      if (!Array.isArray(rec) && rec && rec.userId) holder.userId = rec.userId;
       holder.lastActive = holder.lastActive || Date.now();
       chatSessions.set(sid, holder);
     }
@@ -889,11 +918,15 @@ function scheduleSave() {
     try {
       const chat = {};
       for (const [sid, h] of chatSessions) {
-        if (h.events && h.events.length > 0) chat[sid] = h.events.slice(-MAX_EVENTS_PER_SESSION);
+        if (h.events && h.events.length > 0) {
+          // dyt-93: 持久化 userId，重启后会话归属校验仍生效
+          chat[sid] = { events: h.events.slice(-MAX_EVENTS_PER_SESSION), userId: h.userId || 0 };
+        }
       }
       // agent 会话为一次性执行上下文，且事件含工具参数/结果等敏感内容，不落盘
       fs.mkdirSync(require('path').dirname(SESSION_STORE), { recursive: true });
-      fs.writeFileSync(SESSION_STORE, JSON.stringify({ chat, agent: {} }));
+      // dyt-93: 0600（内容含用户对话全文）
+      fs.writeFileSync(SESSION_STORE, JSON.stringify({ chat, agent: {} }), { mode: 0o600 });
     } catch (e) { /* 忽略持久化失败 */ }
   }, 3000);
 }

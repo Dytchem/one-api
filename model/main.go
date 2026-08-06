@@ -156,11 +156,6 @@ func migrateDB() error {
 	if err = DB.AutoMigrate(&Log{}); err != nil {
 		return err
 	}
-	// dyt-93: is_failed 历史回填（幂等：只处理 is_failed=false 且命中失败关键字的行）
-	BackfillFailFlags()
-	if err = DB.AutoMigrate(&Channel{}); err != nil {
-		return err
-	}
 	return nil
 }
 
@@ -209,6 +204,9 @@ func migrateLOGDB() error {
 	if err = LOG_DB.AutoMigrate(&LogPayload{}); err != nil {
 		return err
 	}
+	// dyt-93: is_failed 历史回填（幂等：只处理 is_failed=false 且命中失败关键字的行）。
+	// 必须在 LOG_DB 完成迁移后执行（独立 LOG_SQL_DSN 场景下主库迁移时 LOG_DB 尚未就绪）
+	BackfillFailFlags()
 	return nil
 }
 

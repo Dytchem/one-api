@@ -538,6 +538,55 @@ func UpdateChannel(c *gin.Context) {
 	return
 }
 
+// dyt-93: 行内单字段更新专用端点（部分 PUT /api/channel/ 是全量语义，会清零未提交字段）
+func UpdateChannelStatus(c *gin.Context) {
+	var req struct {
+		Id     int `json:"id"`
+		Status int `json:"status"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.Id <= 0 {
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": "无效参数"})
+		return
+	}
+	if err := model.UpdateChannelStatus(req.Id, req.Status); err != nil {
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": ""})
+}
+
+func UpdateChannelPriority(c *gin.Context) {
+	var req struct {
+		Id       int   `json:"id"`
+		Priority int64 `json:"priority"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.Id <= 0 {
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": "无效参数"})
+		return
+	}
+	if err := model.UpdateChannelPriority(req.Id, req.Priority); err != nil {
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": ""})
+}
+
+func UpdateChannelWeight(c *gin.Context) {
+	var req struct {
+		Id     int  `json:"id"`
+		Weight uint `json:"weight"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.Id <= 0 {
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": "无效参数"})
+		return
+	}
+	if err := model.UpdateChannelWeight(req.Id, req.Weight); err != nil {
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": ""})
+}
+
 // ChannelHealthResponse 健康度指标响应
 type ChannelHealthResponse struct {
 	ChannelId   int     `json:"channel_id"`

@@ -38,7 +38,7 @@ import (
 // debugBodyRedactRegex 脱敏 DEBUG 日志中的请求体敏感字段（api_key / key / authorization 等）
 var debugBodyRedactRegex = regexp.MustCompile(`(?i)("(?:api_key|key|authorization|password|secret|token)"\s*:\s*")([^"]*)(")`)
 
-func redactDebugBody(body []byte) string {
+func RedactDebugBody(body []byte) string {
 	s := debugBodyRedactRegex.ReplaceAllString(string(body), `${1}***${3}`)
 	runes := []rune(s)
 	if len(runes) > 2048 {
@@ -769,7 +769,7 @@ func getRequestBody(c *gin.Context, meta *meta.Meta, textRequest *model.GeneralO
 		logger.Debugf(c.Request.Context(), "converted request json_ marshal_ failed: %s\n", err.Error())
 		return nil, err
 	}
-	logger.Debugf(c.Request.Context(), "converted request: \n%s", redactDebugBody(jsonData))
+	logger.Debugf(c.Request.Context(), "converted request: \n%s", RedactDebugBody(jsonData))
 	requestBody = bytes.NewBuffer(jsonData)
 	return requestBody, nil
 }

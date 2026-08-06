@@ -60,7 +60,8 @@ func GetMaxUserId() int {
 }
 
 func GetAllUsers(startIdx int, num int, order string) (users []*User, err error) {
-	query := DB.Limit(num).Offset(startIdx).Omit("password").Where("status != ?", UserStatusDeleted)
+	// dyt-93: 不返回 access_token（系统管理令牌，任一管理员拿到即可冒用他人身份）
+	query := DB.Limit(num).Offset(startIdx).Omit("password", "access_token").Where("status != ?", UserStatusDeleted)
 
 	switch order {
 	case "quota":
@@ -259,6 +260,11 @@ func UpdateUserQuota(userId int, quota int64) error {
 		}
 	}
 	return DB.Model(&User{}).Where("id = ?", userId).Update("quota", quota).Error
+}
+
+// UpdateUserRole 显式更新角色（支持降为 RoleGuestUser=0，Updates 的零值补齐会吞掉该值）
+func UpdateUserRole(userId int, role int) error {
+	return DB.Model(&User{}).Where("id = ?", userId).Update("role", role).Error
 }
 
 func (user *User) Delete() error {

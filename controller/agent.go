@@ -65,9 +65,9 @@ func streamAgentBridge(c *gin.Context, path string, body map[string]any) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		buf := new(bytes.Buffer)
-		_, _ = buf.ReadFrom(resp.Body)
-		c.JSON(resp.StatusCode, gin.H{"success": false, "message": "bridge error"})
+		// dyt-93: 错误体限 64KB（bridge 错误信息很短，防止异常大响应）
+		buf, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+		c.JSON(resp.StatusCode, gin.H{"success": false, "message": "bridge error: " + string(buf)})
 		return
 	}
 

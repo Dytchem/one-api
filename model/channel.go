@@ -150,11 +150,12 @@ func (channel *Channel) Insert() error {
 
 func (channel *Channel) Update() error {
 	var err error
-	// dyt-93: 显式 Select 更新列，使 models/group/balance 等"清空/清零"操作生效
-	// （原 Updates(struct) 会跳过零值，前端清空模型/分组会假成功）
+	// dyt-93: 显式 Select 更新列，使 models/group 等"清空"操作生效（原 Updates(struct) 会跳过零值）。
+	// balance/weight/priority 由专用单字段接口管理（status/priority/weight/余额刷新），不在此全量
+	// 更新，防止部分调用方把它们清零。key 由 UpdateChannel 空值保留逻辑保护。
 	err = DB.Model(channel).Select(
-		"type", "key", "status", "name", "weight", "base_url", "other",
-		"balance", "models", "group", "model_mapping", "priority", "config", "system_prompt",
+		"type", "key", "status", "name", "base_url", "other",
+		"models", "group", "model_mapping", "config", "system_prompt",
 	).Updates(channel).Error
 	if err != nil {
 		return err
@@ -175,6 +176,19 @@ func (channel *Channel) UpdateResponseTime(responseTime int64) {
 	if err != nil {
 		logger.SysError("failed to update response time: " + err.Error())
 	}
+}
+
+// dyt-93: 单字段更新（行内操作专用，避免部分 PUT 走全量 Select 把其余字段清零）
+func UpdateChannelStatus(id int, status int) error {
+	return DB.Model(&Channel{}).Where("id = ?", id).Update("status", status).Error
+}
+
+func UpdateChannelPriority(id int, priority int64) error {
+	return DB.Model(&Channel{}).Where("id = ?", id).Update("priority", priority).Error
+}
+
+func UpdateChannelWeight(id int, weight uint) error {
+	return DB.Model(&Channel{}).Where("id = ?", id).Update("weight", weight).Error
 }
 
 func (channel *Channel) UpdateBalance(balance float64) {
@@ -217,6 +231,10 @@ func UpdateChannelStatusById(id int, status int) {
 	err = DB.Model(&Channel{}).Where("id = ?", id).Update("status", status).Error
 	if err != nil {
 		logger.SysError("failed to update channel status: " + err.Error())
+	}
+	// dyt-93: 立即刷新内存渠道缓存（否则禁用后最长 SyncFrequency 内仍可能被选中）
+	if config.MemoryCacheEnabled {
+		InitChannelCache()
 	}
 }
 
