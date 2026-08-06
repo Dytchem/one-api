@@ -193,6 +193,7 @@ function makeTools({ getToken }) {
     tool('add_channel', 'Add Channel (admin)', '新增渠道（管理员），channel 对象包含 name/type/key/models/group/base_url 等字段', Type.Object({ channel: Type.Record(Type.String(), Type.Any(), { description: '渠道配置对象' }) }), async (a) => call('/api/channel/', { method: 'POST', body: a.channel })),
     tool('update_channel', 'Update Channel (admin)', '更新渠道（管理员），channel 对象必须包含 id，其余字段为要修改的内容；key 留空表示不修改（列表接口返回的 key 已脱敏，直接回传会误清空密钥）', Type.Object({ channel: Type.Record(Type.String(), Type.Any(), { description: '渠道配置对象（含 id）' }) }), async (a) => call('/api/channel/', { method: 'PUT', body: a.channel })),
     tool('delete_channel', 'Delete Channel (admin)', '删除渠道（管理员）', Type.Object({ id: Type.Number({ description: '渠道 ID' }) }), async (a) => call(`/api/channel/${a.id}/`, { method: 'DELETE' })),
+    tool('clone_channel', 'Clone Channel (admin)', '复制渠道（管理员）：保留全部配置与 Key 创建新渠道，新渠道默认启用（复制渠道请用本工具，不要用 add_channel 手动重建，避免密钥脱敏无法复制）', Type.Object({ id: Type.Number({ description: '要复制的渠道 ID' }) }), async (a) => call(`/api/channel/clone/${a.id}`, { method: 'POST' })),
     tool('fetch_channel_models', 'Fetch Channel Models (admin)', '从渠道上游探测模型列表（管理员）', Type.Object({ id: Type.Number({ description: '渠道 ID' }) }), async (a) => call(`/api/channel/fetch-models/${a.id}`)),
     tool('sort_channels', 'Sort Channels (admin)', '渠道排序（管理员）：body 为渠道 ID 数组，顺序即展示/分配优先级', Type.Object({ ids: Type.Array(Type.Number(), { description: '渠道 ID 数组，按期望顺序排列' }) }), async (a) => call('/api/channel/sort', { method: 'POST', body: a.ids })),
     tool('update_channel_balance', 'Update Channel Balance (admin)', '刷新渠道余额（管理员）', Type.Object({ id: Type.Number({ description: '渠道 ID，缺省 0 为全部' }) }), async (a) => call(`/api/channel/update_balance/${a.id || 0}`)),
@@ -278,6 +279,8 @@ async function handleChat(req, res) {
     }
 
     let holder = sessions.get(session_id);
+    // 工具调用凭据：当前登录用户自己的 access_token（每次 /chat 请求更新）
+    const tools = makeTools({ getToken: () => holder?.accessToken || process.env.ONEAPI_ADMIN_TOKEN || '' });
     if (!holder) {
       // compaction: pi 原生上下文压缩，保持默认开启，防止历史膨胀
       const settingsManager = SettingsManager.inMemory({});
@@ -293,9 +296,7 @@ async function handleChat(req, res) {
         thinkingLevel: 'off',
         modelRegistry,
         resourceLoader: loader,
-        // 工具调用凭据：当前登录用户自己的 access_token（每次 /chat 请求更新），
-        // 兜底使用部署配置的 ONEAPI_ADMIN_TOKEN
-        customTools: makeTools({ getToken: () => process.env.ONEAPI_ADMIN_TOKEN || holder?.accessToken || '' }),
+        customTools: tools,
         channelId: channel_id || 0,
         sessionManager: SessionManager.inMemory(),
         settingsManager,
@@ -377,6 +378,10 @@ async function handleChat(req, res) {
       if (access_token && access_token !== holder.accessToken) {
         holder.accessToken = access_token;
       }
+      // 工具集可能随版本更新：运行时同步，旧会话立即获得新工具
+      try {
+        await holder.session.setTools(tools);
+      } catch (_) { /* 忽略 */ }
     }
 
     holder.busy = true;
