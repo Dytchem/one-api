@@ -3,8 +3,9 @@ package controller
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
+	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -13,23 +14,44 @@ import (
 	"github.com/songquanpeng/one-api/model"
 )
 
+func checkTokenOwnership(c *gin.Context, tokenKey string) (int, bool) {
+	userId := c.GetInt(ctxkey.Id)
+	if tokenKey == "" {
+		return userId, true
+	}
+	token, err := model.ValidateUserToken(tokenKey)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "令牌无效"})
+		return 0, false
+	}
+	if token.UserId != userId {
+		c.JSON(http.StatusForbidden, gin.H{"success": false, "message": "令牌不属于当前用户"})
+		return 0, false
+	}
+	return userId, true
+}
+
 // streamAgentBridge: 通用 SSE 透传（客户端断开时取消对 bridge 的请求，避免资源泄漏；
 // bridge 后台执行不受影响，刷新后续传机制照常工作）
 func streamAgentBridge(c *gin.Context, path string, body map[string]any) {
-	payload, _ := json.Marshal(body)
+	payload, err := json.Marshal(body)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "internal error"})
+		return
+	}
 	httpReq, err := http.NewRequestWithContext(c.Request.Context(), http.MethodPost, config.AgentBridgeURL+path, bytes.NewReader(payload))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "internal error"})
 		return
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
-	client := &http.Client{}
+	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		if c.Request.Context().Err() != nil {
-			return // 客户端已断开，无需响应
+			return
 		}
-		c.JSON(http.StatusBadGateway, gin.H{"success": false, "message": fmt.Sprintf("Agent 服务不可达：%v", err)})
+		c.JSON(http.StatusBadGateway, gin.H{"success": false, "message": "Agent 服务不可达"})
 		return
 	}
 	defer resp.Body.Close()
@@ -37,7 +59,7 @@ func streamAgentBridge(c *gin.Context, path string, body map[string]any) {
 	if resp.StatusCode != http.StatusOK {
 		buf := new(bytes.Buffer)
 		_, _ = buf.ReadFrom(resp.Body)
-		c.JSON(resp.StatusCode, gin.H{"success": false, "message": buf.String()})
+		c.JSON(resp.StatusCode, gin.H{"success": false, "message": "bridge error"})
 		return
 	}
 
@@ -45,17 +67,26 @@ func streamAgentBridge(c *gin.Context, path string, body map[string]any) {
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
 	c.Header("X-Accel-Buffering", "no")
+	ct := resp.Header.Get("Content-Type")
+	if ct != "" && !strings.Contains(ct, "text/event-stream") {
+		buf := new(bytes.Buffer)
+		_, _ = buf.ReadFrom(resp.Body)
+		c.JSON(http.StatusBadGateway, gin.H{"success": false, "message": "bridge returned non-SSE response"})
+		return
+	}
 	flusher, ok := c.Writer.(http.Flusher)
 	if !ok {
 		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "streaming unsupported"})
 		return
 	}
 
-	buf := make([]byte, 4096)
+	buf := make([]byte, 32*1024)
 	for {
 		n, readErr := resp.Body.Read(buf)
 		if n > 0 {
-			_, _ = c.Writer.Write(buf[:n])
+			if _, werr := c.Writer.Write(buf[:n]); werr != nil {
+				return
+			}
 			flusher.Flush()
 		}
 		if readErr != nil {
@@ -93,17 +124,9 @@ func AgentChat(c *gin.Context) {
 	}
 
 	// 令牌归属校验：token_key 必须是当前登录用户自己的令牌
-	userId := c.GetInt(ctxkey.Id)
-	if req.TokenKey != "" {
-		token, err := model.ValidateUserToken(req.TokenKey)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "令牌无效：" + err.Error()})
-			return
-		}
-		if token.UserId != userId {
-			c.JSON(http.StatusForbidden, gin.H{"success": false, "message": "令牌不属于当前用户"})
-			return
-		}
+	userId, ok := checkTokenOwnership(c, req.TokenKey)
+	if !ok {
+		return
 	}
 
 	// 工具调用凭据 = 当前登录用户自己的 access_token（不生成、不覆盖），
@@ -170,17 +193,9 @@ func ChatSend(c *gin.Context) {
 	}
 
 	// 令牌归属校验：token_key 必须是当前登录用户自己的令牌
-	userId := c.GetInt(ctxkey.Id)
-	if req.TokenKey != "" {
-		token, err := model.ValidateUserToken(req.TokenKey)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "令牌无效：" + err.Error()})
-			return
-		}
-		if token.UserId != userId {
-			c.JSON(http.StatusForbidden, gin.H{"success": false, "message": "令牌不属于当前用户"})
-			return
-		}
+	userId, ok := checkTokenOwnership(c, req.TokenKey)
+	if !ok {
+		return
 	}
 	streamAgentBridge(c, "/chat/v1", map[string]any{
 		"session_id":     req.SessionId,
@@ -227,20 +242,29 @@ func ChatStop(c *gin.Context) {
 
 // stopBridge: 向 bridge 发送停止指令（非 SSE，普通 JSON 响应）
 func stopBridge(c *gin.Context, path string, body map[string]any) {
-	payload, _ := json.Marshal(body)
+	payload, err := json.Marshal(body)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "internal error"})
+		return
+	}
 	httpReq, err := http.NewRequestWithContext(c.Request.Context(), http.MethodPost, config.AgentBridgeURL+path, bytes.NewReader(payload))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "internal error"})
 		return
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(httpReq)
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"success": false, "message": fmt.Sprintf("Agent 服务不可达：%v", err)})
+		c.JSON(http.StatusBadGateway, gin.H{"success": false, "message": "Agent 服务不可达"})
 		return
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		c.JSON(resp.StatusCode, gin.H{"success": false, "message": string(respBody)})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"success": true})
 }
 

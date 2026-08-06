@@ -21,6 +21,11 @@ const ONEAPI_ADMIN_TOKEN = process.env.ONEAPI_ADMIN_TOKEN || '';
 const AGENT_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'agent');
 const MODELS_PATH = path.join(AGENT_DIR, 'models.json');
 const AUTH_PATH = path.join(AGENT_DIR, 'auth.json');
+const AGENT_EXEC_TIMEOUT_MS = 300_000;
+const MAX_EVENTS_PER_SESSION = 2000;
+const MAX_RESULT_LENGTH = 20000;
+const MAX_SEARCH_LENGTH = 12000;
+const MAX_RESPONSE_LENGTH = 12000;
 
 const SYSTEM_PROMPT = `You are an operations assistant for a one-api gateway (OpenAI-compatible API management platform).
 You can manage channels, tokens, users and view logs through the provided tools.
@@ -137,7 +142,7 @@ async function anysearchCall(toolName, args) {
     const texts = content.map((c) => (c.type === 'text' ? c.text : JSON.stringify(c))).join('\n').slice(0, 12000);
     return { content: [{ type: 'text', text: texts || '（无结果）' }], details: {} };
   } catch (e) {
-    return { content: [{ type: 'text', text: `网络搜索失败: ${e.message}` }], details: { error: e.message } };
+    return { content: [{ type: 'text', text: '网络搜索失败，请稍后重试' }], details: {} };
   }
 }
 
@@ -157,11 +162,11 @@ function makeTools({ getToken }) {
       });
       const text = await resp.text();
       return {
-        content: [{ type: 'text', text: `HTTP ${resp.status}: ${text.slice(0, 12000)}` }],
+        content: [{ type: 'text', text: `HTTP ${resp.status}: ${text.slice(0, MAX_RESPONSE_LENGTH)}` }],
         details: { status: resp.status },
       };
     } catch (e) {
-      return { content: [{ type: 'text', text: `请求 one-api 失败: ${e.message}` }], details: { error: e.message } };
+      return { content: [{ type: 'text', text: '请求 one-api 失败，请稍后重试' }], details: {} };
     }
   };
 
@@ -240,7 +245,7 @@ const sessions = new Map(); // session_id -> { session, busy }
 
 function writeSse(res, obj) {
   if (res.writableEnded) return;
-  res.write(`data: ${JSON.stringify(obj)}\n\n`);
+  try { res.write(`data: ${JSON.stringify(obj)}\n\n`); } catch (_) { /* client disconnected */ }
 }
 
 async function handleChat(req, res) {
@@ -352,7 +357,7 @@ async function handleChat(req, res) {
       session.subscribe((event) => {
         const emit = (obj) => {
           holder.events.push(obj);
-          if (holder.events.length > 2000) holder.events.shift();
+          if (holder.events.length > MAX_EVENTS_PER_SESSION) holder.events.shift();
           for (const sub of holder.subscribers) writeSse(sub, obj);
           scheduleSave();
         };
@@ -377,7 +382,7 @@ async function handleChat(req, res) {
               type: 'tool_end',
               tool: event.toolName,
               ok: !event.isError,
-              result: typeof event.result === 'string' ? event.result.slice(0, 20000) : JSON.stringify(event.result).slice(0, 20000),
+              result: typeof event.result === 'string' ? event.result.slice(0, MAX_RESULT_LENGTH) : JSON.stringify(event.result).slice(0, MAX_RESULT_LENGTH),
             });
             break;
           default:
@@ -464,12 +469,12 @@ async function handleChat(req, res) {
       await Promise.race([
         holder.session.prompt(message),
         new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('Agent 执行超时（300s），请重试')), 300_000)
+          setTimeout(() => reject(new Error('Agent 执行超时（5min），请重试')), AGENT_EXEC_TIMEOUT_MS)
         ),
       ]);
     } catch (e) {
       try { holder.session.abort(); } catch (_) { /* ignore */ }
-      if (epoch === holder.epoch) writeSse(res, { type: 'error', message: e.message || String(e) });
+      if (epoch === holder.epoch) writeSse(res, { type: 'error', message: '请求处理失败' });
     } finally {
       if (epoch === holder.epoch) {
         holder.busy = false;
@@ -483,7 +488,7 @@ async function handleChat(req, res) {
       }
     }
   } catch (e) {
-    writeSse(res, { type: 'error', message: e.message || String(e) });
+    writeSse(res, { type: 'error', message: '请求处理失败' });
     res.end();
   }
 }
@@ -606,7 +611,7 @@ async function handleChatV1(req, res) {
 
   const emit = (obj) => {
     holder.events.push(obj);
-    if (holder.events.length > 2000) holder.events.shift();
+    if (holder.events.length > MAX_EVENTS_PER_SESSION) holder.events.shift();
     holder.lastActive = Date.now();
     for (const sub of holder.subscribers) writeSse(sub, obj);
     scheduleSave();
@@ -659,7 +664,7 @@ async function handleChatV1(req, res) {
       }
     }
   } catch (e) {
-    if (e.name !== 'AbortError' && epoch === holder.epoch) emit({ type: 'error', message: e.message || String(e) });
+    if (e.name !== 'AbortError' && epoch === holder.epoch) emit({ type: 'error', message: '工具执行失败' });
   } finally {
     if (epoch === holder.epoch) {
       holder.busy = false;
@@ -811,7 +816,7 @@ function scheduleSave() {
     try {
       const chat = {};
       for (const [sid, h] of chatSessions) {
-        if (h.events && h.events.length > 0) chat[sid] = h.events.slice(-2000);
+        if (h.events && h.events.length > 0) chat[sid] = h.events.slice(-MAX_EVENTS_PER_SESSION);
       }
       // agent 会话为一次性执行上下文，且事件含工具参数/结果等敏感内容，不落盘
       fs.mkdirSync(require('path').dirname(SESSION_STORE), { recursive: true });
@@ -846,6 +851,41 @@ const server = http.createServer((req, res) => {
 
 loadSessions();
 setInterval(scheduleSave, 15000);
+
+const SESSION_MAX_IDLE = 24 * 3600 * 1000;
+const SESSION_MAX_BUSY = 60 * 60 * 1000;
+
+setInterval(() => {
+  const cutoff = Date.now() - SESSION_MAX_IDLE;
+  const busyCutoff = Date.now() - SESSION_MAX_BUSY;
+  for (const [sid, h] of sessions) {
+    if (!h.busy && h.lastActive && h.lastActive < cutoff) sessions.delete(sid);
+    else if (h.busy && h.busySince && h.busySince < busyCutoff) {
+      h.busy = false;
+      h.busySince = 0;
+      h.subscribers.clear();
+      sessions.delete(sid);
+    }
+  }
+  for (const [sid, h] of chatSessions) {
+    if (!h.busy && h.lastActive && h.lastActive < cutoff) chatSessions.delete(sid);
+  }
+}, 30 * 60 * 1000);
+
+function shutdown() {
+  console.log('[shutdown] closing server...');
+  saveTimer && clearTimeout(saveTimer);
+  for (const [, h] of sessions) {
+    try { h.session?.abort(); } catch (_) { /* ignore */ }
+  }
+  for (const [, h] of chatSessions) {
+    try { h.controller?.abort(); } catch (_) { /* ignore */ }
+  }
+  server.close(() => process.exit(0));
+  setTimeout(() => process.exit(1), 5000);
+}
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);
 
 server.listen(PORT, '127.0.0.1', () => {
   console.log(`pi-bridge listening on 127.0.0.1:${PORT}, one-api base: ${ONEAPI_BASE}`);
