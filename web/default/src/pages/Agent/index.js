@@ -1,20 +1,11 @@
 import React, { useContext, useEffect, useRef, useState } from 'react';
 import { Button, Card, Dropdown, Icon } from 'semantic-ui-react';
-import { marked } from 'marked';
 import { API, showError } from '../../helpers';
+import { renderMarkdown } from '../../helpers/markdown';
 import { UserContext } from '../../context/User';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router-dom';
 import { isAdmin } from '../../helpers';
-
-marked.setOptions({ breaks: true, gfm: true });
-
-function renderMarkdown(content) {
-  if (!content) return '';
-  let html = marked.parse(content);
-  html = html.replace(/<script[\s\S]*?<\/script>/gi, '');
-  return html;
-}
 
 function sanitizeTitle(text) {
   if (typeof text !== 'string') text = '';

@@ -1,22 +1,13 @@
 import React, { useContext, useEffect, useRef, useState } from 'react';
 import { Button, Card, Dropdown, Icon } from 'semantic-ui-react';
-import { marked } from 'marked';
 import { API, showError } from '../../helpers';
+import { renderMarkdown } from '../../helpers/markdown';
 import { UserContext } from '../../context/User';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router-dom';
 
-marked.setOptions({ breaks: true, gfm: true });
-
 const MAX_ATTACHMENTS = 4;
 const MAX_ATTACH_SIZE = 15 * 1024 * 1024;
-
-function renderMarkdown(content) {
-  if (!content) return '';
-  let html = marked.parse(content);
-  html = html.replace(/<script[\s\S]*?<\/script>/gi, '');
-  return html;
-}
 
 function sanitizeTitle(text) {
   if (typeof text !== 'string') text = '';
