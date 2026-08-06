@@ -74,18 +74,28 @@ async function syncModels(token) {
       id: m.id,
       ...(MODEL_OVERRIDES[m.id] || {}),
     }));
+    // 与现有表合并（union）：多用户/多分组模型的可见性互不覆盖
+    let merged = models;
+    try {
+      const oldCfg = JSON.parse(fs.readFileSync(MODELS_PATH, 'utf8'));
+      const oldModels = oldCfg.providers?.oneapi?.models || [];
+      const seen = new Set(models.map((m) => m.id));
+      merged = [...oldModels.filter((m) => !seen.has(m.id)), ...models];
+    } catch (_) { /* 首次同步无需合并 */ }
     const cfg = {
       providers: {
         oneapi: {
           baseUrl: `${ONEAPI_BASE}/v1`,
           api: 'openai-completions',
           apiKey: 'oneapi-bridge-placeholder',
-          models,
+          models: merged,
           compat: { supportsDeveloperRole: false },
         },
       },
     };
-    fs.writeFileSync(MODELS_PATH, JSON.stringify(cfg, null, 2));
+    // 原子写入：临时文件 + rename，避免写一半损坏模型表
+    fs.writeFileSync(MODELS_PATH + '.tmp', JSON.stringify(cfg, null, 2));
+    fs.renameSync(MODELS_PATH + '.tmp', MODELS_PATH);
     lastSync = Date.now();
     console.log(`[models] synced ${models.length} models`);
     return models.length;
@@ -281,7 +291,7 @@ async function handleChat(req, res) {
     let holder = sessions.get(session_id);
     // 会话归属校验：session_id 绑定的用户必须与请求用户一致，防止跨用户会话窃取
     if (holder && holder.userId && body.user_id && holder.userId !== body.user_id) {
-      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
+      // 注意：SSE 头已在上面 writeHead，这里只写事件与结束，不能再次 writeHead
       writeSse(res, { type: 'error', message: '会话不属于当前用户' });
       writeSse(res, { type: 'done' });
       res.end();
@@ -375,11 +385,28 @@ async function handleChat(req, res) {
         }
       });
       } catch (e) {
-        // 创建失败：清理占位，避免悬挂的 busy 会话
+        // 创建失败：清理占位，给占位期挂上的订阅者收尾，避免前端悬挂
         sessions.delete(session_id);
+        for (const sub of placeholder.subscribers) {
+          try { writeSse(sub, { type: 'error', message: '会话创建失败' }); sub.end(); } catch (_) { /* ignore */ }
+        }
         throw e;
       }
     } else {
+      // 占位期（会话创建中）：等待创建完成，避免对半成品报错
+      if (holder.pending) {
+        const t0 = Date.now();
+        while (holder.pending && Date.now() - t0 < 30000) {
+          await new Promise((r) => setTimeout(r, 200));
+          holder = sessions.get(session_id);
+          if (!holder) break;
+        }
+        if (!holder || holder.pending) {
+          writeSse(res, { type: 'error', message: '会话创建中，请稍后重试' });
+          res.end();
+          return;
+        }
+      }
       if (holder.busy) {
         // 上一轮仍在执行（页面刷新后重发等）：中止旧执行，新消息取代之
         // pi 会话保留全部历史，abort 后可直接 prompt 新消息
@@ -424,6 +451,14 @@ async function handleChat(req, res) {
     // epoch：本执行代次；被新消息取代后旧执行的 finally 不再触碰新状态
     holder.epoch = (holder.epoch || 0) + 1;
     const epoch = holder.epoch;
+    // 占位期（创建中）用户已点停止：本次不再执行
+    if (holder.stopped) {
+      holder.stopped = false;
+      writeSse(res, { type: 'error', message: '已停止' });
+      writeSse(res, { type: 'done' });
+      res.end();
+      return;
+    }
     try {
       await Promise.race([
         holder.session.prompt(message),
@@ -537,7 +572,7 @@ async function handleChatV1(req, res) {
   });
   let holder = chatSessions.get(session_id);
   if (holder && holder.userId && user_id && holder.userId !== user_id) {
-    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
+    // 注意：SSE 头已在上面 writeHead，这里只写事件与结束，不能再次 writeHead
     writeSse(res, { type: 'error', message: '会话不属于当前用户' });
     writeSse(res, { type: 'done' });
     res.end();
@@ -715,6 +750,9 @@ function handleStop(req, res) {
         res.end(JSON.stringify({ error: 'session belongs to another user' }));
         return;
       }
+      // 递增 epoch：使正在执行/等待执行的 finally 失去代次；stopped 标记阻止占位期后开始执行
+      holder.epoch = (holder.epoch || 0) + 1;
+      holder.stopped = true;
       try { holder.session?.abort(); } catch (_) { /* ignore */ }
       try { holder.controller?.abort(); } catch (_) { /* ignore */ }
       const subs = [...holder.subscribers];
@@ -754,6 +792,17 @@ function loadSessions() {
 }
 
 let saveTimer = null;
+// 定期清理：24 小时无活跃的会话，防止内存与事件无限增长（busy 会话不清）
+setInterval(() => {
+  const cutoff = Date.now() - 24 * 3600 * 1000;
+  for (const [sid, h] of sessions) {
+    if (!h.busy && h.lastActive && h.lastActive < cutoff) sessions.delete(sid);
+  }
+  for (const [sid, h] of chatSessions) {
+    if (!h.busy && h.lastActive && h.lastActive < cutoff) chatSessions.delete(sid);
+  }
+}, 3600 * 1000);
+
 function scheduleSave() {
   if (saveTimer) return;
   saveTimer = setTimeout(() => {
@@ -763,12 +812,9 @@ function scheduleSave() {
       for (const [sid, h] of chatSessions) {
         if (h.events && h.events.length > 0) chat[sid] = h.events.slice(-2000);
       }
-      const agent = {};
-      for (const [sid, h] of sessions) {
-        if (h.events && h.events.length > 0) agent[sid] = h.events.slice(-2000);
-      }
+      // agent 会话为一次性执行上下文，且事件含工具参数/结果等敏感内容，不落盘
       fs.mkdirSync(require('path').dirname(SESSION_STORE), { recursive: true });
-      fs.writeFileSync(SESSION_STORE, JSON.stringify({ chat, agent }));
+      fs.writeFileSync(SESSION_STORE, JSON.stringify({ chat, agent: {} }));
     } catch (e) { /* 忽略持久化失败 */ }
   }, 3000);
 }

@@ -10,6 +10,14 @@ import 'katex/dist/katex.min.css';
 
 marked.setOptions({ breaks: true, gfm: true });
 
+// KaTeX 渲染依赖内联 style 定位（上标/分数/间距），必须保留；
+// 其余节点一律移除 style 属性，防止 UI 劫持类样式注入
+DOMPurify.addHook('afterSanitizeAttributes', (node) => {
+  if (node.hasAttribute && node.hasAttribute('style') && node.closest && !node.closest('.katex')) {
+    node.removeAttribute('style');
+  }
+});
+
 const renderFormula = (expr, displayMode) => {
   try {
     return katex.renderToString(expr, {
@@ -62,6 +70,7 @@ export function renderMarkdown(content) {
   return DOMPurify.sanitize(html, {
     USE_PROFILES: { html: true },
     FORBID_TAGS: ['style', 'form', 'input', 'button', 'iframe', 'object', 'embed', 'link', 'meta', 'base'],
-    FORBID_ATTR: ['onerror', 'onload', 'onclick', 'onmouseover', 'onfocus', 'onblur', 'onchange', 'onsubmit', 'onkeydown', 'onkeyup', 'onkeypress', 'style'],
+    // 事件属性一律移除；style 交给上面的 hook 处理（仅 KaTeX 保留）
+    FORBID_ATTR: ['onerror', 'onload', 'onclick', 'onmouseover', 'onfocus', 'onblur', 'onchange', 'onsubmit', 'onkeydown', 'onkeyup', 'onkeypress'],
   });
 }
