@@ -303,7 +303,8 @@ const Chat = () => {
   }, [sessions, streaming]);
 
   // 订阅模型：后台（bridge）一直在执行并广播事件，本页只是订阅者。
-  // 会话处于生成中（streaming）时：挂载/切换会话即重新订阅——
+  // 仅在挂载/切换会话时重新订阅（依赖不含 streaming，避免 send 设置 streaming 触发重复订阅）：
+  // 会话处于生成中（streaming）时——
   // 重放已产生的事件（先清一次半成品再重放，避免重复），随后实时续推。
   // 刷新不影响后台执行；订阅失败则静默收尾（保留已收到内容，不报错）。
   useEffect(() => {
@@ -406,7 +407,10 @@ const Chat = () => {
           }
         }
       } catch (err) {
-        if (err.name !== 'AbortError') finishSilently();
+        const emsg = String(err && err.message ? err.message : err);
+        if (err.name !== 'AbortError' && !/input stream|Failed to fetch|network/i.test(emsg)) {
+          finishSilently();
+        }
       } finally {
         clearInterval(idleGuard);
         if (resumeControllerRef.current === controller) resumeControllerRef.current = null;
@@ -415,7 +419,7 @@ const Chat = () => {
     doResume();
     return () => controller.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeId, token, activeSession?.streaming]);
+  }, [activeId, token]);
 
   const newSession = () => {
     const session = {
@@ -674,7 +678,13 @@ const Chat = () => {
         }
       }
     } catch (err) {
-      if (err.name !== 'AbortError') {
+      const emsg = String(err && err.message ? err.message : err);
+      if (err.name === 'AbortError') {
+        // 用户点击停止：stop() 已标记完成
+      } else if (/input stream|Failed to fetch|network/i.test(emsg)) {
+        // 连接中断（页面刷新/网络抖动）：后台仍在执行，保持生成状态，
+        // 刷新后自动重新订阅续传，不显示错误
+      } else {
         updateSessionMessages(
           id,
           (msgs) => {
@@ -683,7 +693,7 @@ const Chat = () => {
             if (last && last.role === 'assistant' && !last.finished) {
               copy[copy.length - 1] = {
                 ...last,
-                content: last.content || `请求失败：${err.message}`,
+                content: last.content || `请求失败：${emsg}`,
                 error: true,
                 finished: true,
               };
