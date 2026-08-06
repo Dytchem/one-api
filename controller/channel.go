@@ -241,7 +241,7 @@ func FetchChannelModels(c *gin.Context) {
 	}
 
 	// Validate URL to prevent SSRF
-	pinnedIP, err := validateURL(req.BaseURL)
+	pinnedIPs, err := validateURL(req.BaseURL)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
@@ -274,7 +274,7 @@ func FetchChannelModels(c *gin.Context) {
 		httpReq.Header.Set("Content-Type", "application/json")
 		httpReq.Header.Set("Accept", "application/json")
 
-		client := newSSRFSafeClient(pinnedIP)
+		client := newSSRFSafeClient(pinnedIPs)
 		resp, err := client.Do(httpReq)
 		if err != nil {
 			return nil, fmt.Errorf("请求目标接口失败: %v", err)
@@ -389,7 +389,7 @@ func FetchChannelModelsByID(c *gin.Context) {
 	}
 
 	// Validate base URL to prevent SSRF (even from DB, defense in depth)
-	pinnedIP, err := validateURL(baseURL)
+	pinnedIPs, err := validateURL(baseURL)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
@@ -429,7 +429,7 @@ func FetchChannelModelsByID(c *gin.Context) {
 		httpReq.Header.Set("Content-Type", "application/json")
 		httpReq.Header.Set("Accept", "application/json")
 
-		client := newSSRFSafeClient(pinnedIP)
+		client := newSSRFSafeClient(pinnedIPs)
 		resp, err := client.Do(httpReq)
 		if err != nil {
 			return nil, fmt.Errorf("请求目标接口失败: %v", err)
@@ -584,10 +584,10 @@ func GetChannelHealth(c *gin.Context) {
 }
 
 // validateURL validates URL to prevent SSRF attacks
-// 返回校验后的 IP（已钉住，供 DialContext 使用，防止 DNS rebinding），nil 表示校验失败
+// 返回校验通过的全部 IP（已钉住，供 DialContext 使用，防止 DNS rebinding），nil 表示校验失败
 // 默认阻断：回环/未指定/链路本地/组播/云元数据；私网（RFC1918）默认放行
 // （one-api 常见部署是对接内网 LLM 网关），可设 SSRF_BLOCK_PRIVATE=true 启用严格模式
-func validateURL(rawURL string) (net.IP, error) {
+func validateURL(rawURL string) ([]net.IP, error) {
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
 		return nil, fmt.Errorf("URL 解析失败: %v", err)
@@ -613,7 +613,7 @@ func validateURL(rawURL string) (net.IP, error) {
 		if !isSafeIP(ip, blockPrivate) {
 			return nil, fmt.Errorf("禁止访问该 IP 地址")
 		}
-		return ip, nil
+		return []net.IP{ip}, nil
 	}
 
 	// DNS resolution check for hostnames (block private IPs via DNS)
@@ -621,16 +621,17 @@ func validateURL(rawURL string) (net.IP, error) {
 	if err != nil {
 		return nil, fmt.Errorf("域名解析失败: %v", err)
 	}
+	var safeIPs []net.IP
 	for _, resolvedIP := range ips {
-		if !isSafeIP(resolvedIP, blockPrivate) {
-			return nil, fmt.Errorf("域名解析到受限 IP 地址")
+		if isSafeIP(resolvedIP, blockPrivate) {
+			safeIPs = append(safeIPs, resolvedIP)
 		}
 	}
-	if len(ips) == 0 {
-		return nil, fmt.Errorf("域名未解析到任何 IP")
+	if len(safeIPs) == 0 {
+		return nil, fmt.Errorf("域名未解析到任何可访问的 IP")
 	}
-	// 钉住第一个安全 IP，拨号时不再重新解析（防 DNS rebinding）
-	return ips[0], nil
+	// 钉住全部安全 IP，拨号时按序尝试、不再重新解析（防 DNS rebinding）
+	return safeIPs, nil
 }
 
 // isSafeIP 判断 IP 是否可外访：
@@ -650,9 +651,11 @@ func isSafeIP(ip net.IP, blockPrivate bool) bool {
 	return true
 }
 
-// newSSRFSafeClient 创建钉住已校验 IP 的 HTTP client，拨号时使用固定 IP（防 DNS rebinding），
-// 同时保留 Host 头与 SNI（TLS 虚拟主机正常）
-func newSSRFSafeClient(pinnedIP net.IP) *http.Client {
+// newSSRFSafeClient 创建钉住已校验 IP 的 HTTP client，拨号时按序尝试固定 IP（防 DNS rebinding），
+// 同时保留 Host 头与 SNI（TLS 虚拟主机正常）。
+// 注意：显式禁用代理（Proxy: nil）——若走 HTTP(S)_PROXY，代理会自行解析 hostname，
+// 钉住的 IP 不参与拨号，DNS rebinding 防护失效。
+func newSSRFSafeClient(pinnedIPs []net.IP) *http.Client {
 	dialer := &net.Dialer{Timeout: 10 * time.Second}
 	return &http.Client{
 		Timeout: 15 * time.Second,
@@ -662,9 +665,17 @@ func newSSRFSafeClient(pinnedIP net.IP) *http.Client {
 				if err != nil {
 					port = "443"
 				}
-				return dialer.DialContext(ctx, network, net.JoinHostPort(pinnedIP.String(), port))
+				var lastErr error
+				for _, ip := range pinnedIPs {
+					conn, err := dialer.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
+					if err == nil {
+						return conn, nil
+					}
+					lastErr = err
+				}
+				return nil, lastErr
 			},
-			Proxy:               http.ProxyFromEnvironment,
+			Proxy:               nil,
 			TLSHandshakeTimeout: 10 * time.Second,
 		},
 	}

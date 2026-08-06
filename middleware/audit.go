@@ -11,28 +11,45 @@ import (
 	"github.com/songquanpeng/one-api/common/logger"
 )
 
-var sensitiveFieldRegex = regexp.MustCompile(`(?i)("(?:key|password|secret|access_token|authorization|token)"\s*:\s*")[^"]*(")`)
+var sensitiveFieldRegex = regexp.MustCompile(`(?i)("(?:password|secret|access_token|authorization|api_key)"\s*:\s*")([^"]*)(")`)
+
+// 渠道/令牌类 key 字段：sk- 前缀或任意非空值（仅用于非 option 结构）
+var channelKeyRegex = regexp.MustCompile(`(?i)("key"\s*:\s*")([^"]*)(")`)
 
 // option 配置项中需要打码 value 的敏感 key（按后缀匹配）
-var sensitiveOptionKeyRegex = regexp.MustCompile(`(?i)(secret|token|key|password|dsn|client_id)`)
+var sensitiveOptionKeyRegex = regexp.MustCompile(`(?i)(secret|token|password|dsn)`)
+
+// option 更新请求结构：{"key":"...","value":"..."}（容忍字段顺序任意、字段间插）
+var optionBodyRegex = regexp.MustCompile(`(?i)"key"\s*:\s*"([^"]*)"`)
+var optionValueRegex = regexp.MustCompile(`(?i)"value"\s*:\s*"[^"]*"`)
+var optionValuePresenceRegex = regexp.MustCompile(`(?i)"value"\s*:`)
+
+var auditFormFieldRegex = regexp.MustCompile(`(?i)(api_key|password|secret|token|authorization)=[^&\s]+`)
 
 // redactBody 对审计日志中的请求体脱敏：
-// 1. JSON 字段 key/password/secret/token 等 → 值打码
-// 2. option 更新请求 {"key":"SMTPToken","value":"xxx"} → key 命中敏感名单时 value 打码
-// 3. 表单编码 api_key=xxx 形式 → 打码
+//  1. option 更新请求 {"key":"SMTPToken","value":"xxx"} → key 命中敏感名单时 value 打码
+//     （先处理 option，避免通用 key 正则把 option 的 key 字段先打成 *** 导致判断失效）
+//  2. 通用 JSON 字段 password/secret/token 等 → 值打码
+//  3. 表单编码 api_key=xxx 形式 → 打码
 func redactBody(raw []byte) string {
 	s := string(raw)
-	s = sensitiveFieldRegex.ReplaceAllString(s, `${1}***${3}`)
-	// {"key":"...","value":"..."} 结构
-	s = regexp.MustCompile(`(?i)("key"\s*:\s*")([^"]*)(",\s*"value"\s*:\s*")([^"]*)(")`).ReplaceAllStringFunc(s, func(m string) string {
-		parts := regexp.MustCompile(`(?i)("key"\s*:\s*")([^"]*)(",\s*"value"\s*:\s*")([^"]*)(")`).FindStringSubmatch(m)
-		if len(parts) == 6 && sensitiveOptionKeyRegex.MatchString(parts[2]) {
-			return parts[1] + parts[2] + parts[3] + "***" + parts[5]
+
+	// 先识别 option 结构：提取 key 判断是否敏感，敏感则把整个 value 字段打码
+	keyMatch := optionBodyRegex.FindStringSubmatch(s)
+	isOptionStruct := len(keyMatch) == 2 && optionValuePresenceRegex.MatchString(s)
+	if isOptionStruct {
+		if sensitiveOptionKeyRegex.MatchString(keyMatch[1]) {
+			s = optionValueRegex.ReplaceAllString(s, `"value":"***"`)
 		}
-		return m
-	})
-	// 表单编码
-	s = regexp.MustCompile(`(?i)(api_key|password|secret|token|key)=[^&\s]+`).ReplaceAllString(s, `${1}=***`)
+	} else {
+		// 非 option 结构（渠道/令牌等）：key 字段一律打码（多为 sk- 密钥）
+		s = channelKeyRegex.ReplaceAllString(s, `${1}***${3}`)
+	}
+
+	// 再通用脱敏
+	s = sensitiveFieldRegex.ReplaceAllString(s, `${1}***${3}`)
+	s = auditFormFieldRegex.ReplaceAllString(s, `${1}=***`)
+
 	// 按 rune 截断，避免切坏 UTF-8
 	runes := []rune(s)
 	if len(runes) > 1024 {
