@@ -29,9 +29,10 @@ jobs:
 
       - name: Set version from input
         if: inputs.version != ''
-        # dyt-96: 输入经正则校验后再写入（防止 workflow_dispatch 输入被 shell 解释）
+        # dyt-96/99: 输入经正则校验后再写入（防止 workflow_dispatch 输入被 shell 解释）
+        # 支持 v1.2.3 与 v0.6.11-dyt-98 等带后缀格式
         run: |
-          if [[ "${{ inputs.version }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          if [[ "${{ inputs.version }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
             echo "${{ inputs.version }}" > VERSION
           else
             echo "invalid version input: ${{ inputs.version }}" >&2
