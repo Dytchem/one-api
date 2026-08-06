@@ -46,6 +46,10 @@ func streamAgentBridge(c *gin.Context, path string, body map[string]any) {
 		return
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
+	if config.AgentBridgeSecret != "" {
+		// dyt-96: bridge 共享密钥鉴权（必须与 stopBridge 同步加头，否则 bridge 401）
+		httpReq.Header.Set("X-Bridge-Token", config.AgentBridgeSecret)
+	}
 	// 注意：SSE 透传不能用总超时（bridge 侧 Agent 最长执行 5 分钟，30s 总超时会掐断长回复），
 	// 依赖 c.Request.Context() 在客户端断开时取消；
 	// 但拨号与响应头仍设超时，避免 bridge 半开/无响应时无限等待
