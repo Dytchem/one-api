@@ -201,9 +201,11 @@ async function handleChat(req, res) {
   }
   const { session_id, model, message, token_key, access_token, channel_id, thinking_level } = body;
   console.log(`[/chat] session=${session_id} model=${model} msg=${String(message || '').slice(0, 50)} channel=${channel_id || '-'}`);
-  // 模型表用登录用户的令牌同步（无需部署配置管理员凭据）
+  // 模型表用登录用户的令牌同步：首次/过期时【同步等待】完成，确保 find 前表已就绪
+  // （此前为异步不等待，首次请求时表尚未生成导致误报"模型不在模型表中"，重试才成功）
   if (token_key && (Date.now() - lastSync > 60_000 || !fs.existsSync(MODELS_PATH))) {
-    syncModels(token_key).then((n) => console.log(`[models] synced ${n} via user token`));
+    const n = await syncModels(token_key);
+    console.log(`[models] synced ${n} via user token`);
   }
   if (!session_id || !model || !message) {
     res.writeHead(400, { 'Content-Type': 'application/json' });
