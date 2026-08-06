@@ -64,8 +64,22 @@ func (a *Adaptor) GetRequestURL(meta *meta.Meta) (string, error) {
 }
 
 func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Request, meta *meta.Meta) error {
-	for k, v := range c.Request.Header {
-		req.Header.Set(k, v[0])
+	// dyt-96: 只透传标准内容类 header（Authorization 等鉴权头一律由渠道密钥覆盖，
+	// 防止用户自定义 header 攻击上游/绕过网关鉴权）
+	allowlist := []string{
+		"Content-Type",
+		"Accept",
+		"Accept-Language",
+		"User-Agent",
+		"X-Request-Id",
+	}
+	for k := range c.Request.Header {
+		for _, allow := range allowlist {
+			if strings.EqualFold(k, allow) {
+				req.Header.Set(k, c.Request.Header.Get(k))
+				break
+			}
+		}
 	}
 
 	// remove unnecessary headers

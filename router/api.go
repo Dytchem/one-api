@@ -55,7 +55,8 @@ func SetApiRouter(router *gin.Engine) {
 				selfRoute.GET("/self", controller.GetSelf)
 				selfRoute.PUT("/self", controller.UpdateSelf)
 				selfRoute.DELETE("/self", controller.DeleteSelf)
-				selfRoute.GET("/token", controller.GenerateAccessToken)
+				// dyt-96: GET→POST（GET 有轮换 access_token 的副作用，可被跨站触发凭证轮换）
+				selfRoute.POST("/token", controller.GenerateAccessToken)
 				selfRoute.GET("/available_models", controller.GetUserAvailableModels)
 			}
 

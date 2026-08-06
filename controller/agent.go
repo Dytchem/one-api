@@ -260,6 +260,10 @@ func stopBridge(c *gin.Context, path string, body map[string]any) {
 		return
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
+	if config.AgentBridgeSecret != "" {
+		// dyt-96: bridge 共享密钥鉴权
+		httpReq.Header.Set("X-Bridge-Token", config.AgentBridgeSecret)
+	}
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(httpReq)
 	if err != nil {

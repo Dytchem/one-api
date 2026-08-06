@@ -12,7 +12,7 @@ import {
 import { Link } from 'react-router-dom';
 import { API, showError, showSuccess, verifyJSON } from '../helpers';
 import { marked } from 'marked';
-import { APP_VERSION, APP_REPO_API_URL, APP_REPO_URL } from '../constants';
+import { APP_VERSION, APP_REPO_API_URL, APP_REPO_RELEASES_URL, APP_REPO_URL } from '../constants';
 
 const OtherSetting = () => {
   const { t } = useTranslation();

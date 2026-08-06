@@ -39,7 +39,8 @@ func SetupLogger() {
 			} else {
 				logPath = filepath.Join(LogDir, fmt.Sprintf("oneapi-%s.log", time.Now().Format("20060102")))
 			}
-			fd, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+			// dyt-96: 日志含请求内容，0600 防止同机其他用户读取
+			fd, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 			if err != nil {
 				log.Fatal("failed to open log file")
 			}

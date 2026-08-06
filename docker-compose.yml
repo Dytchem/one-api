@@ -1,4 +1,8 @@
 
+# dyt-96: 数据库口令不再提供默认值 —— 未显式设置时整个服务拒绝启动
+#（防"公开默认弱口令 → 攻破 MySQL → 全库渠道密钥/对话内容泄露"链路）
+# 使用前必须：
+#   cp .env.example .env && 编辑 .env 设置 MYSQL_PASSWORD / MYSQL_ROOT_PASSWORD / SESSION_SECRET
 services:
   one-api:
     image: "${REGISTRY:-ghcr.io}/dytchem/one-api:latest"
@@ -11,14 +15,15 @@ services:
       - ./data/oneapi:/data
       - ./logs:/app/logs
     environment:
-      # 数据库连接串：可注释掉以使用 SQLite（数据存 /data）
-      - SQL_DSN=${MYSQL_DSN:-oneapi:${MYSQL_PASSWORD:-123456}@tcp(db:3306)/one-api}
+      # 数据库连接串：数据库口令强制从 .env 注入（缺失时报错退出）
+      - SQL_DSN=${MYSQL_DSN:?请先在 .env 中设置 MYSQL_DSN 或 MYSQL_PASSWORD}
       - REDIS_CONN_STRING=redis://redis
       # 会话签名密钥：不设置则首次启动自动生成并持久化到 ./data/oneapi/session_secret（重启不变）
       - SESSION_SECRET=${SESSION_SECRET:-}
-      # Agent / 聊天（pi-bridge）配置：容器内默认即可，无需改动
-      # - AGENT_BRIDGE_URL=http://127.0.0.1:3005  # 默认已指向同容器 bridge，无需设置
-      # - BRIDGE_PORT=3005
+      # Agent / 聊天（pi-bridge）配置：与 pi-bridge 容器共享的密钥，缺失时 bridge 拒绝服务
+      - AGENT_BRIDGE_SECRET=${AGENT_BRIDGE_SECRET:-}
+      # Agent / 聊天（pi-bridge）服务地址（宿主机直跑 bridge 时需指向其地址）
+      - AGENT_BRIDGE_URL=${AGENT_BRIDGE_URL:-http://host.docker.internal:3005}
       - TZ=Asia/Shanghai
 #      - NODE_TYPE=slave  # 多机部署时从节点取消注释该行
 #      - SYNC_FREQUENCY=60  # 需要定期从数据库加载数据时取消注释该行
@@ -44,7 +49,8 @@ services:
       - ./data/mysql:/var/lib/mysql  # 挂载目录，持久化存储
     environment:
       TZ: Asia/Shanghai   # 设置时区
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-OneAPI@justsong} # 强烈建议覆盖 root 密码
+      # 口令全部强制从 .env 注入，缺失时 db 容器拒绝启动
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?请先在 .env 中设置 MYSQL_ROOT_PASSWORD}
       MYSQL_USER: oneapi   # 创建专用用户
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-123456}    # 强烈建议覆盖专用用户密码
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?请先在 .env 中设置 MYSQL_PASSWORD}
       MYSQL_DATABASE: one-api   # 自动创建数据库

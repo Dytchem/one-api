@@ -291,6 +291,7 @@ const Agent = () => {
       }
     };
     const doResume = async () => {
+      let idleGuard = null; // dyt-96: 提升到 try 之外——try/finally 是独立块作用域，块内声明 finally 不可见
       try {
         const resp = await fetch('/api/agent/resume', {
           method: 'POST',
@@ -307,7 +308,6 @@ const Agent = () => {
         const decoder = new TextDecoder();
         let buffer = '';
         let lastData = Date.now();
-        let idleGuard = null;
         idleGuard = setInterval(() => {
           if (Date.now() - lastData > 60000) controller.abort();
         }, 10000);
@@ -405,10 +405,11 @@ const Agent = () => {
     const decoder = new TextDecoder();
     let buffer = '';
     let lastData = Date.now();
-    const idleGuard = setInterval(() => {
-      if (Date.now() - lastData > 60000) controller.abort();
-    }, 10000);
+    let idleGuard = null; // dyt-96: try/finally 是独立块作用域，声明提到 try 外
     try {
+      idleGuard = setInterval(() => {
+        if (Date.now() - lastData > 60000) controller.abort();
+      }, 10000);
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;

@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { Card } from 'semantic-ui-react';
 import { API, showError } from '../../helpers';
 import { marked } from 'marked';
+import DOMPurify from 'dompurify';
 import { APP_REPO_URL } from '../../constants';
 
 const About = () => {
@@ -17,7 +18,8 @@ const About = () => {
     if (success) {
       let aboutContent = data;
       if (!data.startsWith('https://')) {
-        aboutContent = marked.parse(data);
+        // dyt-96: 管理员配置的 HTML 也要 DOMPurify 清洗，防止恶意配置/污染的 localStorage 内容注入脚本
+        aboutContent = DOMPurify.sanitize(marked.parse(data));
       }
       setAbout(aboutContent);
       localStorage.setItem('about', aboutContent);

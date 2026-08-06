@@ -182,6 +182,11 @@ var AgentBridgeURL = func() string {
 	return "http://127.0.0.1:3005"
 }()
 
+// dyt-96: bridge 共享密钥。必须与 pi-bridge 的 BRIDGE_SECRET 一致，
+// 请求 bridge 时通过 X-Bridge-Token 头携带；bridge 侧缺失该密钥时拒绝一切请求，
+// 防止同机其他进程/被 SSRF 的服务伪造 user_id 调用 bridge 工具
+var AgentBridgeSecret = env.String("AGENT_BRIDGE_SECRET", "")
+
 var GeminiVersion = env.String("GEMINI_VERSION", "v1")
 
 var OnlyOneLogFile = env.Bool("ONLY_ONE_LOG_FILE", false)
@@ -194,7 +199,8 @@ var UserContentRequestTimeout = env.Int("USER_CONTENT_REQUEST_TIMEOUT", 30)
 var ProbeTimeout = env.Int("PROBE_TIMEOUT", 120)
 
 // dyt-52: 流式 SSE 单行缓冲上限（MB），超长行（base64 图片）不截断；0 表示使用默认 64MB
-var StreamScannerMaxBufferMB = env.Int("STREAM_SCANNER_MAX_BUFFER_MB", 64)
+// dyt-96: 默认 8MB（原 64MB 在异常上游单行灌入时易造成内存尖峰）
+var StreamScannerMaxBufferMB = env.Int("STREAM_SCANNER_MAX_BUFFER_MB", 8)
 
 // dyt-52: 请求体大小上限（MB），防止超大请求/zip bomb 打爆内存；0 表示不限制
 var MaxRequestBodyMB = env.Int("MAX_REQUEST_BODY_MB", 32)

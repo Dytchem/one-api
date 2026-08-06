@@ -20,6 +20,23 @@ const ONEAPI_BASE = process.env.ONEAPI_BASE || 'http://127.0.0.1:3000';
 // dyt-92: 管理员 token 必须显式配置；缺失时仅保留本地工具能力并警告（模型表不自动同步）。
 // 该 token 用于 /v1/models 同步，泄露会导致模型枚举，故不提供硬编码兜底。
 const ONEAPI_ADMIN_TOKEN = process.env.ONEAPI_ADMIN_TOKEN || '';
+// dyt-96: 与 one-api 的共享密钥（AGENT_BRIDGE_SECRET 同值）。bridge 只监听 127.0.0.1，
+// 但同机任意进程/被 SSRF 的服务仍可达；缺失或错误一律拒绝，防止伪造 user_id 调用工具。
+const BRIDGE_SECRET = process.env.BRIDGE_SECRET || '';
+function requireAuth(req, res) {
+  if (!BRIDGE_SECRET) {
+    res.writeHead(503, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'BRIDGE_SECRET 未配置，拒绝服务（请与 one-api 的 AGENT_BRIDGE_SECRET 保持一致）' }));
+    return false;
+  }
+  const token = req.headers['x-bridge-token'];
+  if (typeof token !== 'string' || token !== BRIDGE_SECRET) {
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'unauthorized' }));
+    return false;
+  }
+  return true;
+}
 const AGENT_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'agent');
 const MODELS_PATH = path.join(AGENT_DIR, 'models.json');
 const AUTH_PATH = path.join(AGENT_DIR, 'auth.json');
@@ -964,11 +981,15 @@ function scheduleSave() {
   }, 3000);
 }
 const server = http.createServer((req, res) => {
-  if (req.method === 'POST' && req.url === '/chat') {
-    handleChat(req, res);
-  } else if (req.method === 'GET' && req.url === '/health') {
+  if (req.method === 'GET' && req.url === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ ok: true, sessions: sessions.size }));
+    return;
+  }
+  // dyt-96: 除 /health 外一律要求共享密钥（未配置密钥 = 拒绝服务）
+  if (!requireAuth(req, res)) return;
+  if (req.method === 'POST' && req.url === '/chat') {
+    handleChat(req, res);
   } else if (req.method === 'POST' && req.url === '/resume') {
     handleResume(req, res);
   } else if (req.method === 'POST' && req.url === '/chat/v1') {

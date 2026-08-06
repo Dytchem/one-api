@@ -260,7 +260,8 @@ func GetUserLogs(userId int, logType int, startTimestamp int64, endTimestamp int
 }
 
 func SearchAllLogs(keyword string) (logs []*Log, err error) {
-	err = LOG_DB.Where("type = ? or content LIKE ?", keyword, keyword+"%").Order("id desc").Limit(config.MaxRecentItems).Find(&logs).Error
+	// dyt-96: keyword 仅匹配 content（type 是 int 列，原写法依赖 MySQL 隐式转换，语义错误）
+	err = LOG_DB.Where("content LIKE ?", keyword+"%").Order("id desc").Limit(config.MaxRecentItems).Find(&logs).Error
 	return logs, err
 }
 

@@ -357,6 +357,7 @@ const Chat = () => {
       }
     };
     const doResume = async () => {
+      let idleGuard = null; // dyt-96: try/finally 独立块作用域，声明提到 try 外
       try {
         const resp = await fetch('/api/chat/resume', {
           method: 'POST',
@@ -373,7 +374,7 @@ const Chat = () => {
         const decoder = new TextDecoder();
         let buffer = '';
         let lastData = Date.now();
-        const idleGuard = setInterval(() => {
+        idleGuard = setInterval(() => {
           if (Date.now() - lastData > 60000) controller.abort();
         }, 10000);
         while (true) {

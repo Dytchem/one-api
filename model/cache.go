@@ -124,6 +124,9 @@ func CacheDecreaseUserQuota(id int, quota int64) error {
 }
 
 func CacheIsUserEnabled(userId int) (bool, error) {
+	// dyt-96: Redis 未启用时每次回查数据库，无窗口。
+	// 启用时缓存窗口 = SyncFrequency（默认 600s）：本服务内封禁/启用会同步清缓存，
+	// 直接改库/多实例场景下禁用最长延迟一个窗口
 	if !common.RedisEnabled {
 		return IsUserEnabled(userId)
 	}

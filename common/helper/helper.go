@@ -6,8 +6,6 @@ import (
 	"html/template"
 	"log"
 	"net"
-	"os/exec"
-	"runtime"
 	"strconv"
 	"strings"
 
@@ -16,21 +14,8 @@ import (
 	"github.com/songquanpeng/one-api/common/random"
 )
 
-func OpenBrowser(url string) {
-	var err error
-
-	switch runtime.GOOS {
-	case "linux":
-		err = exec.Command("xdg-open", url).Start()
-	case "windows":
-		err = exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
-	case "darwin":
-		err = exec.Command("open", url).Start()
-	}
-	if err != nil {
-		log.Println(err)
-	}
-}
+// dyt-96: OpenBrowser 已删除 —— 保留命令执行代码（xdg-open/rundll32/open）易被未来误用，
+// 且当前无任何调用方；浏览器打开请由前端/运维侧处理
 
 func GetIp() (ip string) {
 	ips, err := net.InterfaceAddrs()

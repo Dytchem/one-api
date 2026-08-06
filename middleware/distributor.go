@@ -64,8 +64,10 @@ func Distribute() func(c *gin.Context) {
 					candidates := make([]*model.Channel, len(pool))
 					for i, a := range pool {
 						// 取完整渠道（含 key 与 weight），同时复用本次查询做加权
+						// dyt-96: 渠道查询失败/已删除时该项权重记 0，不参与选择（避免命中 nil 回退）
 						ch, cerr := model.GetChannelById(a.ChannelId, true)
-						if cerr != nil {
+						if cerr != nil || ch.Status != model.ChannelStatusEnabled {
+							weights[i] = 0
 							continue
 						}
 						candidates[i] = ch
@@ -81,6 +83,9 @@ func Distribute() func(c *gin.Context) {
 						r := rand.Float64() * total
 						pick := 0
 						for i, w := range weights {
+							if w <= 0 {
+								continue
+							}
 							r -= w
 							if r <= 0 {
 								pick = i

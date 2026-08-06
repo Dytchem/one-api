@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Container, Segment } from 'semantic-ui-react';
 import { getFooterHTML, getSystemName } from '../helpers';
+import DOMPurify from 'dompurify';
 import { APP_VERSION, APP_REPO_URL, APP_AUTHOR_URL } from '../constants';
 
 const Footer = () => {
@@ -35,7 +36,8 @@ const Footer = () => {
         {footer ? (
           <div
             className='custom-footer'
-            dangerouslySetInnerHTML={{ __html: footer }}
+            // dyt-96: 管理员配置的 footer HTML 经 DOMPurify 清洗后再渲染
+            dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(footer) }}
           ></div>
         ) : (
           <div className='custom-footer'>

@@ -80,21 +80,28 @@ Fork 自 [songquanpeng/one-api](https://github.com/songquanpeng/one-api)，在�
 ## 快速开始
 
 ```bash
-# 1. 启动（默认端口 3000）
+# 1. 生成 bridge 共享密钥（Chat/Agent 服务鉴权，必须配置，否则 agent 功能不可用）
+BRIDGE_SECRET=$(openssl rand -hex 32)
+
+# 2. 启动（默认端口 3000）
 docker run -d --name one-api --restart unless-stopped \
   -p 3000:3000 \
   -e SQL_DSN='user:password@tcp(mysql:3306)/one-api?charset=utf8mb4&parseTime=True&loc=Local' \
   -e SESSION_SECRET='replace-with-a-long-random-string' \
+  -e AGENT_BRIDGE_SECRET="$BRIDGE_SECRET" \
+  -e BRIDGE_SECRET="$BRIDGE_SECRET" \
   ghcr.io/dytchem/one-api:<版本号见根目录 VERSION 文件>
 ```
 
 > 也可使用 SQLite（不传 `SQL_DSN` 即可，数据存 `/data`，建议挂载卷）。
+>
+> 注意：容器内 pi-bridge（Chat/Agent 后台会话服务）**强制要求 `BRIDGE_SECRET`**（与 `AGENT_BRIDGE_SECRET` 同值），缺失时 bridge 拒绝一切请求；同时避免使用仓库/文档中的示例密码作为数据库口令。
 
 启动后访问 `http://<host>:3000`，初始账号 `root`，密码在启动日志中。
 
 ### 使用 Agent
 
-Agent 无需额外配置：工具调用凭据使用登录用户的 access_token，模型列表自动同步。
+Agent 无需额外配置：工具调用凭据使用登录用户的 access_token，模型列表自动同步（需配置 `ONEAPI_ADMIN_TOKEN` 供 bridge 同步模型表）。
 
 ### 代理出口
 

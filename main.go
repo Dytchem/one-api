@@ -102,9 +102,9 @@ func main() {
 
 	// Initialize HTTP server
 	server := gin.New()
-	// dyt-93: 只信任本机反代与 docker 网桥，防止伪造 X-Forwarded-For 绕过限流/污染日志
-	// （BT nginx 同机反代 = 127.0.0.1；docker 网关 = 172.x。反代在其他主机时请自行扩展此列表）
-	_ = server.SetTrustedProxies([]string{"127.0.0.1", "::1", "172.16.0.0/12"})
+	// dyt-96: 只信任本机反代，防止同网络容器伪造 X-Forwarded-For 绕过限流/污染审计
+	// （BT nginx 同机反代 = 127.0.0.1；docker 网关/同网段容器不再信任，直连场景须走真实反代）
+	_ = server.SetTrustedProxies([]string{"127.0.0.1", "::1"})
 	server.Use(gin.Recovery())
 	// This will cause SSE not to work!!!
 	//server.Use(gzip.Gzip(gzip.DefaultCompression))

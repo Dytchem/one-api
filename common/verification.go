@@ -8,8 +8,9 @@ import (
 )
 
 type verificationValue struct {
-	code string
-	time time.Time
+	code     string
+	time     time.Time
+	attempts int // dyt-96: 连续失败次数，防爆破
 }
 
 const (
@@ -19,8 +20,9 @@ const (
 
 var verificationMutex sync.Mutex
 var verificationMap map[string]verificationValue
-var verificationMapMaxSize = 10
+var verificationMapMaxSize = 1000 // dyt-96: 原 10 太小，验证码会被随机挤出
 var VerificationValidMinutes = 10
+var maxVerificationAttempts = 5 // dyt-96: 连续失败 N 次后作废验证码
 
 func GenerateVerificationCode(length int) string {
 	code := uuid.New().String()
@@ -51,7 +53,17 @@ func VerifyCodeWithKey(key string, code string, purpose string) bool {
 	if !okay || int(now.Sub(value.time).Seconds()) >= VerificationValidMinutes*60 {
 		return false
 	}
-	return code == value.code
+	if code != value.code {
+		// dyt-96: 连续失败计数，达到上限作废验证码（防 6 位 hex 暴力枚举）
+		value.attempts++
+		if value.attempts >= maxVerificationAttempts {
+			delete(verificationMap, purpose+key)
+		} else {
+			verificationMap[purpose+key] = value
+		}
+		return false
+	}
+	return true
 }
 
 func DeleteKey(key string, purpose string) {

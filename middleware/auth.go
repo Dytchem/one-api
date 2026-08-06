@@ -50,6 +50,23 @@ func authHelper(c *gin.Context, minRole int) {
 			c.Abort()
 			return
 		}
+	} else {
+		// dyt-96: cookie 会话按 id 回查数据库，防止降权/封禁后旧 cookie 权限残留
+		// （session 里存的 role/status 是签发时的快照，最长 7 天不过期；
+		// 黑名单内存态在服务重启后清空，必须回查 DB 才有最终裁决权）
+		user, err := model.GetUserById(id.(int), false)
+		if err != nil || user.Username == "" {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": "用户不存在或已被删除",
+			})
+			c.Abort()
+			return
+		}
+		username = user.Username
+		role = user.Role
+		status = user.Status
+		id = user.Id
 	}
 	// dyt-93: 已删除用户（status=3）同样拒绝，防止删除后旧 cookie/会话在服务重启后复活
 	if status.(int) == model.UserStatusDisabled || status.(int) == model.UserStatusDeleted || blacklist.IsUserBanned(id.(int)) {
@@ -176,8 +193,14 @@ func TokenAuth() func(c *gin.Context) {
 		// set channel id for proxy relay
 		// dyt-93: proxy 路径对非 admin 同样做启用 + 分组校验，防止越权使用任意渠道
 		// （proxy 的 target 是任意路径，模型白名单无法校验，故仅校验渠道可用性与分组）
+		// dyt-96: 非 admin 的 proxy 目标路径限白名单（标准 OpenAI 兼容端点），
+		// 防止对内网渠道的管理端点/任意路径发起请求（SSRF 放大）
 		if channelId := c.Param("channelid"); channelId != "" {
 			if !model.IsAdmin(token.UserId) {
+				if !isAllowedProxyPath(c.Request.URL.Path) {
+					abortWithMessage(c, http.StatusForbidden, "普通用户仅可使用标准模型端点（chat/completions/embeddings/images/audio/models）")
+					return
+				}
 				ch, err := model.GetChannelById(helper.String2Int(channelId), true)
 				if err != nil {
 					abortWithMessage(c, http.StatusBadRequest, "无效的渠道 Id")
@@ -216,6 +239,25 @@ func shouldCheckModel(c *gin.Context) bool {
 	return false
 }
 
+// isAllowedProxyPath: dyt-96 非 admin 经 proxy 路由可达的目标路径白名单
+func isAllowedProxyPath(path string) bool {
+	allowed := []string{
+		"/v1/chat/completions",
+		"/v1/completions",
+		"/v1/embeddings",
+		"/v1/images",
+		"/v1/audio",
+		"/v1/models",
+		"/v1/moderations",
+	}
+	for _, p := range allowed {
+		if strings.HasPrefix(path, p) {
+			return true
+		}
+	}
+	return false
+}
+
 // dyt-62: 从请求体提取 channel_id 并移除（不随透传发给上游）。
 // 聊天页通过 channel_id 固定使用指定渠道。
 func channelGroupAllowed(channelGroup, userGroup string) bool {
@@ -241,8 +283,11 @@ func extractChannelId(c *gin.Context) string {
 	if len(requestBody) > 1<<20 {
 		return ""
 	}
+	// dyt-96: 用 UseNumber 解码，重序列化时保持大整数/浮点原样，避免精度丢失
 	var data map[string]any
-	if err := json.Unmarshal(requestBody, &data); err != nil {
+	dec := json.NewDecoder(bytes.NewReader(requestBody))
+	dec.UseNumber()
+	if err := dec.Decode(&data); err != nil {
 		return ""
 	}
 	val, ok := data["channel_id"]
@@ -253,9 +298,9 @@ func extractChannelId(c *gin.Context) string {
 	switch v := val.(type) {
 	case string:
 		idStr = v
-	case float64:
-		if v > 0 {
-			idStr = strconv.Itoa(int(v))
+	case json.Number:
+		if n, err := v.Int64(); err == nil && n > 0 {
+			idStr = strconv.FormatInt(n, 10)
 		}
 	default:
 		return ""
