@@ -20,14 +20,15 @@ const ONEAPI_BASE = process.env.ONEAPI_BASE || 'http://127.0.0.1:3000';
 // dyt-92: 管理员 token 必须显式配置；缺失时仅保留本地工具能力并警告（模型表不自动同步）。
 // 该 token 用于 /v1/models 同步，泄露会导致模型枚举，故不提供硬编码兜底。
 const ONEAPI_ADMIN_TOKEN = process.env.ONEAPI_ADMIN_TOKEN || '';
-// dyt-96: 与 one-api 的共享密钥（AGENT_BRIDGE_SECRET 同值）。bridge 只监听 127.0.0.1，
-// 但同机任意进程/被 SSRF 的服务仍可达；缺失或错误一律拒绝，防止伪造 user_id 调用工具。
+// dyt-96/97: 与 one-api 的共享密钥（AGENT_BRIDGE_SECRET 同值），加固项而非强制项：
+// - 已配置：严格校验 X-Bridge-Token，同机其他进程无密钥无法调用
+// - 未配置：兼容模式（保持旧版行为，仅监听 127.0.0.1，不校验），启动时打印警告
+// 强烈建议生产环境成对配置（bridge 的 BRIDGE_SECRET = one-api 的 AGENT_BRIDGE_SECRET）。
 const BRIDGE_SECRET = process.env.BRIDGE_SECRET || '';
 function requireAuth(req, res) {
   if (!BRIDGE_SECRET) {
-    res.writeHead(503, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'BRIDGE_SECRET 未配置，拒绝服务（请与 one-api 的 AGENT_BRIDGE_SECRET 保持一致）' }));
-    return false;
+    // 兼容模式：未配置密钥不校验（v94 及更早版本行为），功能不受影响
+    return true;
   }
   const token = req.headers['x-bridge-token'];
   if (typeof token !== 'string' || token !== BRIDGE_SECRET) {
@@ -1031,6 +1032,12 @@ process.on('SIGINT', shutdown);
 
 server.listen(PORT, '127.0.0.1', () => {
   console.log(`pi-bridge listening on 127.0.0.1:${PORT}, one-api base: ${ONEAPI_BASE}`);
+  if (BRIDGE_SECRET) {
+    console.log('[auth] BRIDGE_SECRET 已配置：X-Bridge-Token 严格校验已启用');
+  } else {
+    console.warn('[auth] BRIDGE_SECRET 未配置：兼容模式（不校验请求头，仅监听 127.0.0.1）。' +
+      '建议与 one-api 的 AGENT_BRIDGE_SECRET 成对配置以启用鉴权');
+  }
   if (ONEAPI_ADMIN_TOKEN) syncModels();
   else console.warn('[models] ONEAPI_ADMIN_TOKEN 未配置，模型表不会自动同步');
 });
