@@ -490,6 +490,12 @@ func UpdateChannel(c *gin.Context) {
 		})
 		return
 	}
+	// key 为空时保留原 key（列表接口返回的 key 已脱敏，agent 工具全量更新时不能覆盖清空）
+	if channel.Key == "" && channel.Id > 0 {
+		if old, oldErr := model.GetChannelById(channel.Id, true); oldErr == nil {
+			channel.Key = old.Key
+		}
+	}
 	err = channel.Update()
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{

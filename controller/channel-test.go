@@ -232,6 +232,27 @@ func TestChannel(c *gin.Context) {
 	}
 	go channel.UpdateResponseTime(milliseconds)
 	consumedTime := float64(milliseconds) / 1000.0
+	// 记录渠道测试日志（与批量测试一致，日志页可查）
+	{
+		userName := ""
+		if u, uErr := model.GetUserById(c.GetInt(ctxkey.Id), false); uErr == nil {
+			userName = u.Username
+		}
+		logContent := fmt.Sprintf("测试渠道 #%d（%s）", channel.Id, channel.Name)
+		if err != nil {
+			logContent += "失败：" + err.Error()
+		} else {
+			logContent += "成功：" + responseMessage
+		}
+		go model.RecordTestLog(c.Request.Context(), &model.Log{
+			UserId:      c.GetInt(ctxkey.Id),
+			Username:    userName,
+			ChannelId:   channel.Id,
+			ModelName:   modelName,
+			Content:     logContent,
+			ElapsedTime: milliseconds,
+		})
+	}
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"success":   false,

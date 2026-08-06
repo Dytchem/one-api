@@ -10,3 +10,5 @@ docker-compose.yml
 backup/
 Dockerfile
 README*.md
+
+pi-bridge/node_modules

@@ -1,0 +1,639 @@
+// pi-bridge: 将 pi agent 通过 HTTP/SSE 暴露给 one-api 前端
+// 模型表(models.json)动态同步自 one-api /v1/models；工具 = one-api 管理接口
+import http from 'node:http';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import {
+  createAgentSession,
+  defineTool,
+  DefaultResourceLoader,
+  SettingsManager,
+  SessionManager,
+  ModelRegistry,
+  AuthStorage,
+} from '@earendil-works/pi-coding-agent';
+import { Type } from 'typebox';
+
+const PORT = parseInt(process.env.PORT || '3005', 10);
+const ONEAPI_BASE = process.env.ONEAPI_BASE || 'http://100.64.0.114:3003';
+const ONEAPI_ADMIN_TOKEN = process.env.ONEAPI_ADMIN_TOKEN || '';
+const AGENT_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'agent');
+const MODELS_PATH = path.join(AGENT_DIR, 'models.json');
+const AUTH_PATH = path.join(AGENT_DIR, 'auth.json');
+
+const SYSTEM_PROMPT = `You are an operations assistant for a one-api gateway (OpenAI-compatible API management platform).
+You can manage channels, tokens, users and view logs through the provided tools.
+Rules:
+- Always verify facts with tools before answering; never invent data.
+- Keep answers concise and in Chinese unless the user asks otherwise.
+- For channel operations, pass full channel objects returned by get_channel/list_channels when updating.
+- When a tool reports an error, report the error message to the user.`;
+
+fs.mkdirSync(AGENT_DIR, { recursive: true });
+
+let lastSync = 0;
+
+// thinking 模型：按 pi 原生机制标注 reasoning + thinkingFormat，
+// pi 会在思考关闭(off)时发送 enable_thinking:false（qwen）或 reasoning.enabled:false（deepseek），
+// 模型随即返回标准 tool_calls JSON
+const MODEL_OVERRIDES = {
+  'qwen3.7-plus': {
+    reasoning: true,
+    compat: { thinkingFormat: 'qwen' },
+  },
+  'mimo-v2.5': {
+    reasoning: true,
+    compat: { thinkingFormat: 'qwen' },
+  },
+  'mimo-v2.5-pro': {
+    reasoning: true,
+    compat: { thinkingFormat: 'qwen' },
+  },
+  'deepseek-v4-flash': {
+    reasoning: true,
+    compat: { thinkingFormat: 'deepseek' },
+  },
+  'deepseek-v4-pro': {
+    reasoning: true,
+    compat: { thinkingFormat: 'deepseek' },
+  },
+};
+
+async function syncModels(token) {
+  const t = token || ONEAPI_ADMIN_TOKEN;
+  if (!t) return 0;
+  try {
+    const resp = await fetch(`${ONEAPI_BASE}/v1/models`, {
+      headers: { Authorization: `Bearer ${t}` },
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!resp.ok) throw new Error(`http ${resp.status}`);
+    const json = await resp.json();
+    const models = (json.data || []).map((m) => ({
+      id: m.id,
+      ...(MODEL_OVERRIDES[m.id] || {}),
+    }));
+    const cfg = {
+      providers: {
+        oneapi: {
+          baseUrl: `${ONEAPI_BASE}/v1`,
+          api: 'openai-completions',
+          apiKey: 'oneapi-bridge-placeholder',
+          models,
+          compat: { supportsDeveloperRole: false },
+        },
+      },
+    };
+    fs.writeFileSync(MODELS_PATH, JSON.stringify(cfg, null, 2));
+    lastSync = Date.now();
+    console.log(`[models] synced ${models.length} models`);
+    return models.length;
+  } catch (e) {
+    console.error('[models] sync failed:', e.message);
+    return 0;
+  }
+}
+
+async function ensureModels(force) {
+  if (fs.existsSync(MODELS_PATH) && !force && Date.now() - lastSync < 60_000) return;
+  await syncModels();
+}
+
+// ---- one-api 管理工具 ----
+function makeTools({ getToken }) {
+  const call = async (p, opts = {}) => {
+    try {
+      const token = typeof getToken === 'function' ? getToken() : '';
+      const resp = await fetch(`${ONEAPI_BASE}${p}`, {
+        method: opts.method || 'GET',
+        body: opts.body ? JSON.stringify(opts.body) : undefined,
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        signal: AbortSignal.timeout(30000),
+      });
+      const text = await resp.text();
+      return {
+        content: [{ type: 'text', text: `HTTP ${resp.status}: ${text.slice(0, 12000)}` }],
+        details: { status: resp.status },
+      };
+    } catch (e) {
+      return { content: [{ type: 'text', text: `请求 one-api 失败: ${e.message}` }], details: { error: e.message } };
+    }
+  };
+
+  const tool = (name, label, description, params, executor) =>
+    defineTool({
+      name,
+      label,
+      description,
+      parameters: params,
+      execute: async (_callId, args) => executor(args),
+    });
+
+  return [
+    tool('get_current_time', 'Current Time', '获取当前时间', Type.Object({}), async () => ({
+      content: [{ type: 'text', text: new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }) }],
+      details: {},
+    })),
+    tool('get_status', 'System Status', '获取 one-api 系统状态', Type.Object({}), async () => call('/api/status')),
+    tool('list_available_models', 'Available Models', '列出当前用户可用的模型', Type.Object({}), async () => call('/api/models')),
+    tool('list_all_models', 'All Models (admin)', '列出全部模型（管理员）', Type.Object({}), async () => call('/api/channel/models')),
+    tool('get_self', 'My Account', '获取当前用户信息', Type.Object({}), async () => call('/api/user/self')),
+    tool('list_tokens', 'My Tokens', '列出我的 API 令牌', Type.Object({}), async () => call('/api/token/?p=0&size=100')),
+    tool('list_channels', 'Channels (admin)', '列出所有渠道（管理员）', Type.Object({}), async () => call('/api/channel/?p=0&size=100')),
+    tool('get_channel', 'Channel Detail (admin)', '获取渠道详情（管理员）', Type.Object({ id: Type.Number({ description: '渠道 ID' }) }), async (a) => call(`/api/channel/${a.id}`)),
+    tool('test_channel', 'Test Channel (admin)', '通过 one-api 管理 API 测试渠道连通性（管理员），会记录测试日志', Type.Object({ id: Type.Number({ description: '渠道 ID' }) }), async (a) => {
+      const r = await call(`/api/channel/test/${a.id}`);
+      const raw = r.content?.[0]?.text || '';
+      try {
+        const m = raw.match(/\{.*\}$/s);
+        const j = JSON.parse(m ? m[0] : '{}');
+        if (j.success === true) {
+          return { content: [{ type: 'text', text: `渠道 #${a.id} 测试成功：${j.message || ''}（耗时 ${j.time ?? '?'} 秒）` }], details: r.details };
+        }
+        return { content: [{ type: 'text', text: `渠道 #${a.id} 测试失败：${j.message || raw}` }], details: r.details };
+      } catch (e) {
+        return r;
+      }
+    }),
+    tool('add_channel', 'Add Channel (admin)', '新增渠道（管理员），channel 对象包含 name/type/key/models/group/base_url 等字段', Type.Object({ channel: Type.Record(Type.String(), Type.Any(), { description: '渠道配置对象' }) }), async (a) => call('/api/channel/', { method: 'POST', body: a.channel })),
+    tool('update_channel', 'Update Channel (admin)', '更新渠道（管理员），channel 对象必须包含 id，其余字段为要修改的内容；key 留空表示不修改（列表接口返回的 key 已脱敏，直接回传会误清空密钥）', Type.Object({ channel: Type.Record(Type.String(), Type.Any(), { description: '渠道配置对象（含 id）' }) }), async (a) => call('/api/channel/', { method: 'PUT', body: a.channel })),
+    tool('delete_channel', 'Delete Channel (admin)', '删除渠道（管理员）', Type.Object({ id: Type.Number({ description: '渠道 ID' }) }), async (a) => call(`/api/channel/${a.id}/`, { method: 'DELETE' })),
+    tool('fetch_channel_models', 'Fetch Channel Models (admin)', '从渠道上游探测模型列表（管理员）', Type.Object({ id: Type.Number({ description: '渠道 ID' }) }), async (a) => call(`/api/channel/fetch-models/${a.id}`)),
+    tool('list_users', 'Users (admin)', '列出所有用户（管理员）', Type.Object({}), async () => call('/api/user/?p=0&size=100')),
+    tool('get_user', 'User Detail (admin)', '获取用户详情（管理员）', Type.Object({ id: Type.Number({ description: '用户 ID' }) }), async (a) => call(`/api/user/${a.id}`)),
+    tool('list_logs', 'Logs (admin)', '查询使用日志（管理员）', Type.Object({ modelName: Type.Optional(Type.String({ description: '按模型筛选' })), channelId: Type.Optional(Type.Number({ description: '按渠道筛选' })) }), async (a) => {
+      const q = new URLSearchParams({ p: '0', size: '20' });
+      if (a.modelName) q.set('model_name', a.modelName);
+      if (a.channelId) q.set('channel_id', String(a.channelId));
+      return call(`/api/log/?${q.toString()}`);
+    }),
+    tool('get_fail_logs', 'Fail Logs (admin)', '查询最近失败日志（管理员）', Type.Object({}), async () => call('/api/log/fail/list?p=0&size=20')),
+    tool('list_own_logs', 'My Logs', '查询我自己的使用日志', Type.Object({ modelName: Type.Optional(Type.String()) }), async (a) => {
+      const q = new URLSearchParams({ p: '0', size: '20' });
+      if (a.modelName) q.set('model_name', a.modelName);
+      return call(`/api/log/self?${q.toString()}`);
+    }),
+  ];
+}
+
+// ---- session 管理 ----
+const sessions = new Map(); // session_id -> { session, busy }
+
+function writeSse(res, obj) {
+  if (res.writableEnded) return;
+  res.write(`data: ${JSON.stringify(obj)}\n\n`);
+}
+
+async function handleChat(req, res) {
+  const chunks = [];
+  for await (const c of req) chunks.push(c);
+  let body;
+  try {
+    body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  } catch (e) {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'invalid json' }));
+    return;
+  }
+  const { session_id, model, message, token_key, access_token, channel_id, thinking_level } = body;
+  console.log(`[/chat] session=${session_id} model=${model} msg=${String(message || '').slice(0, 50)} channel=${channel_id || '-'}`);
+  // 模型表用登录用户的令牌同步（无需部署配置管理员凭据）
+  if (token_key && (Date.now() - lastSync > 60_000 || !fs.existsSync(MODELS_PATH))) {
+    syncModels(token_key).then((n) => console.log(`[models] synced ${n} via user token`));
+  }
+  if (!session_id || !model || !message) {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'session_id/model/message required' }));
+    return;
+  }
+
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  });
+
+  try {
+    await ensureModels(false);
+
+    const authStorage = AuthStorage.inMemory();
+    if (token_key) authStorage.setRuntimeApiKey('oneapi', token_key);
+    const modelRegistry = ModelRegistry.create(authStorage, MODELS_PATH);
+    const piModel = modelRegistry.find('oneapi', model);
+    if (!piModel) {
+      writeSse(res, { type: 'error', message: `模型 ${model} 不在模型表中（one-api 模型同步失败或模型不存在）` });
+      res.end();
+      return;
+    }
+
+    let holder = sessions.get(session_id);
+    if (!holder) {
+      // compaction: pi 原生上下文压缩，保持默认开启，防止历史膨胀
+      const settingsManager = SettingsManager.inMemory({});
+      const loader = new DefaultResourceLoader({
+        cwd: process.cwd(),
+        agentDir: AGENT_DIR,
+        settingsManager,
+        systemPromptOverride: () => SYSTEM_PROMPT,
+      });
+      await loader.reload();
+      const { session } = await createAgentSession({
+        model: piModel,
+        thinkingLevel: 'off',
+        modelRegistry,
+        resourceLoader: loader,
+        // 工具调用凭据：当前登录用户自己的 access_token（每次 /chat 请求更新），
+        // 兜底使用部署配置的 ONEAPI_ADMIN_TOKEN
+        customTools: makeTools({ getToken: () => process.env.ONEAPI_ADMIN_TOKEN || holder?.accessToken || '' }),
+        channelId: channel_id || 0,
+        sessionManager: SessionManager.inMemory(),
+        settingsManager,
+      });
+      holder = {
+        session,
+        busy: false,
+        busySince: 0,
+        modelRegistry,
+        authStorage,
+        tokenKey: token_key || '',
+        accessToken: access_token || '',
+        events: [],
+        subscribers: new Set(),
+        toolCount: 0,
+        loopAborted: false,
+      };
+      if (thinking_level) {
+        try { session.setThinkingLevel(thinking_level); } catch (e) { /* 非法等级忽略 */ }
+      }
+      sessions.set(session_id, holder);
+
+      session.subscribe((event) => {
+        const emit = (obj) => {
+          holder.events.push(obj);
+          if (holder.events.length > 2000) holder.events.shift();
+          for (const sub of holder.subscribers) writeSse(sub, obj);
+          scheduleSave();
+        };
+        switch (event.type) {
+          case 'message_update': {
+            const ev = event.assistantMessageEvent;
+            if (ev.type === 'text_delta') emit({ type: 'delta', content: ev.delta });
+            else if (ev.type === 'thinking_delta') emit({ type: 'thinking', content: ev.delta });
+            break;
+          }
+          case 'tool_execution_start':
+            holder.toolCount++;
+            emit({ type: 'tool_start', tool: event.toolName, args: event.args });
+            if (holder.toolCount > 15) {
+              holder.loopAborted = true;
+              try { holder.session.abort(); } catch (_) { /* ignore */ }
+              emit({ type: 'error', message: '工具调用次数过多（模型可能不支持工具调用），已中止，请更换模型' });
+            }
+            break;
+          case 'tool_execution_end':
+            emit({
+              type: 'tool_end',
+              tool: event.toolName,
+              ok: !event.isError,
+              result: typeof event.result === 'string' ? event.result.slice(0, 20000) : JSON.stringify(event.result).slice(0, 20000),
+            });
+            break;
+          default:
+            break;
+        }
+      });
+    } else {
+      if (holder.busy) {
+        // 上一轮仍在执行（页面刷新后重发等）：中止旧执行，新消息取代之
+        // pi 会话保留全部历史，abort 后可直接 prompt 新消息
+        try { holder.session.abort(); } catch (e) { /* ignore */ }
+        for (const old of holder.subscribers) {
+          if (old !== res) {
+            try { writeSse(old, { type: 'error', message: '新消息已取代本执行' }); old.end(); } catch (_) { /* ignore */ }
+          }
+        }
+        holder.busy = false;
+        holder.events = [];
+      }
+      await holder.session.setModel(piModel);
+      if (thinking_level) {
+        try { holder.session.setThinkingLevel(thinking_level); } catch (e) { /* 非法等级忽略 */ }
+      }
+      if (token_key && token_key !== holder.tokenKey) {
+        holder.tokenKey = token_key;
+        await holder.authStorage.setRuntimeApiKey('oneapi', token_key);
+      }
+      if (access_token && access_token !== holder.accessToken) {
+        holder.accessToken = access_token;
+      }
+    }
+
+    holder.busy = true;
+    holder.busySince = Date.now();
+    holder.toolCount = 0;
+    holder.loopAborted = false;
+    // 本 prompt 的事件缓冲（/resume 按此重放当前执行进度）
+    holder.events = [];
+    holder.subscribers.add(res);
+    res.on('close', () => holder.subscribers.delete(res));
+    try {
+      await Promise.race([
+        holder.session.prompt(message),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Agent 执行超时（300s），请重试')), 300_000)
+        ),
+      ]);
+    } catch (e) {
+      try { holder.session.abort(); } catch (_) { /* ignore */ }
+      writeSse(res, { type: 'error', message: e.message || String(e) });
+    } finally {
+      holder.busy = false;
+      const subs = [...holder.subscribers];
+      holder.subscribers.clear();
+      for (const sub of subs) {
+        writeSse(sub, { type: 'done' });
+        sub.end();
+      }
+    }
+  } catch (e) {
+    writeSse(res, { type: 'error', message: e.message || String(e) });
+    res.end();
+  }
+}
+
+async function handleResume(req, res) {
+  const chunks = [];
+  for await (const c of req) chunks.push(c);
+  let body;
+  try {
+    body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  } catch (e) {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'invalid json' }));
+    return;
+  }
+  const { session_id } = body;
+  const holder = sessions.get(session_id);
+  if (!holder) {
+    // 会话不存在 = 该轮已结束：返回 200 + done，前端静默收尾（不报 404 错误）
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+    writeSse(res, { type: 'done' });
+    res.end();
+    return;
+  }
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  });
+  // 重放已产生的事件
+  for (const e of holder.events) writeSse(res, e);
+  if (!holder.busy) {
+    writeSse(res, { type: 'done' });
+    res.end();
+    return;
+  }
+  // 会话仍在执行：挂接续推
+  holder.subscribers.add(res);
+  res.on('close', () => holder.subscribers.delete(res));
+}
+
+
+// ---------- 聊天后台会话（轻量）：只做上游转发 + 事件缓冲 + 断点续传，不加载 pi ----------
+const chatSessions = new Map(); // session_id -> { events, busy, subscribers, controller }
+
+async function handleChatV1(req, res) {
+  const chunks = [];
+  for await (const c of req) chunks.push(c);
+  let body;
+  try {
+    body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  } catch (e) {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'invalid json' }));
+    return;
+  }
+  const { session_id, model, messages, token_key, channel_id, thinking_level } = body;
+  console.log(`[chat/v1] session=${session_id} model=${model} msgs=${Array.isArray(messages) ? messages.length : 0} channel=${channel_id || '-'} thinking=${thinking_level || '-'}`);
+  if (!session_id || !model || !Array.isArray(messages) || messages.length === 0 || !token_key) {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'session_id/model/messages/token_key required' }));
+    return;
+  }
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  });
+  let holder = chatSessions.get(session_id);
+  if (!holder) {
+    holder = { events: [], busy: false, subscribers: new Set(), controller: null };
+    chatSessions.set(session_id, holder);
+  }
+  if (holder.busy) {
+    // 上一轮仍在执行（刷新后重发等）：中止旧执行，新消息取代
+    try { holder.controller.abort(); } catch (_) { /* ignore */ }
+    for (const old of holder.subscribers) {
+      if (old !== res) {
+        try { writeSse(old, { type: 'error', message: '新消息已取代本执行' }); old.end(); } catch (_) { /* ignore */ }
+      }
+    }
+    holder.busy = false;
+    holder.events = [];
+  }
+  holder.events = [];
+  holder.busy = true;
+  holder.subscribers.add(res);
+  res.on('close', () => holder.subscribers.delete(res));
+
+  const emit = (obj) => {
+    holder.events.push(obj);
+    if (holder.events.length > 2000) holder.events.shift();
+    for (const sub of holder.subscribers) writeSse(sub, obj);
+    scheduleSave();
+  };
+
+  const controller = new AbortController();
+  holder.controller = controller;
+  try {
+    const upstreamBody = { model, messages, stream: true };
+    if (channel_id) upstreamBody.channel_id = channel_id;
+    if (thinking_level && thinking_level !== 'off') upstreamBody.reasoning_effort = thinking_level;
+    const resp = await fetch(ONEAPI_BASE + '/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token_key}` },
+      body: JSON.stringify(upstreamBody),
+      signal: controller.signal,
+    });
+    if (!resp.ok) {
+      let msg = `上游错误 HTTP ${resp.status}`;
+      try {
+        const j = await resp.json();
+        msg = j.error?.message || j.message || msg;
+      } catch (_) { /* ignore */ }
+      console.log(`[chat/v1] upstream error: ${msg}`);
+      emit({ type: 'error', message: msg });
+    } else if (!resp.body) {
+      emit({ type: 'error', message: '上游无响应体' });
+    } else {
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split('\n');
+        buf = lines.pop();
+        for (const line of lines) {
+          const s = line.trim();
+          if (!s.startsWith('data:')) continue;
+          const data = s.slice(5).trim();
+          if (data === '[DONE]') continue;
+          try {
+            const j = JSON.parse(data);
+            const d = j.choices?.[0]?.delta;
+            if (d?.content) emit({ type: 'delta', content: d.content });
+            if (d?.reasoning_content) emit({ type: 'thinking', content: d.reasoning_content });
+          } catch (_) { /* 忽略无法解析的行 */ }
+        }
+      }
+    }
+  } catch (e) {
+    if (e.name !== 'AbortError') emit({ type: 'error', message: e.message || String(e) });
+  } finally {
+    holder.busy = false;
+    holder.controller = null;
+    const subs = [...holder.subscribers];
+    holder.subscribers.clear();
+    for (const sub of subs) {
+      writeSse(sub, { type: 'done' });
+      sub.end();
+    }
+  }
+}
+
+function handleChatResume(req, res) {
+  const chunks = [];
+  let session_id = '';
+  req.on('data', (c) => chunks.push(c));
+  req.on('end', () => {
+    try {
+      session_id = JSON.parse(Buffer.concat(chunks).toString('utf8')).session_id;
+    } catch (_) { /* ignore */ }
+    const holder = chatSessions.get(session_id);
+    console.log(`[chat/v1/resume] session=${session_id} exists=${!!holder} busy=${holder?.busy || false} events=${holder?.events?.length || 0}`);
+    if (!holder) {
+      // 会话不存在 = 该轮已结束：返回 200 + done，前端静默收尾（不报 404 错误）
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+        'X-Accel-Buffering': 'no',
+      });
+      writeSse(res, { type: 'done' });
+      res.end();
+      return;
+    }
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+    for (const e of holder.events) writeSse(res, e);
+    if (!holder.busy) {
+      writeSse(res, { type: 'done' });
+      res.end();
+      return;
+    }
+    holder.subscribers.add(res);
+    res.on('close', () => holder.subscribers.delete(res));
+  });
+}
+
+
+// ---- 会话事件持久化（容器重启后 resume 仍可重放历史）----
+const SESSION_STORE = process.env.SESSION_STORE || '/data/pi-sessions.json';
+
+function loadSessions() {
+  try {
+    const raw = fs.readFileSync(SESSION_STORE, 'utf8');
+    const data = JSON.parse(raw);
+    for (const [sid, evs] of Object.entries(data.chat || {})) {
+      const holder = chatSessions.get(sid) || { events: [], busy: false, subscribers: new Set(), controller: null };
+      holder.events = Array.isArray(evs) ? evs : [];
+      chatSessions.set(sid, holder);
+    }
+    for (const [sid, evs] of Object.entries(data.agent || {})) {
+      const holder = sessions.get(sid);
+      if (holder && Array.isArray(evs)) holder.events = evs;
+    }
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+let saveTimer = null;
+function scheduleSave() {
+  if (saveTimer) return;
+  saveTimer = setTimeout(() => {
+    saveTimer = null;
+    try {
+      const chat = {};
+      for (const [sid, h] of chatSessions) {
+        if (h.events && h.events.length > 0) chat[sid] = h.events.slice(-2000);
+      }
+      const agent = {};
+      for (const [sid, h] of sessions) {
+        if (h.events && h.events.length > 0) agent[sid] = h.events.slice(-2000);
+      }
+      fs.mkdirSync(require('path').dirname(SESSION_STORE), { recursive: true });
+      fs.writeFileSync(SESSION_STORE, JSON.stringify({ chat, agent }));
+    } catch (e) { /* 忽略持久化失败 */ }
+  }, 3000);
+}
+const server = http.createServer((req, res) => {
+  if (req.method === 'POST' && req.url === '/chat') {
+    handleChat(req, res);
+  } else if (req.method === 'GET' && req.url === '/health') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true, sessions: sessions.size }));
+  } else if (req.method === 'POST' && req.url === '/resume') {
+    handleResume(req, res);
+  } else if (req.method === 'POST' && req.url === '/chat/v1') {
+    handleChatV1(req, res);
+  } else if (req.method === 'POST' && req.url === '/chat/v1/resume') {
+    handleChatResume(req, res);
+  } else if (req.method === 'POST' && req.url === '/sync-models') {
+    syncModels().then((n) => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, models: n }));
+    });
+  } else {
+    res.writeHead(404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'not found' }));
+  }
+});
+
+loadSessions();
+setInterval(scheduleSave, 15000);
+
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`pi-bridge listening on :${PORT}, one-api base: ${ONEAPI_BASE}`);
+  if (ONEAPI_ADMIN_TOKEN) syncModels();
+  else console.warn('[models] ONEAPI_ADMIN_TOKEN 未配置，模型表不会自动同步');
+});

@@ -21,6 +21,7 @@ import EditToken from './pages/Token/EditToken';
 import EditChannel from './pages/Channel/EditChannel';
 import Log from './pages/Log';
 import Chat from './pages/Chat';
+import Agent from './pages/Agent';
 import FailLog from './pages/FailLog';
 import LarkOAuth from './components/LarkOAuth';
 import Dashboard from './pages/Dashboard';
@@ -268,6 +269,14 @@ function App() {
         element={
           <Suspense fallback={<Loading></Loading>}>
             <Chat />
+          </Suspense>
+        }
+      />
+      <Route
+        path='/agent'
+        element={
+          <Suspense fallback={<Loading></Loading>}>
+            <Agent />
           </Suspense>
         }
       />

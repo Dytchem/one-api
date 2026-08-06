@@ -361,7 +361,7 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 						lineScanner := newLineScanner(bufReader)
 						for lineScanner.Scan() {
 							line := lineScanner.Text()
-							if len(line) > 0 {
+							if len(line) > 0 && !isKeepAliveLine(line) {
 								if meta.Mode == relaymode.Responses {
 									respStreamState.feedLine(c, line)
 								} else {
@@ -378,7 +378,7 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 					}
 				} else {
 					// Passthrough mode: forward directly
-					if len(data) > 0 {
+					if len(data) > 0 && !isKeepAliveLine(data) {
 						// 转发上游 [DONE]，避免循环结束后重复发送
 						if data == "data: [DONE]" || data == "data:[DONE]" {
 							sawDone = true
@@ -861,4 +861,13 @@ func extractUpstreamError(body string, statusCode int) string {
 		return string(runes[:120]) + "…"
 	}
 	return trimmed
+}
+
+// isKeepAliveLine: 过滤上游保活注释行（如 "data: : keep-alive" 或 ": keep-alive"），
+// 这类行不是合法 SSE data，会干扰严格客户端（如 pi agent）的流解析
+func isKeepAliveLine(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	return strings.HasPrefix(trimmed, ":") ||
+		strings.HasPrefix(trimmed, "data: :") ||
+		strings.HasPrefix(trimmed, "data::")
 }

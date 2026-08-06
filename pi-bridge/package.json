@@ -1,0 +1,16 @@
+{
+  "name": "pi-bridge",
+  "version": "1.0.0",
+  "main": "server.js", "type": "module",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "@earendil-works/pi-ai": "^0.74.2",
+    "@earendil-works/pi-coding-agent": "^0.74.2"
+  }
+}

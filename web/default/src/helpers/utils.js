@@ -95,10 +95,21 @@ export function showError(error) {
   console.error(error);
   if (error.message) {
     if (error.name === 'AxiosError') {
+      if (!error.response) {
+        toast.error('网络错误：' + (error.message || '无法连接服务器'), showErrorOptions);
+        return;
+      }
       switch (error.response.status) {
         case 401:
           // toast.error('错误：未登录或登录已过期，请重新登录！', showErrorOptions);
-          window.location.href = '/login?expired=true';
+          // canvas 内层（iframe）整页跳转时必须保留 canvas_inner 标记，
+          // 否则 iframe 内按外层模式渲染会嵌套 iframe 递归白屏
+          {
+            const canvasInner = new URLSearchParams(window.location.search).has('canvas_inner')
+              ? '&canvas_inner=1'
+              : '';
+            window.location.href = '/login?expired=true' + canvasInner;
+          }
           break;
         case 429:
           toast.error('错误：请求次数过多，请稍后再试！', showErrorOptions);

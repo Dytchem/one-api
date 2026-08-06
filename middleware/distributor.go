@@ -51,7 +51,8 @@ func Distribute() func(c *gin.Context) {
 			if abilityErr == nil && len(abilities) > 0 {
 				filtered := monitor.FilterAbilities(abilities, nil)
 				if len(filtered) > 0 {
-					channel, err = model.GetChannelById(filtered[0].ChannelId, false)
+					// dyt-63: 必须取完整渠道（含 key），否则转发时 Authorization 为空，上游报"无效的令牌"
+					channel, err = model.GetChannelById(filtered[0].ChannelId, true)
 				}
 			}
 

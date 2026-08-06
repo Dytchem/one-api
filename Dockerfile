@@ -20,6 +20,11 @@ COPY ./web .
 # dyt-55: 预建产物目录（.dockerignore 不再携带 web/build，mv 目标父目录需存在）
 RUN set -e && mkdir -p /web/build && DISABLE_ESLINT_PLUGIN='true' REACT_APP_VERSION=$(cat ./VERSION) npm run build --prefix /web/default
 
+# pi-bridge（内置 agent/chat 后台会话服务）：仅依赖文件变化时重装
+COPY ./pi-bridge/package.json ./pi-bridge/package-lock.json /pi-bridge/
+RUN set -e && npm ci --prefix /pi-bridge --no-audit --no-fund --omit=dev
+COPY ./pi-bridge/server.js /pi-bridge/
+
 FROM golang:1.22-alpine3.20 AS builder2
 
 RUN apk add --no-cache \
@@ -43,12 +48,18 @@ COPY --from=builder /web/build ./web/build
 
 RUN go build -trimpath -ldflags "-s -w -X 'github.com/songquanpeng/one-api/common.Version=$(cat VERSION)' -linkmode external -extldflags '-static'" -o one-api
 
-FROM alpine:3.20
+FROM node:20-alpine
 
 RUN apk add --no-cache ca-certificates tzdata
+
+# pi-bridge：agent / 聊天后台会话服务（与 one-api 同容器，由 entrypoint 一并拉起）
+COPY --from=builder /pi-bridge /pi-bridge
+COPY ./pi-bridge/server.js /pi-bridge/server.js
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
 COPY --from=builder2 /build/one-api /
 
 EXPOSE 3000
 WORKDIR /data
-ENTRYPOINT ["/one-api"]
+ENTRYPOINT ["/entrypoint.sh"]

@@ -23,6 +23,16 @@ const IS_INNER = new URLSearchParams(window.location.search).has(
   'canvas_inner'
 );
 
+// dyt-71: 防递归保险 —— 若 iframe 内因整页跳转丢失 canvas_inner 标记，
+// 会按外层模式渲染再次嵌套 iframe（递归白屏）。检测到非顶层窗口即强制补标记重载。
+if (!IS_INNER && window.self !== window.top) {
+  const params = new URLSearchParams(window.location.search);
+  params.set('canvas_inner', '1');
+  window.location.replace(
+    window.location.pathname + '?' + params.toString()
+  );
+}
+
 function getFrameScale() {
   return window.innerWidth / CANVAS_WIDTH;
 }

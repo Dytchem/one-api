@@ -10,11 +10,12 @@
     "log": "日志",
     "setting": "设置",
     "about": "关于",
-    "chat": "聊天",
+    "chat": "Chat",
     "login": "登录",
     "logout": "注销",
     "register": "注册",
-    "fail_logs": "失败日志"
+    "fail_logs": "失败",
+    "agent": "Agent"
   },
   "topup": {
     "title": "充值中心",
@@ -196,7 +197,7 @@
     },
     "buttons": {
       "copy": "复制",
-      "chat": "聊天",
+      "chat": "Chat",
       "delete": "删除",
       "confirm_delete": "删除令牌",
       "enable": "启用",
@@ -871,5 +872,37 @@
     "model_placeholder": "模型名",
     "copy_success": "已复制到剪贴板",
     "copy_failed": "复制失败，请手动复制"
+  },
+  "chat": {
+    "title": "Chat",
+    "new_chat": "新对话",
+    "token": "令牌",
+    "model": "模型",
+    "no_sessions": "暂无会话",
+    "empty_hint": "开始你的第一次对话吧",
+    "no_token_hint": "你还没有可用令牌，",
+    "goto_token": "去创建 →",
+    "clear": "清空对话",
+    "placeholder": "输入消息，Enter 发送，Shift+Enter 换行…",
+    "streaming": "正在生成…",
+    "enter_hint": "Enter 发送 / Shift+Enter 换行",
+    "stop": "停止",
+    "send": "发送",
+    "channel": "渠道",
+    "auto_channel": "自动分配",
+    "attach": "上传图片/音频/视频",
+    "thinking": "思考",
+    "thinking_off": "关闭",
+    "thinking_low": "低",
+    "thinking_medium": "中",
+    "thinking_high": "高",
+    "thinking_custom": "自定义"
+  },
+  "agent": {
+    "title": "AI Agent",
+    "note": "由 pi agent 驱动：可调用工具查询/管理 one-api（渠道、令牌、用户、日志）。",
+    "self_tip": "仅基本工具可用（管理员拥有全部 one-api 管理工具）",
+    "empty_hint": "让 Agent 帮你管理 one-api",
+    "placeholder": "描述你要做的事，例如：列出所有渠道并测试它们…"
   }
 }

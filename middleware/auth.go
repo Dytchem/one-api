@@ -1,14 +1,20 @@
 package middleware
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
+	"github.com/songquanpeng/one-api/common"
 	"github.com/songquanpeng/one-api/common/blacklist"
 	"github.com/songquanpeng/one-api/common/ctxkey"
+	"github.com/songquanpeng/one-api/common/helper"
 	"github.com/songquanpeng/one-api/common/network"
 	"github.com/songquanpeng/one-api/model"
+	"io"
 	"net/http"
+	"strconv"
 	"strings"
 )
 
@@ -141,6 +147,31 @@ func TokenAuth() func(c *gin.Context) {
 			}
 		}
 
+		// dyt-62: 请求体 channel_id 指定渠道（聊天页固定渠道）
+		if channelId := extractChannelId(c); channelId != "" {
+			if !model.IsAdmin(token.UserId) {
+				ch, err := model.GetChannelById(helper.String2Int(channelId), true)
+				if err != nil {
+					abortWithMessage(c, http.StatusBadRequest, "无效的渠道 Id")
+					return
+				}
+				if ch.Status != model.ChannelStatusEnabled {
+					abortWithMessage(c, http.StatusForbidden, "该渠道已被禁用")
+					return
+				}
+				userGroup, err := model.CacheGetUserGroup(token.UserId)
+				if err != nil || !channelGroupAllowed(ch.Group, userGroup) {
+					abortWithMessage(c, http.StatusForbidden, "该渠道对当前用户不可用")
+					return
+				}
+				if requestModel != "" && ch.Models != "" && !isModelInList(requestModel, ch.Models) {
+					abortWithMessage(c, http.StatusForbidden, fmt.Sprintf("该渠道不支持模型：%s", requestModel))
+					return
+				}
+			}
+			c.Set(ctxkey.SpecificChannelId, channelId)
+		}
+
 		// set channel id for proxy relay
 		if channelId := c.Param("channelid"); channelId != "" {
 			c.Set(ctxkey.SpecificChannelId, channelId)
@@ -164,4 +195,50 @@ func shouldCheckModel(c *gin.Context) bool {
 		return true
 	}
 	return false
+}
+
+// dyt-62: 从请求体提取 channel_id 并移除（不随透传发给上游）。
+// 聊天页通过 channel_id 固定使用指定渠道。
+func channelGroupAllowed(channelGroup, userGroup string) bool {
+	if channelGroup == "" {
+		return true
+	}
+	for _, g := range strings.Split(channelGroup, ",") {
+		if strings.TrimSpace(g) == userGroup {
+			return true
+		}
+	}
+	return false
+}
+
+func extractChannelId(c *gin.Context) string {
+	requestBody, err := common.GetRequestBody(c)
+	if err != nil || len(requestBody) == 0 {
+		return ""
+	}
+	var data map[string]any
+	if err := json.Unmarshal(requestBody, &data); err != nil {
+		return ""
+	}
+	val, ok := data["channel_id"]
+	if !ok {
+		return ""
+	}
+	var idStr string
+	switch v := val.(type) {
+	case string:
+		idStr = v
+	case float64:
+		if v > 0 {
+			idStr = strconv.Itoa(int(v))
+		}
+	default:
+		return ""
+	}
+	delete(data, "channel_id")
+	if newBody, err := json.Marshal(data); err == nil {
+		c.Set(ctxkey.KeyRequestBody, newBody)
+		c.Request.Body = io.NopCloser(bytes.NewBuffer(newBody))
+	}
+	return idStr
 }

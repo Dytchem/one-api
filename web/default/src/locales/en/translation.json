@@ -14,7 +14,8 @@
     "login": "Login",
     "logout": "Logout",
     "register": "Register",
-    "fail_logs": "Fail Logs"
+    "fail_logs": "Fail",
+    "agent": "Agent"
   },
   "topup": {
     "title": "Top Up Center",
@@ -875,5 +876,37 @@
     "model_placeholder": "Model Name",
     "copy_success": "Copied to clipboard",
     "copy_failed": "Copy failed, please copy manually"
+  },
+  "chat": {
+    "title": "Chat",
+    "new_chat": "New Chat",
+    "token": "Token",
+    "model": "Model",
+    "no_sessions": "No sessions yet",
+    "empty_hint": "Start your first conversation",
+    "no_token_hint": "No usable token, ",
+    "goto_token": "create one →",
+    "clear": "Clear",
+    "placeholder": "Type a message, Enter to send, Shift+Enter for newline…",
+    "streaming": "Generating…",
+    "enter_hint": "Enter to send / Shift+Enter for newline",
+    "stop": "Stop",
+    "send": "Send",
+    "channel": "Channel",
+    "auto_channel": "Auto",
+    "attach": "Attach image/audio/video",
+    "thinking": "Thinking",
+    "thinking_off": "Off",
+    "thinking_low": "Low",
+    "thinking_medium": "Medium",
+    "thinking_high": "High",
+    "thinking_custom": "Custom"
+  },
+  "agent": {
+    "title": "AI Agent",
+    "note": "Powered by pi agent: can call tools to query/manage one-api (channels, tokens, users, logs).",
+    "self_tip": "Basic tools only (admin has full one-api management tools)",
+    "empty_hint": "Ask the Agent to manage one-api for you",
+    "placeholder": "Describe what to do, e.g.: list all channels and test them…"
   }
 }

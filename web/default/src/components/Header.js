@@ -65,13 +65,19 @@ let headerButtons = [
   },
 ];
 
-if (localStorage.getItem('chat_link')) {
-  headerButtons.splice(1, 0, {
-    name: 'header.chat',
-    to: '/chat',
-    icon: 'comments',
-  });
-}
+// dyt-61: 聊天入口固定显示，与渠道/日志等并列（不再依赖 chat_link 设置）
+headerButtons.splice(1, 0, {
+  name: 'header.chat',
+  to: '/chat',
+  icon: 'comments',
+});
+
+// dyt-64: Agent 入口（pi agent）
+headerButtons.splice(2, 0, {
+  name: 'header.agent',
+  to: '/agent',
+  icon: 'magic',
+});
 
 // dyt-57: 单一布局 —— 所有分辨率使用同一套顶部导航（无手机/桌面分支），
 // 窄屏通过 CSS 收缩（隐藏 logo 文字、菜单项压缩、溢出横向滚动兜底）

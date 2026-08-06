@@ -5,11 +5,9 @@ import { API, showError } from '../../helpers';
 import { UserContext } from '../../context/User';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router-dom';
+import { isAdmin } from '../../helpers';
 
 marked.setOptions({ breaks: true, gfm: true });
-
-const MAX_ATTACHMENTS = 4;
-const MAX_ATTACH_SIZE = 15 * 1024 * 1024;
 
 function renderMarkdown(content) {
   if (!content) return '';
@@ -24,51 +22,21 @@ function sanitizeTitle(text) {
   return t.length > 24 ? t.slice(0, 24) + '…' : t;
 }
 
-function buildContent(text, attachments) {
-  if (attachments.length === 0) return text;
-  const parts = [];
-  attachments.forEach((a) => {
-    if (a.mime.startsWith('image/')) {
-      parts.push({ type: 'image_url', image_url: { url: a.dataUrl } });
-    } else if (a.mime.startsWith('audio/')) {
-      parts.push({
-        type: 'input_audio',
-        input_audio: { data: a.dataUrl.split(',')[1], format: a.ext },
-      });
-    } else if (a.mime.startsWith('video/')) {
-      parts.push({
-        type: 'input_video',
-        input_video: { video: { data: a.dataUrl.split(',')[1], mime_type: a.mime } },
-      });
-    }
-  });
-  if (text) parts.push({ type: 'text', text });
-  return parts;
-}
-
-function renderMessageContent(m) {
-  const c = m.content;
-  if (typeof c === 'string') return <div>{c}</div>;
-  if (Array.isArray(c)) {
-    return c.map((p, i) => {
-      if (!p || typeof p !== 'object') return null;
-      if (p.type === 'text') return <div key={i}>{p.text}</div>;
-      if (p.type === 'image_url')
-        return <img key={i} src={p.image_url?.url} className='msg-image' alt='' />;
-      if (p.type === 'input_audio' || p.type === 'input_video')
-        return (
-          <div key={i} className='msg-attach-tag'>
-            <Icon name={p.type === 'input_audio' ? 'music' : 'video'} />
-            {p.type === 'input_audio' ? '音频' : '视频'}
-          </div>
-        );
-      return null;
-    });
+function prettyArgs(args) {
+  try {
+    return JSON.stringify(args, null, 2);
+  } catch (e) {
+    return String(args);
   }
-  return null;
 }
 
-class ChatErrorBoundary extends React.Component {
+function prettyResult(result) {
+  if (!result) return '';
+  if (result.length > 600) return result.slice(0, 600) + '…';
+  return result;
+}
+
+class AgentErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
     this.state = { error: null };
@@ -77,7 +45,7 @@ class ChatErrorBoundary extends React.Component {
     return { error };
   }
   componentDidCatch(error, info) {
-    console.error('Chat render failed:', error, info);
+    console.error('Agent render failed:', error, info);
   }
   render() {
     if (this.state.error) {
@@ -97,10 +65,11 @@ class ChatErrorBoundary extends React.Component {
   }
 }
 
-const Chat = () => {
+const Agent = () => {
   const [userState] = useContext(UserContext);
   const { t } = useTranslation();
   const userId = userState?.user?.id;
+  const admin = isAdmin();
 
   const [tokens, setTokens] = useState([]);
   const [token, setToken] = useState(null);
@@ -111,21 +80,18 @@ const Chat = () => {
   const [sessions, setSessions] = useState([]);
   const [activeId, setActiveId] = useState(null);
   const [input, setInput] = useState('');
-  const [attachments, setAttachments] = useState([]);
   const [thinkingLevel, setThinkingLevel] = useState('off');
   const [thinkingCustom, setThinkingCustom] = useState('');
   const [showThinkingCustom, setShowThinkingCustom] = useState(false);
+  const [expandedCards, setExpandedCards] = useState({});
   const [expandedThinking, setExpandedThinking] = useState({});
   const controllerRef = useRef(null);
   const resumeControllerRef = useRef(null);
-  const onDeltaRef = useRef(null);
-  const onThinkingRef = useRef(null);
   const listRef = useRef(null);
   const textareaRef = useRef(null);
-  const fileInputRef = useRef(null);
 
-  const storageKey = `chat-sessions-${userId || 'guest'}`;
-  const prefsKey = `chat-prefs-${userId || 'guest'}`;
+  const storageKey = `agent-sessions-${userId || 'guest'}`;
+  const prefsKey = `agent-prefs-${userId || 'guest'}`;
 
   const loadPrefs = () => {
     try {
@@ -134,52 +100,15 @@ const Chat = () => {
       return {};
     }
   };
-
   const savePrefs = (patch) => {
     try {
       localStorage.setItem(prefsKey, JSON.stringify({ ...loadPrefs(), ...patch }));
     } catch (e) {
-      // 忽略存储失败
+      // 忽略
     }
   };
-
   const persist = (list) => {
-    // 大附件（base64 图片/音视频）不持久化，避免 localStorage 膨胀导致刷新后请求巨大
-    const compact = list.map((s) => ({
-      ...s,
-      messages: s.messages.map((m) => {
-        if (Array.isArray(m.content)) {
-          return {
-            ...m,
-            content: m.content.map((p) => {
-              if (
-                p &&
-                p.type === 'image_url' &&
-                p.image_url &&
-                typeof p.image_url.url === 'string' &&
-                p.image_url.url.startsWith('data:') &&
-                p.image_url.url.length > 120000
-              ) {
-                return { type: 'image_url', image_url: { url: '[图片附件已省略]' } };
-              }
-              return p;
-            }),
-          };
-        }
-        return m;
-      }),
-    }));
-    try {
-      localStorage.setItem(storageKey, JSON.stringify(compact));
-    } catch (e) {
-      // localStorage 溢出时退回存储文本摘要
-      try {
-        const minimal = compact.map((s) => ({ ...s, messages: s.messages.slice(-6) }));
-        localStorage.setItem(storageKey, JSON.stringify(minimal));
-      } catch (e2) {
-        // 忽略
-      }
-    }
+    localStorage.setItem(storageKey, JSON.stringify(list));
   };
 
   const loadTokens = async () => {
@@ -190,9 +119,7 @@ const Chat = () => {
         setTokens(list);
         const usable = list.find((tk) => tk.status === 1 && tk.remain_quota > 0);
         const prefs = loadPrefs();
-        const remembered = prefs.tokenId
-          ? list.find((tk) => tk.id === prefs.tokenId)
-          : null;
+        const remembered = prefs.tokenId ? list.find((tk) => tk.id === prefs.tokenId) : null;
         setToken(remembered || usable || list[0] || null);
       }
     } catch (err) {
@@ -207,12 +134,12 @@ const Chat = () => {
         const list = res.data.data || [];
         setChannels(list);
         const prefs = loadPrefs();
-        if (prefs.channelId && list.some((c) => c.id === prefs.channelId)) {
+        if (prefs.channelId && list.some((cc) => cc.id === prefs.channelId)) {
           setChannelId(prefs.channelId);
         }
       }
     } catch (err) {
-      // 渠道列表加载失败不阻塞聊天
+      // 忽略
     }
   };
 
@@ -221,22 +148,18 @@ const Chat = () => {
     loadChannels();
   }, []);
 
-  // 模型列表：指定渠道 → 该渠道 models（非空时）；否则 → 令牌可用模型
+  // 模型列表：Agent 用 pi 的模型表（bridge 同步），前端直接展示 one-api 模型
   useEffect(() => {
     if (!token) {
       setModels([]);
       return;
     }
     const prefs = loadPrefs();
-    const ch = channels.find((c) => c.id === channelId);
+    const ch = channels.find((cc) => cc.id === channelId);
     if (ch && ch.models && ch.models.length > 0) {
       const list = ch.models.map((m) => ({ key: m, text: m, value: m }));
       setModels(list);
-      setModel(
-        prefs.model && list.some((m) => m.value === prefs.model)
-          ? prefs.model
-          : list[0]?.value || ''
-      );
+      setModel(prefs.model && list.some((m) => m.value === prefs.model) ? prefs.model : list[0]?.value || '');
       return;
     }
     let cancelled = false;
@@ -253,11 +176,7 @@ const Chat = () => {
         if (cancelled) return;
         const list = (json.data || []).map((m) => ({ key: m.id, text: m.id, value: m.id }));
         setModels(list);
-        setModel(
-          prefs.model && list.some((m) => m.value === prefs.model)
-            ? prefs.model
-            : list[0]?.value || ''
-        );
+        setModel(prefs.model && list.some((m) => m.value === prefs.model) ? prefs.model : list[0]?.value || '');
       } catch (err) {
         if (!cancelled) setModels([]);
       }
@@ -317,17 +236,17 @@ const Chat = () => {
     const clearPending = () => {
       if (clearedOnce) return;
       clearedOnce = true;
-      updateSessionMessages(sid, (msgs) => {
+      updateSession(sid, (msgs) => {
         const copy = [...msgs];
         const l = copy[copy.length - 1];
         if (l && l.role === 'assistant' && !l.finished) {
-          copy[copy.length - 1] = { ...l, content: '', thinking: '' };
+          copy[copy.length - 1] = { ...l, content: '', thinking: '', toolCalls: [], parts: [] };
         }
         return copy;
       });
     };
     const finishSilently = () => {
-      updateSessionMessages(
+      updateSession(
         sid,
         (msgs) => {
           const copy = [...msgs];
@@ -341,21 +260,12 @@ const Chat = () => {
       );
     };
     const applyResumeEvent = (data) => {
-      const append = (updater) =>
-        updateSessionMessages(sid, (msgs) => {
-          const copy = [...msgs];
-          const l = copy[copy.length - 1];
-          if (l && l.role === 'assistant') {
-            copy[copy.length - 1] = updater(l);
-          }
-          return copy;
-        });
-      if (data.type === 'delta') {
+      if (data.type === 'delta' || data.type === 'thinking') {
         clearPending();
-        append((m) => ({ ...m, content: (m.content || '') + data.content }));
-      } else if (data.type === 'thinking') {
+        handleAgentEvent(sid, data);
+      } else if (data.type === 'tool_start' || data.type === 'tool_end') {
         clearPending();
-        append((m) => ({ ...m, thinking: (m.thinking || '') + data.content }));
+        handleAgentEvent(sid, data);
       } else if (data.type === 'done') {
         finishSilently();
       } else if (data.type === 'error') {
@@ -366,7 +276,7 @@ const Chat = () => {
     };
     const doResume = async () => {
       try {
-        const resp = await fetch('/api/chat/resume', {
+        const resp = await fetch('/api/agent/resume', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ session_id: sid }),
@@ -392,9 +302,7 @@ const Chat = () => {
           const events = buffer.split('\n\n');
           buffer = events.pop();
           for (const evt of events) {
-            const line = evt
-              .split('\n')
-              .find((l) => l.startsWith('data:'));
+            const line = evt.split('\n').find((l) => l.startsWith('data:'));
             if (!line) continue;
             const raw = line.slice(5).trim();
             if (!raw) continue;
@@ -431,7 +339,6 @@ const Chat = () => {
     setActiveId(session.id);
     savePrefs({ activeSessionId: session.id });
     setInput('');
-    setAttachments([]);
     textareaRef.current?.focus();
   };
 
@@ -446,19 +353,7 @@ const Chat = () => {
     }
   };
 
-  const clearSession = () => {
-    if (!activeSession) return;
-    setSessions((prev) => {
-      const list = prev.map((s) =>
-        s.id === activeId ? { ...s, messages: [], title: t('chat.new_chat') } : s
-      );
-      persist(list);
-      return list;
-    });
-    setAttachments([]);
-  };
-
-  const updateSessionMessages = (id, updater, meta) => {
+  const updateSession = (id, updater, meta) => {
     setSessions((prev) => {
       const list = prev.map((s) => {
         if (s.id !== id) return s;
@@ -474,55 +369,155 @@ const Chat = () => {
     });
   };
 
-  const onFiles = (e) => {
-    const files = Array.from(e.target.files || []);
-    e.target.value = '';
-    files.forEach((f) => {
-      if (attachments.length + files.length > MAX_ATTACHMENTS) {
-        showError(`最多同时上传 ${MAX_ATTACHMENTS} 个附件`);
-        return;
-      }
-      if (f.size > MAX_ATTACH_SIZE) {
-        showError(`${f.name} 超过 15MB 限制`);
-        return;
-      }
-      const reader = new FileReader();
-      reader.onload = () => {
-        const a = {
-          name: f.name,
-          mime: f.type || 'application/octet-stream',
-          dataUrl: reader.result,
-          ext: (f.name.split('.').pop() || 'bin').toLowerCase(),
-        };
-        setAttachments((prev) => (prev.length >= MAX_ATTACHMENTS ? prev : [...prev, a]));
-      };
-      reader.readAsDataURL(f);
+  const clearSession = () => {
+    if (!activeSession) return;
+    setSessions((prev) => {
+      const list = prev.map((s) =>
+        s.id === activeId ? { ...s, messages: [], title: t('chat.new_chat') } : s
+      );
+      persist(list);
+      return list;
     });
   };
 
-  const removeAttachment = (idx) => {
-    setAttachments((prev) => prev.filter((_, i) => i !== idx));
+  const handleSseStream = async (resp, controller, onEvent) => {
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let lastData = Date.now();
+    const idleGuard = setInterval(() => {
+      if (Date.now() - lastData > 60000) controller.abort();
+    }, 10000);
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        lastData = Date.now();
+        buffer += decoder.decode(value, { stream: true });
+        const events = buffer.split('\n\n');
+        buffer = events.pop();
+        for (const evt of events) {
+          const line = evt.split('\n').find((l) => l.startsWith('data:'));
+          if (!line) continue;
+          const raw = line.slice(5).trim();
+          if (!raw) continue;
+          try {
+            onEvent(JSON.parse(raw));
+          } catch (e) {
+            // 忽略无法解析的行
+          }
+        }
+      }
+    } finally {
+      clearInterval(idleGuard);
+    }
+  };
+
+  // 事件按时间顺序写入消息片段（thinking / 文本 / 工具卡片穿插出现）
+  const pushPart = (sid, part) => {
+    updateSession(sid, (msgs) => {
+      const copy = [...msgs];
+      const last = copy[copy.length - 1];
+      if (!last || last.role !== 'assistant') return copy;
+      copy[copy.length - 1] = { ...last, parts: [...(last.parts || []), part] };
+      return copy;
+    });
+  };
+  // 同类型片段连续则追加，否则新开片段（保证顺序：文本后出现工具调用时不再拼到文本前）
+  const appendToPart = (sid, kind, text) => {
+    updateSession(sid, (msgs) => {
+      const copy = [...msgs];
+      const last = copy[copy.length - 1];
+      if (!last || last.role !== 'assistant') return copy;
+      const parts = last.parts || [];
+      const i = parts.length - 1;
+      if (i >= 0 && parts[i].type === kind && parts[i].complete !== true) {
+        const np = [...parts];
+        np[i] = { ...np[i], text: (np[i].text || '') + text };
+        copy[copy.length - 1] = { ...last, parts: np };
+      } else {
+        copy[copy.length - 1] = {
+          ...last,
+          parts: [...parts, { type: kind, text }],
+        };
+      }
+      return copy;
+    });
+  };
+
+  const handleAgentEvent = (sid, data) => {
+    if (data.type === 'delta') {
+      appendToPart(sid, 'text', data.content);
+    } else if (data.type === 'thinking') {
+      appendToPart(sid, 'thinking', data.content);
+    } else if (data.type === 'tool_start') {
+      pushPart(sid, {
+        type: 'tool',
+        tool: data.tool,
+        args: data.args,
+        status: 'running',
+        result: '',
+      });
+    } else if (data.type === 'tool_end') {
+      updateSession(sid, (msgs) => {
+        const copy = [...msgs];
+        const last = copy[copy.length - 1];
+        if (!last || last.role !== 'assistant') return copy;
+        const parts = last.parts || [];
+        const np = [...parts];
+        let idx = -1;
+        for (let i = np.length - 1; i >= 0; i--) {
+          if (np[i].type === 'tool' && np[i].tool === data.tool && np[i].status === 'running') {
+            idx = i;
+            break;
+          }
+        }
+        if (idx >= 0) {
+          np[idx] = {
+            ...np[idx],
+            status: data.ok ? 'done' : 'error',
+            result: data.result || '',
+          };
+          copy[copy.length - 1] = { ...last, parts: np };
+        }
+        return copy;
+      });
+    } else if (data.type === 'error') {
+      appendToPart(sid, 'error', data.message || '');
+    } else if (data.type === 'done') {
+      updateSession(
+        sid,
+        (msgs) => {
+          const copy = [...msgs];
+          const last = copy[copy.length - 1];
+          if (last && last.role === 'assistant') {
+            copy[copy.length - 1] = { ...last, finished: true };
+          }
+          return copy;
+        },
+        { streaming: false }
+      );
+    }
   };
 
   const send = async () => {
     const text = input.trim();
-    if ((!text && attachments.length === 0) || streaming) return;
+    if (!text || streaming) return;
     if (!token) {
-      showError('请先创建令牌再使用 Chat');
+      showError('请先创建令牌再使用 Agent');
       return;
     }
     if (!model) {
-      showError('请选择模型');
+      showError('请选择模型（需支持工具调用）');
       return;
     }
-    const content = buildContent(text, attachments);
     let id = activeId;
     let baseSessions = sessions;
     if (!id) {
       const session = {
         id: Date.now().toString(36),
         title: t('chat.new_chat'),
-        model: model,
+        model,
         messages: [],
         updatedAt: Date.now(),
       };
@@ -534,26 +529,16 @@ const Chat = () => {
       persist(baseSessions);
     }
     setInput('');
-    setAttachments([]);
 
-    // 请求体：剔除历史中未完成的旧回复（该轮已被取代）
-    let history = baseSessions.find((s) => s.id === id)?.messages || [];
-    if (history.length > 0) {
-      const last = history[history.length - 1];
-      if (last && last.role === 'assistant' && !last.finished) {
-        history = history.slice(0, -1);
-      }
-    }
-    let messages = [...history, { role: 'user', content }];
-    // 历史过大时裁剪（保留首条 + 最近 10 条），防止请求体膨胀超模型上下文
-    if (JSON.stringify(messages).length > 150000 && messages.length > 12) {
-      messages = [messages[0], ...messages.slice(-10), { role: 'user', content }];
-    }
     // UI 立即进入"正在生成"：追加用户消息 + 空 assistant 消息，会话标记 streaming
     // （刷新后从此状态恢复：界面照旧显示生成中，并自动重新订阅续传）
-    updateSessionMessages(
+    updateSession(
       id,
-      (msgs) => [...msgs, { role: 'user', content }, { role: 'assistant', content: '', thinking: '', finished: false }],
+      (msgs) => [
+        ...msgs,
+        { role: 'user', content: text },
+        { role: 'assistant', content: '', toolCalls: [], parts: [] },
+      ],
       { streaming: true }
     );
 
@@ -563,33 +548,16 @@ const Chat = () => {
     const controller = new AbortController();
     controllerRef.current = controller;
 
-    const markFinished = () => {
-      updateSessionMessages(
-        id,
-        (msgs) => {
-          const copy = [...msgs];
-          const last = copy[copy.length - 1];
-          if (last && last.role === 'assistant') {
-            copy[copy.length - 1] = { ...last, finished: true };
-          }
-          return copy;
-        },
-        { streaming: false }
-      );
-    };
-
     let idleGuard = null;
     try {
-      const body = { session_id: id, model, messages, token_key: token.key };
+      const body = { session_id: id, model, message: text, token_key: token.key };
       if (channelId) body.channel_id = channelId;
       const effectiveLevel =
         thinkingLevel === 'custom'
           ? thinkingCustom.trim()
           : thinkingLevel;
-      if (effectiveLevel && effectiveLevel !== 'off') {
-        body.thinking_level = effectiveLevel;
-      }
-      const resp = await fetch('/api/chat/send', {
+      if (effectiveLevel && effectiveLevel !== 'off') body.thinking_level = effectiveLevel;
+      const resp = await fetch('/api/agent/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -609,7 +577,7 @@ const Chat = () => {
       const decoder = new TextDecoder();
       let buffer = '';
       let lastData = Date.now();
-      idleGuard = setInterval(() => {
+      const idleGuard = setInterval(() => {
         if (Date.now() - lastData > 60000) controller.abort();
       }, 10000);
       while (true) {
@@ -633,71 +601,51 @@ const Chat = () => {
             continue;
           }
           if (data.type === 'delta') {
-            updateSessionMessages(id, (msgs) => {
-              const copy = [...msgs];
-              const last = copy[copy.length - 1];
-              if (last && last.role === 'assistant') {
-                copy[copy.length - 1] = { ...last, content: (last.content || '') + data.content };
-              }
-              return copy;
-            });
+            handleAgentEvent(id, data);
           } else if (data.type === 'thinking') {
-            updateSessionMessages(id, (msgs) => {
-              const copy = [...msgs];
-              const last = copy[copy.length - 1];
-              if (last && last.role === 'assistant') {
-                copy[copy.length - 1] = { ...last, thinking: (last.thinking || '') + data.content };
-              }
-              return copy;
-            });
+            handleAgentEvent(id, data);
+          } else if (data.type === 'tool_start') {
+            handleAgentEvent(id, data);
+          } else if (data.type === 'tool_end') {
+            handleAgentEvent(id, data);
           } else if (data.type === 'error') {
-            updateSessionMessages(
+            updateSession(
               id,
               (msgs) => {
                 const copy = [...msgs];
                 const last = copy[copy.length - 1];
                 if (last && last.role === 'assistant') {
-                  copy[copy.length - 1] = {
-                    ...last,
-                    content: last.content || `请求失败：${data.message}`,
-                    error: true,
-                    finished: true,
-                  };
+                  copy[copy.length - 1] = { ...last, finished: true };
                 }
                 return copy;
               },
               { streaming: false }
             );
+            handleAgentEvent(id, data);
           } else if (data.type === 'done') {
-            markFinished();
+            handleAgentEvent(id, data);
           }
         }
       }
     } catch (err) {
       if (err.name !== 'AbortError') {
-        updateSessionMessages(
+        updateSession(
           id,
           (msgs) => {
             const copy = [...msgs];
             const last = copy[copy.length - 1];
             if (last && last.role === 'assistant' && !last.finished) {
-              copy[copy.length - 1] = {
-                ...last,
-                content: last.content || `请求失败：${err.message}`,
-                error: true,
-                finished: true,
-              };
+              copy[copy.length - 1] = { ...last, finished: true };
             }
             return copy;
           },
           { streaming: false }
         );
+        pushPart(id, { type: 'error', text: `请求失败：${err.message}` });
       }
     } finally {
       if (idleGuard) clearInterval(idleGuard);
       controllerRef.current = null;
-      onDeltaRef.current = null;
-      onThinkingRef.current = null;
     }
   };
 
@@ -705,7 +653,7 @@ const Chat = () => {
     controllerRef.current?.abort();
     resumeControllerRef.current?.abort();
     if (activeId) {
-      updateSessionMessages(
+      updateSession(
         activeId,
         (msgs) => {
           const copy = [...msgs];
@@ -726,6 +674,10 @@ const Chat = () => {
       if (streaming) stop();
       else send();
     }
+  };
+
+  const toggleCard = (key) => {
+    setExpandedCards((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
   const sidebarSelects = (
@@ -789,6 +741,9 @@ const Chat = () => {
           placeholder={models.length ? '' : '无可用模型'}
         />
       </div>
+      {!admin && (
+        <div className='agent-admin-tip'>{t('agent.self_tip')}</div>
+      )}
     </>
   );
 
@@ -796,7 +751,8 @@ const Chat = () => {
     <div className='dashboard-container'>
       <Card fluid className='chart-card'>
         <Card.Content>
-          <Card.Header className='header'>{t('chat.title')}</Card.Header>
+          <Card.Header className='header'>{t('agent.title')}</Card.Header>
+          <div className='agent-note'>{t('agent.note')}</div>
           <div className='chat-layout'>
             <div className='chat-sidebar'>
               {sidebarSelects}
@@ -829,8 +785,8 @@ const Chat = () => {
             <div className='chat-main'>
               {!activeSession ? (
                 <div className='chat-empty'>
-                  <Icon name='comments outline' size='huge' />
-                  <div>{t('chat.empty_hint')}</div>
+                  <Icon name='magic' size='huge' />
+                  <div>{t('agent.empty_hint')}</div>
                   {!token && (
                     <div className='chat-empty-tip'>
                       {t('chat.no_token_hint')}
@@ -842,6 +798,7 @@ const Chat = () => {
                 <>
                   <div className='chat-header'>
                     <span className='chat-header-title'>
+                      <Icon name='magic' style={{ marginRight: '6px' }} />
                       {activeSession.title}
                       {model ? ` · ${model}` : ''}
                     </span>
@@ -856,49 +813,153 @@ const Chat = () => {
                     </Button>
                   </div>
                   <div className='chat-messages' ref={listRef}>
-                    {activeSession.messages.map((m, idx) => (
-                      <div key={idx} className={`msg-row ${m.role} ${m.error ? 'error' : ''}`}>
-                        <div className='msg-bubble'>
-                          {m.role === 'assistant' && !m.error ? (
-                            <>
-                              {m.thinking && (
-                                <div
-                                  className='msg-thinking'
-                                  onClick={() =>
-                                    setExpandedThinking((prev) => ({
-                                      ...prev,
-                                      [idx]: !prev[idx],
-                                    }))
-                                  }
-                                >
-                                  <div className='msg-thinking-header'>
-                                    <Icon name='eye' style={{ margin: 0, fontSize: '12px' }} />
-                                    思考过程
-                                    <Icon
-                                      name={expandedThinking[idx] ? 'chevron up' : 'chevron down'}
-                                      className='msg-thinking-chevron'
-                                    />
-                                  </div>
-                                  {expandedThinking[idx] !== false && (
-                                    <div className='msg-thinking-body'>{m.thinking}</div>
+                    {activeSession.messages.map((m, idx) => {
+                      if (m.role === 'user') {
+                        return (
+                          <div key={idx} className='msg-row user'>
+                            <div className='msg-bubble'>
+                              {typeof m.content === 'string' ? m.content : JSON.stringify(m.content)}
+                            </div>
+                          </div>
+                        );
+                      }
+                      if (m.role === 'assistant') {
+                        const hasParts = m.parts && m.parts.length > 0;
+                        const hasToolCalls = m.toolCalls && m.toolCalls.length > 0;
+                        const renderToolCard = (tc, ci, keyBase) => {
+                          const key = `${keyBase}-${ci}`;
+                          const expanded = expandedCards[key];
+                          return (
+                            <div key={ci} className={`tool-card ${tc.status}`}>
+                              <div
+                                className='tool-card-header'
+                                onClick={() => toggleCard(key)}
+                              >
+                                <Icon name='cog' />
+                                <span className='tool-card-name'>{tc.tool}</span>
+                                <span className='tool-card-status'>
+                                  {tc.status === 'running' && (
+                                    <Icon loading name='spinner' />
+                                  )}
+                                  {tc.status === 'done' && (
+                                    <Icon name='check circle' color='green' />
+                                  )}
+                                  {tc.status === 'error' && (
+                                    <Icon name='times circle' color='red' />
+                                  )}
+                                </span>
+                                <Icon
+                                  name={expanded ? 'chevron up' : 'chevron down'}
+                                  className='tool-card-chevron'
+                                />
+                              </div>
+                              {expanded && (
+                                <div className='tool-card-body'>
+                                  {tc.args && Object.keys(tc.args).length > 0 && (
+                                    <pre className='tool-card-args'>{prettyArgs(tc.args)}</pre>
+                                  )}
+                                  {tc.result && (
+                                    <div className='tool-card-result'>
+                                      <div className='tool-card-result-label'>
+                                        结果
+                                      </div>
+                                      <pre>{prettyResult(tc.result)}</pre>
+                                    </div>
                                   )}
                                 </div>
                               )}
-                              {typeof m.content === 'string' ? (
-                                <div
-                                  className='msg-markdown'
-                                  dangerouslySetInnerHTML={{ __html: renderMarkdown(m.content) }}
-                                />
+                            </div>
+                          );
+                        };
+                        return (
+                          <div key={idx} className={`msg-row assistant ${m.error ? 'error' : ''}`}>
+                            <div className='msg-bubble'>
+                              {hasParts ? (
+                                m.parts.map((p, pi) => {
+                                  if (p.type === 'thinking') {
+                                    const tkey = `${idx}-t${pi}`;
+                                    return (
+                                      <div
+                                        key={pi}
+                                        className='msg-thinking'
+                                        onClick={() =>
+                                          setExpandedThinking((prev) => ({ ...prev, [tkey]: !prev[tkey] }))
+                                        }
+                                      >
+                                        <div className='msg-thinking-header'>
+                                          <Icon name='eye' style={{ margin: 0, fontSize: '12px' }} />
+                                          思考过程
+                                          <Icon
+                                            name={expandedThinking[tkey] ? 'chevron up' : 'chevron down'}
+                                            className='msg-thinking-chevron'
+                                          />
+                                        </div>
+                                        {expandedThinking[tkey] !== false && (
+                                          <div className='msg-thinking-body'>{p.text}</div>
+                                        )}
+                                      </div>
+                                    );
+                                  }
+                                  if (p.type === 'text') {
+                                    return (
+                                      <div
+                                        key={pi}
+                                        className='msg-markdown'
+                                        dangerouslySetInnerHTML={{ __html: renderMarkdown(p.text) }}
+                                      />
+                                    );
+                                  }
+                                  if (p.type === 'tool') {
+                                    return renderToolCard(p, pi, idx);
+                                  }
+                                  if (p.type === 'error') {
+                                    return (
+                                      <div key={pi} className='msg-error'>
+                                        {p.text}
+                                      </div>
+                                    );
+                                  }
+                                  return null;
+                                })
                               ) : (
-                                renderMessageContent(m)
+                                <>
+                                  {m.thinking && (
+                                    <div
+                                      className='msg-thinking'
+                                      onClick={() =>
+                                        setExpandedThinking((prev) => ({ ...prev, [idx]: !prev[idx] }))
+                                      }
+                                    >
+                                      <div className='msg-thinking-header'>
+                                        <Icon name='eye' style={{ margin: 0, fontSize: '12px' }} />
+                                        思考过程
+                                        <Icon
+                                          name={expandedThinking[idx] ? 'chevron up' : 'chevron down'}
+                                          className='msg-thinking-chevron'
+                                        />
+                                      </div>
+                                      {expandedThinking[idx] !== false && (
+                                        <div className='msg-thinking-body'>{m.thinking}</div>
+                                      )}
+                                    </div>
+                                  )}
+                                  {m.content ? (
+                                    <div
+                                      className='msg-markdown'
+                                      dangerouslySetInnerHTML={{ __html: renderMarkdown(m.content) }}
+                                    />
+                                  ) : null}
+                                  {!m.content && !hasToolCalls && !m.thinking && <div>…</div>}
+                                  {hasToolCalls &&
+                                    m.toolCalls.map((tc, ci) => renderToolCard(tc, ci, idx))}
+                                </>
                               )}
-                            </>
-                          ) : (
-                            renderMessageContent(m)
-                          )}
-                        </div>
-                      </div>
-                    ))}
+                            </div>
+                          </div>
+                        );
+                      }
+                      return null;
+                    })}
                     {streaming && (
                       <div className='msg-row assistant'>
                         <div className='msg-bubble msg-streaming'>▋</div>
@@ -906,60 +967,19 @@ const Chat = () => {
                     )}
                   </div>
                   <div className='chat-input'>
-                    {attachments.length > 0 && (
-                      <div className='chat-attachments'>
-                        {attachments.map((a, i) => (
-                          <div key={i} className='chat-attach'>
-                            {a.mime.startsWith('image/') ? (
-                              <img src={a.dataUrl} alt='' />
-                            ) : (
-                              <Icon
-                                name={a.mime.startsWith('audio/') ? 'music' : 'film'}
-                              />
-                            )}
-                            <span className='chat-attach-name'>{a.name}</span>
-                            <Icon
-                              name='close'
-                              className='chat-attach-del'
-                              onClick={() => removeAttachment(i)}
-                            />
-                          </div>
-                        ))}
-                      </div>
-                    )}
                     <textarea
                       ref={textareaRef}
                       rows={3}
-                      placeholder={t('chat.placeholder')}
+                      placeholder={t('agent.placeholder')}
                       value={input}
                       onChange={(e) => setInput(e.target.value)}
                       onKeyDown={onKeyDown}
                       disabled={streaming}
                     />
                     <div className='chat-input-actions'>
-                      <div className='chat-input-left'>
-                        <Button
-                          size='small'
-                          basic
-                          icon
-                          title={t('chat.attach')}
-                          onClick={() => fileInputRef.current?.click()}
-                          disabled={streaming}
-                        >
-                          <Icon name='paperclip' />
-                        </Button>
-                        <input
-                          ref={fileInputRef}
-                          type='file'
-                          multiple
-                          accept='image/*,audio/*,video/*'
-                          style={{ display: 'none' }}
-                          onChange={onFiles}
-                        />
-                        <span className='chat-input-hint'>
-                          {streaming ? t('chat.streaming') : t('chat.enter_hint')}
-                        </span>
-                      </div>
+                      <span className='chat-input-hint'>
+                        {streaming ? t('chat.streaming') : t('chat.enter_hint')}
+                      </span>
                       <div className='chat-thinking'>
                         <span className='chat-thinking-label'>{t('chat.thinking')}</span>
                         {[
@@ -1000,7 +1020,7 @@ const Chat = () => {
                         icon
                         labelPosition='left'
                         onClick={() => (streaming ? stop() : send())}
-                        disabled={streaming ? false : !input.trim() && attachments.length === 0}
+                        disabled={streaming ? false : !input.trim()}
                       >
                         <Icon name={streaming ? 'stop' : 'send'} />
                         {streaming ? t('chat.stop') : t('chat.send')}
@@ -1018,7 +1038,7 @@ const Chat = () => {
 };
 
 export default () => (
-  <ChatErrorBoundary>
-    <Chat />
-  </ChatErrorBoundary>
+  <AgentErrorBoundary>
+    <Agent />
+  </AgentErrorBoundary>
 );

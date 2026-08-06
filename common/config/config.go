@@ -172,6 +172,9 @@ var InitialRootToken = os.Getenv("INITIAL_ROOT_TOKEN")
 
 var InitialRootAccessToken = os.Getenv("INITIAL_ROOT_ACCESS_TOKEN")
 
+// dyt-64: pi agent 桥接服务地址（http://127.0.0.1:3005）
+var AgentBridgeURL = os.Getenv("AGENT_BRIDGE_URL")
+
 var GeminiVersion = env.String("GEMINI_VERSION", "v1")
 
 var OnlyOneLogFile = env.Bool("ONLY_ONE_LOG_FILE", false)
