@@ -64,10 +64,12 @@ func markLogFailed(log *Log) {
 	}
 }
 
-// BackfillFailFlags dyt-93: is_failed 历史回填（只执行一次，用 option 标记）
+// BackfillFailFlags dyt-93: is_failed 历史回填（只执行一次，用 option 标记）。
+// 注意：migrateLOGDB 在初始化早期执行，此时 OptionMap 尚未初始化，
+// 不能调用 UpdateOption（会 panic），标记直接写库。
 func BackfillFailFlags() {
 	var flag Option
-	if err := DB.Where("key = ?", "backfill_is_failed_done").First(&flag).Error; err == nil {
+	if err := DB.First(&flag, Option{Key: "backfill_is_failed_done"}).Error; err == nil {
 		return // 已完成
 	}
 	err := LOG_DB.Model(&Log{}).
@@ -77,7 +79,7 @@ func BackfillFailFlags() {
 		logger.SysError("failed to backfill is_failed flags: " + err.Error())
 		return
 	}
-	UpdateOption("backfill_is_failed_done", "1")
+	DB.Create(&Option{Key: "backfill_is_failed_done", Value: "1"})
 }
 
 const (
