@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -236,6 +238,15 @@ func FetchChannelModels(c *gin.Context) {
 		}
 	}
 
+	// Validate URL to prevent SSRF
+	if err := validateURL(req.BaseURL); err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": "无效的 API 地址: " + err.Error(),
+		})
+		return
+	}
+
 	// Parse base URL: strip trailing / and version segments (/v1, /v2, /v3)
 	baseURL := strings.TrimRight(req.BaseURL, "/")
 	for _, ver := range []string{"/v1", "/v2", "/v3"} {
@@ -245,6 +256,10 @@ func FetchChannelModels(c *gin.Context) {
 
 	// Helper: try one URL, return parsed models or nil+error
 	tryURL := func(modelURL string) ([]string, error) {
+		// Re-validate the constructed model URL
+		if err := validateURL(modelURL); err != nil {
+			return nil, fmt.Errorf("无效的模型接口地址: %v", err)
+		}
 		httpReq, err := http.NewRequest(http.MethodGet, modelURL, nil)
 		if err != nil {
 			return nil, fmt.Errorf("创建请求失败: %v", err)
@@ -374,6 +389,15 @@ func FetchChannelModelsByID(c *gin.Context) {
 		}
 	}
 
+	// Validate base URL to prevent SSRF (even from DB, defense in depth)
+	if err := validateURL(baseURL); err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": "渠道配置的 API 地址无效: " + err.Error(),
+		})
+		return
+	}
+
 	// Parse base URL: strip trailing / and version segments
 	baseURL = strings.TrimRight(baseURL, "/")
 	for _, ver := range []string{"/v1", "/v2", "/v3"} {
@@ -391,6 +415,10 @@ func FetchChannelModelsByID(c *gin.Context) {
 	// We call ourselves by constructing a request - but since we're in the same
 	// process, let's just inline the fetch logic directly
 	tryURL := func(modelURL string) ([]string, error) {
+		// Validate model URL to prevent SSRF
+		if err := validateURL(modelURL); err != nil {
+			return nil, fmt.Errorf("无效的模型接口地址: %v", err)
+		}
 		httpReq, err := http.NewRequest(http.MethodGet, modelURL, nil)
 		if err != nil {
 			return nil, fmt.Errorf("创建请求失败: %v", err)
@@ -557,4 +585,56 @@ func GetChannelHealth(c *gin.Context) {
 		"message": "",
 		"data":    healthData,
 	})
+}
+
+// validateURL validates URL to prevent SSRF attacks
+func validateURL(rawURL string) error {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("URL 解析失败: %v", err)
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return fmt.Errorf("仅支持 http/https 协议")
+	}
+
+	host := parsed.Hostname()
+	if host == "" {
+		return fmt.Errorf("主机名为空")
+	}
+
+	// Block localhost and loopback
+	if host == "localhost" || host == "127.0.0.1" || host == "::1" {
+		return fmt.Errorf("禁止访问本地回环地址")
+	}
+
+	// Block private IP ranges (RFC 1918)
+	ip := net.ParseIP(host)
+	if ip != nil {
+		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+			return fmt.Errorf("禁止访问私有/内网 IP 地址")
+		}
+		// Block cloud metadata services
+		if ip.Equal(net.IPv4(169, 254, 169, 254)) || // AWS/GCP/Azure metadata
+			ip.Equal(net.IPv4(169, 254, 170, 2)) { // Azure IMDS
+			return fmt.Errorf("禁止访问云元数据服务")
+		}
+	}
+
+	// DNS resolution check for hostnames (block private IPs via DNS)
+	if ip == nil {
+		ips, err := net.LookupIP(host)
+		if err != nil {
+			return fmt.Errorf("域名解析失败: %v", err)
+		}
+		for _, resolvedIP := range ips {
+			if resolvedIP.IsLoopback() || resolvedIP.IsPrivate() || resolvedIP.IsLinkLocalUnicast() || resolvedIP.IsLinkLocalMulticast() {
+				return fmt.Errorf("域名解析到私有/内网 IP 地址")
+			}
+			if resolvedIP.Equal(net.IPv4(169, 254, 169, 254)) || resolvedIP.Equal(net.IPv4(169, 254, 170, 2)) {
+				return fmt.Errorf("域名解析到云元数据服务")
+			}
+		}
+	}
+
+	return nil
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 
 	"github.com/gin-gonic/gin"
 	"github.com/songquanpeng/one-api/common"
@@ -47,7 +48,7 @@ func Relay(c *gin.Context) {
 	relayMode := relaymode.GetByPath(c.Request.URL.Path)
 	if config.DebugEnabled {
 		requestBody, _ := common.GetRequestBody(c)
-		logger.Debugf(ctx, "request body: %s", string(requestBody))
+		logger.Debugf(ctx, "request body (redacted): %s", redactRequestBody(requestBody))
 	}
 	channelId := c.GetInt(ctxkey.ChannelId)
 	userId := c.GetInt(ctxkey.Id)
@@ -125,10 +126,11 @@ func Relay(c *gin.Context) {
 			bizErr.Error.Message = "当前分组上游负载已饱和，请稍后再试"
 		}
 
-		// BUG: bizErr is in race condition
-		bizErr.Error.Message = helper.MessageWithRequestId(bizErr.Error.Message, requestId)
+		// 拷贝一份 error 再附加 requestId，避免与并发 goroutine 共享的 bizErr 产生竞态
+		errCopy := bizErr.Error
+		errCopy.Message = helper.MessageWithRequestId(errCopy.Message, requestId)
 		c.JSON(bizErr.StatusCode, gin.H{
-			"error": bizErr.Error,
+			"error": errCopy,
 		})
 	}
 }
@@ -187,4 +189,14 @@ func RelayNotFound(c *gin.Context) {
 	c.JSON(http.StatusNotFound, gin.H{
 		"error": err,
 	})
+}
+
+// redactRequestBody 脱敏日志中的敏感字段（api_key / key / authorization 等），防止 DEBUG 日志泄露密钥
+func redactRequestBody(body []byte) string {
+	s := string(body)
+	s = regexp.MustCompile(`(?i)("(?:api_key|key|authorization|password|secret|token)"\s*:\s*")([^"]*)(")`).ReplaceAllString(s, `${1}***${3}`)
+	if len(s) > 2048 {
+		s = s[:2048] + "...(truncated)"
+	}
+	return s
 }

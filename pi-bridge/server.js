@@ -17,6 +17,8 @@ import { Type } from 'typebox';
 
 const PORT = parseInt(process.env.PORT || '3005', 10);
 const ONEAPI_BASE = process.env.ONEAPI_BASE || 'http://100.64.0.114:3003';
+// dyt-92: 管理员 token 必须显式配置；缺失时仅保留本地工具能力并警告（模型表不自动同步）。
+// 该 token 用于 /v1/models 同步，泄露会导致模型枚举，故不提供硬编码兜底。
 const ONEAPI_ADMIN_TOKEN = process.env.ONEAPI_ADMIN_TOKEN || '';
 const AGENT_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'agent');
 const MODELS_PATH = path.join(AGENT_DIR, 'models.json');
@@ -798,14 +800,44 @@ function loadSessions() {
 }
 
 let saveTimer = null;
-// 定期清理：24 小时无活跃的会话，防止内存与事件无限增长（busy 会话不清）
+// 定期清理：
+// - 24 小时无活跃的会话（busy 会话不清）
+// - busy 超过 1 小时视为卡死（上次审计发现的泄漏场景），强制清理
+// - 全局会话总数上限 MAX_SESSIONS，超出时淘汰最旧的非 busy 会话
+const MAX_SESSIONS = 500;
+const BUSY_STALE_MS = 3600 * 1000;
 setInterval(() => {
   const cutoff = Date.now() - 24 * 3600 * 1000;
+  const busyCutoff = Date.now() - BUSY_STALE_MS;
   for (const [sid, h] of sessions) {
+    if (h.busy && h.lastActive && h.lastActive < busyCutoff) {
+      try { h.controller?.abort?.(); } catch (e) { /* ignore */ }
+      sessions.delete(sid);
+      continue;
+    }
     if (!h.busy && h.lastActive && h.lastActive < cutoff) sessions.delete(sid);
   }
   for (const [sid, h] of chatSessions) {
+    if (h.busy && h.lastActive && h.lastActive < busyCutoff) {
+      try { h.controller?.abort?.(); } catch (e) { /* ignore */ }
+      chatSessions.delete(sid);
+      continue;
+    }
     if (!h.busy && h.lastActive && h.lastActive < cutoff) chatSessions.delete(sid);
+  }
+  // 全局上限：超出时按 lastActive 最旧优先淘汰（busy 会话不淘汰）
+  if (sessions.size + chatSessions.size > MAX_SESSIONS) {
+    const all = [];
+    for (const [sid, h] of sessions) if (!h.busy) all.push([sid, h, 0]);
+    for (const [sid, h] of chatSessions) if (!h.busy) all.push([sid, h, 1]);
+    all.sort((a, b) => (a[1].lastActive || 0) - (b[1].lastActive || 0));
+    let toEvict = sessions.size + chatSessions.size - MAX_SESSIONS;
+    for (const [sid, h, kind] of all) {
+      if (toEvict <= 0) break;
+      if (kind === 0) sessions.delete(sid);
+      else chatSessions.delete(sid);
+      toEvict--;
+    }
   }
 }, 3600 * 1000);
 

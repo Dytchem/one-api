@@ -107,6 +107,7 @@ func main() {
 	//server.Use(gzip.Gzip(gzip.DefaultCompression))
 	server.Use(middleware.RequestId())
 	server.Use(middleware.Language())
+	server.Use(middleware.SecurityHeaders())
 	middleware.SetUpLogger(server)
 	// Initialize session store
 	// dyt-34: 显式设置 cookie 安全选项

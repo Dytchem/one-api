@@ -51,10 +51,13 @@ export function renderMarkdown(content) {
       return html ? `<div class="math-block">${html}</div>` : m;
     });
 
-  // 3. 行内公式 $...$（以字母或反斜杠开头，避免误伤 $5 等价格写法）或 \(...\)
+  // 3. 行内公式 $...$（首字符不限字母：支持 $3uv+p=0$、$(u+v)^3$ 等；
+  //    排除 $$ 块（块级已处理）、\$ 转义、以及 $5 / $5.99 等价格写法）或 \(...\)
   out = out
-    .replace(/(^|[^\\])\$([a-zA-Z\\][^$]*?)\$/g, (m, pre, expr) => {
-      const html = renderFormula(expr.trim(), false);
+    .replace(/(^|[^\\$])\$(?!\$)([^\s$][^$\n]*?)\$(?![\d.])/g, (m, pre, expr) => {
+      const trimmed = expr.trim();
+      if (/^\d+(?:[.,]\d+)*$/.test(trimmed)) return m;
+      const html = renderFormula(trimmed, false);
       return html ? `${pre}${html}` : m;
     })
     .replace(/\\\(([\s\S]+?)\\\)/g, (m, expr) => {
