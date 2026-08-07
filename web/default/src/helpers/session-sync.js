@@ -11,7 +11,7 @@ export function syncSessions(kind, list, userId) {
   timers[kind] = setTimeout(() => {
     try {
       list.slice(0, 50).forEach((s) => {
-        API.put('/api/session', {
+        API.put('/api/user/session', {
           kind,
           session_id: s.id,
           title: s.title || '新对话',
@@ -26,14 +26,14 @@ export function syncSessions(kind, list, userId) {
 
 export function deleteRemoteSession(kind, id, userId) {
   if (!userId) return;
-  API.delete(`/api/session/${kind}/${id}`).catch(() => {});
+  API.delete(`/api/user/session/${kind}/${id}`).catch(() => {});
 }
 
 // 拉取服务器会话列表；失败返回 null（调用方保留本地数据）
 export async function loadRemoteSessions(kind, userId) {
   if (!userId) return null;
   try {
-    const res = await API.get(`/api/session?kind=${kind}`);
+    const res = await API.get(`/api/user/session?kind=${kind}`);
     if (res.data && res.data.success) {
       return (res.data.data || []).map((s) => ({
         id: s.id,
