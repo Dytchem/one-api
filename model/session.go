@@ -11,10 +11,10 @@ import (
 type ChatSession struct {
 	Id        int    `json:"id" gorm:"primaryKey"`
 	UserId    int    `json:"user_id" gorm:"index"`
-	Kind      string `json:"kind" gorm:"index"` // chat | agent
-	SessionId string `json:"session_id" gorm:"uniqueIndex:idx_user_kind_sid"`
-	Title     string `json:"title"`
-	Messages  string `json:"messages"` // JSON 字符串（前端序列化；大附件/工具结果已由前端压缩）
+	Kind      string `json:"kind" gorm:"size:16;index"`       // chat | agent
+	SessionId string `json:"session_id" gorm:"size:64;uniqueIndex:idx_user_kind_sid"`
+	Title     string `json:"title" gorm:"size:512"`
+	Messages  string `json:"messages"` // JSON 字符串（大附件/工具结果已由前端压缩）
 	CreatedAt int64  `json:"created_at"`
 	UpdatedAt int64  `json:"updated_at"`
 }
