@@ -39,8 +39,9 @@ func SetApiRouter(router *gin.Engine) {
 		apiRouter.GET("/oauth/lark", middleware.CriticalRateLimit(), auth.LarkOAuth)
 		apiRouter.GET("/oauth/state", middleware.CriticalRateLimit(), auth.GenerateOAuthCode)
 		apiRouter.GET("/oauth/wechat", middleware.CriticalRateLimit(), auth.WeChatAuth)
-		apiRouter.GET("/oauth/wechat/bind", middleware.CriticalRateLimit(), middleware.UserAuth(), auth.WeChatBind)
-		apiRouter.GET("/oauth/email/bind", middleware.CriticalRateLimit(), middleware.UserAuth(), controller.EmailBind)
+		// dyt-104: 绑定类 GET 接口叠加同源守卫，阻断跨站 CSRF 绑定（详见 middleware.SameOriginGuard）
+		apiRouter.GET("/oauth/wechat/bind", middleware.CriticalRateLimit(), middleware.SameOriginGuard(), middleware.UserAuth(), auth.WeChatBind)
+		apiRouter.GET("/oauth/email/bind", middleware.CriticalRateLimit(), middleware.SameOriginGuard(), middleware.UserAuth(), controller.EmailBind)
 
 		userRoute := apiRouter.Group("/user")
 		{

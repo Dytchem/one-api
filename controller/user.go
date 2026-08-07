@@ -196,6 +196,10 @@ func GetAllUsers(c *gin.Context) {
 			size = parsedSize
 		}
 	}
+	// dyt-104: 分页上限，防止超大 size 拖垮 DB / 产生超大响应
+	if size > 200 {
+		size = 200
+	}
 
 	order := c.DefaultQuery("order", "")
 	users, err := model.GetAllUsers(p*size, size, order)
@@ -269,8 +273,11 @@ func GetUser(c *gin.Context) {
 func GetUserDashboard(c *gin.Context) {
 	id := c.GetInt(ctxkey.Id)
 	now := time.Now()
-	startOfDay := now.Truncate(24*time.Hour).AddDate(0, 0, -6).Unix()
-	endOfDay := now.Truncate(24 * time.Hour).Add(24*time.Hour - time.Second).Unix()
+	// dyt-104: Truncate(24h) 以 UTC 纪元零点为界，非 UTC 时区统计日界错位；
+	// 改用服务器本地时区的当日零点
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	startOfDay := today.AddDate(0, 0, -6).Unix()
+	endOfDay := today.Add(24*time.Hour - time.Second).Unix()
 
 	dashboards, err := model.SearchLogsByDayAndModel(id, int(startOfDay), int(endOfDay))
 	if err != nil {
@@ -560,6 +567,10 @@ func DeleteSelf(c *gin.Context) {
 		})
 		return
 	}
+	// dyt-104: 注销当前会话（鉴权中间件虽有 DB 回查兜底，仍应主动清理 cookie 会话）
+	session := sessions.Default(c)
+	session.Clear()
+	_ = session.Save()
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
@@ -681,6 +692,17 @@ func ManageUser(c *gin.Context) {
 			})
 			return
 		}
+		// dyt-104: 删除已完成，直接返回——原实现 fallthrough 到下方 Update(false)，
+		// 对已软删除用户再做一次多余的全字段回写
+		c.JSON(http.StatusOK, gin.H{
+			"success": true,
+			"message": "",
+			"data": gin.H{
+				"role":   user.Role,
+				"status": user.Status,
+			},
+		})
+		return
 	case "promote":
 		if myRole != model.RoleRootUser {
 			c.JSON(http.StatusOK, gin.H{

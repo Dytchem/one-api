@@ -1,0 +1,56 @@
+# dyt-104: push/PR CI 门禁工作流（建议启用）。
+# 本文件放在 docs/ 是因为审计机器人令牌缺少 workflows 权限，无法直接写入 .github/workflows/。
+# 启用方法：复制为 .github/workflows/ci.yml 并提交。
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  go-checks:
+    name: Go vet / build / test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: gofmt check
+        run: |
+          UNFMT=$(gofmt -l $(find . -name '*.go' -not -path './web/*'))
+          if [ -n "$UNFMT" ]; then
+            echo "以下文件未通过 gofmt："
+            echo "$UNFMT"
+            exit 1
+          fi
+
+      - name: Go vet
+        run: go vet ./...
+
+      - name: Go build
+        run: go build ./...
+
+      - name: Go test
+        run: go test ./...
+
+  node-checks:
+    name: pi-bridge syntax check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Node syntax check (pi-bridge)
+        run: node --check pi-bridge/server.js

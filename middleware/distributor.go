@@ -34,7 +34,9 @@ func Distribute() func(c *gin.Context) {
 				abortWithMessage(c, http.StatusBadRequest, "无效的渠道 Id")
 				return
 			}
-			channel, err = model.GetChannelById(id, true)
+			// dyt-104: MemoryCacheEnabled 时走内存快照（状态变更处已即时刷新），
+			// 避免指定渠道的每个请求都查库；缓存未启用时自动回退 DB，语义不变
+			channel, err = model.CacheGetChannelById(id, true)
 			if err != nil {
 				abortWithMessage(c, http.StatusBadRequest, "无效的渠道 Id")
 				return

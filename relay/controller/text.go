@@ -607,6 +607,62 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 		return RelayErrorHandler(resp)
 	}
 
+	// dyt-104: OpenAI 兼容渠道的非流式 chat 响应先整体读入再判空。
+	// 原实现在 adaptor.DoResponse 已把响应写给客户端之后才判空并返回可重试的 502，
+	// Relay() 随即换渠道重试、向同一响应体写第二份 JSON → 客户端收到拼接的非法 JSON。
+	// 现在在写字节前完成判定，空响应可安全走 fallback/重试。
+	if meta.APIType == apitype.OpenAI && meta.Mode == relaymode.ChatCompletions {
+		body, readErr := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if readErr != nil {
+			return openai.ErrorWrapper(readErr, "read_response_body_failed", http.StatusInternalServerError)
+		}
+		var slimResp openai.SlimTextResponse
+		if json.Unmarshal(body, &slimResp) == nil && slimResp.Error.Type == "" {
+			hasContent := false
+			for _, choice := range slimResp.Choices {
+				if choice.Message.StringContent() != "" || len(choice.Message.ToolCalls) > 0 {
+					hasContent = true
+					break
+				}
+			}
+			if !hasContent && slimResp.Usage.TotalTokens == 0 {
+				logger.Warnf(ctx, "empty upstream response detected before write, triggering fallback")
+				chName := c.GetString(ctxkey.ChannelName)
+				chId := c.GetInt(ctxkey.ChannelId)
+				failLogContent := fmt.Sprintf("回复为空，渠道：%s(#%d)，模型：%s→%s，无 token 无内容", chName, chId, meta.OriginModelName, meta.ActualModelName)
+				failLogId := dbmodel.RecordConsumeLogWithId(ctx, &dbmodel.Log{
+					UserId:            meta.UserId,
+					TokenName:         meta.TokenName,
+					ModelName:         meta.OriginModelName,
+					ChannelId:         chId,
+					PromptTokens:      promptTokens,
+					CompletionTokens:  0,
+					Quota:             0,
+					Content:           failLogContent,
+					IsStream:          false,
+					ElapsedTime:       helper.CalcElapsedTime(meta.StartTime),
+					SystemPromptReset: systemPromptReset,
+				})
+				if failLogId > 0 {
+					if reqJSON, ok := c.Get("dyt20_request_json"); ok {
+						reqStr, _ := reqJSON.(string)
+						dbmodel.RecordLogPayloadAsync(&dbmodel.LogPayload{
+							LogId:     failLogId,
+							Request:   reqStr,
+							Response:  string(body),
+							Error:     "empty response (non-stream): no tokens and no content",
+							CreatedAt: meta.StartTime.Unix(),
+						})
+					}
+				}
+				return openai.ErrorWrapper(fmt.Errorf("empty response from channel"), "empty_response", http.StatusBadGateway)
+			}
+		}
+		// 非空响应：还原 body，交给 adaptor.DoResponse 正常写出
+		resp.Body = io.NopCloser(bytes.NewBuffer(body))
+	}
+
 	// 提取非流式回复内容用于日志
 	responseSnippet := ""
 	if rt, ok := c.Get("response_content"); ok {
@@ -701,7 +757,9 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 	}
 	// 空响应判定：usage 全 0 且无回复内容才算空。
 	// 不再仅凭 CompletionTokens==0 判定，避免误伤 embedding（completion 恒 0）/moderation 等正常响应
-	if usage != nil && usage.PromptTokens == 0 && usage.CompletionTokens == 0 && responseSnippet == "" {
+	// dyt-104: 响应已写给客户端时不得再返回可重试错误（重试会把第二份 body 追加到已提交的响应上）；
+	// OpenAI 兼容 chat 的判空已提前到写出之前，此处仅为其他渠道类型的兜底
+	if !c.Writer.Written() && usage != nil && usage.PromptTokens == 0 && usage.CompletionTokens == 0 && responseSnippet == "" {
 		logger.Warnf(ctx, "empty response detected (no tokens, no content), triggering fallback")
 		// dyt-20: 记录非流式空响应日志 + payload
 		chName := c.GetString(ctxkey.ChannelName)

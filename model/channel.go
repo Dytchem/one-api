@@ -241,7 +241,14 @@ func (channel *Channel) Delete() error {
 		return err
 	}
 	err = channel.DeleteAbilities()
-	return err
+	if err != nil {
+		return err
+	}
+	// dyt-104: 立即刷新内存渠道快照，避免已删渠道在 SyncFrequency 窗口内仍被缓存命中
+	if config.MemoryCacheEnabled {
+		InitChannelCache()
+	}
+	return nil
 }
 
 func (channel *Channel) LoadConfig() (ChannelConfig, error) {
@@ -286,12 +293,36 @@ func updateChannelUsedQuota(id int, quota int64) {
 	}
 }
 
-func DeleteChannelByStatus(status int64) (int64, error) {
-	result := DB.Where("status = ?", status).Delete(&Channel{})
-	return result.RowsAffected, result.Error
+// dyt-104: 批量删渠道必须同步清理 abilities 表——原实现只删 channels 行，
+// 残留的孤儿 ability 会让健康路由（GetTopSatisfiedAbilities/GetRandomSatisfiedChannel）
+// 选中不存在的渠道，前端收到"数据库一致性已被破坏"，对应模型彻底不可路由。
+// 返回被删除的渠道 id 列表，供调用方清理监控指标（model 不能 import monitor，循环依赖）。
+func DeleteChannelByStatus(status int64) ([]int, error) {
+	return deleteChannelsByCondition("status = ?", status)
 }
 
-func DeleteDisabledChannel() (int64, error) {
-	result := DB.Where("status = ? or status = ?", ChannelStatusAutoDisabled, ChannelStatusManuallyDisabled).Delete(&Channel{})
-	return result.RowsAffected, result.Error
+func DeleteDisabledChannel() ([]int, error) {
+	return deleteChannelsByCondition("status = ? or status = ?", ChannelStatusAutoDisabled, ChannelStatusManuallyDisabled)
+}
+
+func deleteChannelsByCondition(query any, args ...any) ([]int, error) {
+	var ids []int
+	if err := DB.Model(&Channel{}).Where(query, args...).Pluck("id", &ids).Error; err != nil {
+		return nil, err
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	if err := DB.Where("channel_id IN ?", ids).Delete(&Ability{}).Error; err != nil {
+		return nil, err
+	}
+	result := DB.Where("id IN ?", ids).Delete(&Channel{})
+	if result.Error != nil {
+		return nil, result.Error
+	}
+	// 与 UpdateChannelStatusById 一致：立即刷新内存渠道快照
+	if config.MemoryCacheEnabled {
+		InitChannelCache()
+	}
+	return ids, nil
 }

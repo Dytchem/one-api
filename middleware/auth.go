@@ -54,7 +54,20 @@ func authHelper(c *gin.Context, minRole int) {
 		// dyt-96: cookie 会话按 id 回查数据库，防止降权/封禁后旧 cookie 权限残留
 		// （session 里存的 role/status 是签发时的快照，最长 7 天不过期；
 		// 黑名单内存态在服务重启后清空，必须回查 DB 才有最终裁决权）
-		user, err := model.GetUserById(id.(int), false)
+		// dyt-104: 安全断言——会话值类型异常（存储格式变更/脏会话）时按未登录处理，
+		// 避免直接 panic 触发 500
+		sessionId, ok := id.(int)
+		if !ok {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"success": false,
+				"message": "会话无效，请重新登录",
+			})
+			session.Clear()
+			_ = session.Save()
+			c.Abort()
+			return
+		}
+		user, err := model.GetUserById(sessionId, false)
 		if err != nil || user.Username == "" {
 			c.JSON(http.StatusOK, gin.H{
 				"success": false,
@@ -68,8 +81,23 @@ func authHelper(c *gin.Context, minRole int) {
 		status = user.Status
 		id = user.Id
 	}
+	// dyt-104: 以下断言在正常流程必然成功（session 存 int / access token 路径来自 User 结构），
+	// 仍做 ok 检查兜底，类型异常一律按未登录拒绝
+	statusInt, statusOk := status.(int)
+	roleInt, roleOk := role.(int)
+	idInt, idOk := id.(int)
+	if !statusOk || !roleOk || !idOk {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"success": false,
+			"message": "会话无效，请重新登录",
+		})
+		session.Clear()
+		_ = session.Save()
+		c.Abort()
+		return
+	}
 	// dyt-93: 已删除用户（status=3）同样拒绝，防止删除后旧 cookie/会话在服务重启后复活
-	if status.(int) == model.UserStatusDisabled || status.(int) == model.UserStatusDeleted || blacklist.IsUserBanned(id.(int)) {
+	if statusInt == model.UserStatusDisabled || statusInt == model.UserStatusDeleted || blacklist.IsUserBanned(idInt) {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
 			"message": "用户已被封禁",
@@ -80,7 +108,7 @@ func authHelper(c *gin.Context, minRole int) {
 		c.Abort()
 		return
 	}
-	if role.(int) < minRole {
+	if roleInt < minRole {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
 			"message": "无权进行此操作，权限不足",
@@ -197,7 +225,10 @@ func TokenAuth() func(c *gin.Context) {
 		// 防止对内网渠道的管理端点/任意路径发起请求（SSRF 放大）
 		if channelId := c.Param("channelid"); channelId != "" {
 			if !model.IsAdmin(token.UserId) {
-				if !isAllowedProxyPath(c.Request.URL.Path) {
+				// dyt-104: 白名单必须校验 *target 段而不是完整请求路径——
+				// proxy 路由的 URL.Path 形如 /v1/oneapi/proxy/{id}{target}，
+				// 原实现拿整条路径比对端点前缀永远不命中，普通用户 proxy 被一刀切拒绝
+				if !isAllowedProxyPath(c.Param("target")) {
 					abortWithMessage(c, http.StatusForbidden, "普通用户仅可使用标准模型端点（chat/completions/embeddings/images/audio/models）")
 					return
 				}
@@ -239,7 +270,8 @@ func shouldCheckModel(c *gin.Context) bool {
 	return false
 }
 
-// isAllowedProxyPath: dyt-96 非 admin 经 proxy 路由可达的目标路径白名单
+// isAllowedProxyPath: dyt-96 非 admin 经 proxy 路由可达的目标路径白名单。
+// dyt-104: 收紧为路径段边界匹配，防止 /v1/chat/completionsX 这类前缀绕过
 func isAllowedProxyPath(path string) bool {
 	allowed := []string{
 		"/v1/chat/completions",
@@ -251,7 +283,7 @@ func isAllowedProxyPath(path string) bool {
 		"/v1/moderations",
 	}
 	for _, p := range allowed {
-		if strings.HasPrefix(path, p) {
+		if path == p || strings.HasPrefix(path, p+"/") {
 			return true
 		}
 	}

@@ -15,6 +15,23 @@ import (
 	"github.com/songquanpeng/one-api/model"
 )
 
+// dyt-104: bridge 调用共享 transport/client——原实现每次请求新建 http.Transport，
+// TCP 连接无法复用，聊天高频场景下每次都要重新握手（127.0.0.1 也有 syscall 开销），
+// 且泄漏的连接要等 finalizer 回收
+var (
+	bridgeTransport = &http.Transport{
+		DialContext:           (&net.Dialer{Timeout: 5 * time.Second}).DialContext,
+		ResponseHeaderTimeout: 15 * time.Second,
+		MaxIdleConns:          32,
+		MaxIdleConnsPerHost:   16,
+		IdleConnTimeout:       90 * time.Second,
+	}
+	// SSE 透传：不设总超时（bridge 侧 Agent 最长执行 5 分钟），依赖请求 ctx 取消
+	bridgeStreamClient = &http.Client{Transport: bridgeTransport, Timeout: 0}
+	// 普通 JSON 调用（stop 等）：10s 总超时
+	bridgeCallClient = &http.Client{Transport: bridgeTransport, Timeout: 10 * time.Second}
+)
+
 func checkTokenOwnership(c *gin.Context, tokenKey string) (int, bool) {
 	userId := c.GetInt(ctxkey.Id)
 	if tokenKey == "" {
@@ -53,12 +70,8 @@ func streamAgentBridge(c *gin.Context, path string, body map[string]any) {
 	// 注意：SSE 透传不能用总超时（bridge 侧 Agent 最长执行 5 分钟，30s 总超时会掐断长回复），
 	// 依赖 c.Request.Context() 在客户端断开时取消；
 	// 但拨号与响应头仍设超时，避免 bridge 半开/无响应时无限等待
-	transport := &http.Transport{
-		DialContext:           (&net.Dialer{Timeout: 5 * time.Second}).DialContext,
-		ResponseHeaderTimeout: 15 * time.Second,
-	}
-	client := &http.Client{Transport: transport, Timeout: 0}
-	resp, err := client.Do(httpReq)
+	// dyt-104: 使用包级共享 client（复用连接）
+	resp, err := bridgeStreamClient.Do(httpReq)
 	if err != nil {
 		if c.Request.Context().Err() != nil {
 			return
@@ -268,8 +281,8 @@ func stopBridge(c *gin.Context, path string, body map[string]any) {
 		// dyt-96: bridge 共享密钥鉴权
 		httpReq.Header.Set("X-Bridge-Token", config.AgentBridgeSecret)
 	}
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(httpReq)
+	// dyt-104: 使用包级共享 client（复用连接）
+	resp, err := bridgeCallClient.Do(httpReq)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"success": false, "message": "Agent 服务不可达"})
 		return

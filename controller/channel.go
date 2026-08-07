@@ -189,6 +189,8 @@ func DeleteChannel(c *gin.Context) {
 		})
 		return
 	}
+	// dyt-104: 同步清理监控指标，防止已删渠道的健康分残留（内存泄漏 + 误判）
+	monitor.GlobalPerformanceStore.RemoveChannelMetrics(id)
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
@@ -197,7 +199,7 @@ func DeleteChannel(c *gin.Context) {
 }
 
 func DeleteDisabledChannel(c *gin.Context) {
-	rows, err := model.DeleteDisabledChannel()
+	ids, err := model.DeleteDisabledChannel()
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
@@ -205,10 +207,14 @@ func DeleteDisabledChannel(c *gin.Context) {
 		})
 		return
 	}
+	// dyt-104: 逐个清理监控指标
+	for _, id := range ids {
+		monitor.GlobalPerformanceStore.RemoveChannelMetrics(id)
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
-		"data":    rows,
+		"data":    len(ids),
 	})
 	return
 }

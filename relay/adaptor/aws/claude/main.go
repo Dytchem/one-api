@@ -217,10 +217,11 @@ func StreamHandler(c *gin.Context, awsCli *bedrockruntime.Client) (*relaymodel.E
 			c.Render(-1, common.CustomEvent{Data: "data: " + string(jsonStr)})
 			return true
 		case *types.UnknownUnionMember:
-			fmt.Println("unknown tag:", v.Tag)
+			// dyt-104: 走统一日志（原 fmt.Println 绕过日志系统）
+			logger.SysError("unknown tag: " + v.Tag)
 			return false
 		default:
-			fmt.Println("union is nil or unknown type")
+			logger.SysError("union is nil or unknown type")
 			return false
 		}
 	})

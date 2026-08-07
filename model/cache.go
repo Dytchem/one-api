@@ -165,12 +165,13 @@ func CacheGetUserGroup(id int) (group string, err error) {
 		if err != nil {
 			return "", err
 		}
-		err = common.RedisSet(fmt.Sprintf("user_group:%d", id), group, time.Duration(UserId2GroupCacheSeconds)*time.Second)
-		if err != nil {
+		// dyt-104: 缓存写失败仅记日志，不得阻断请求（DB 现值已可用，读路径本就 fail-open）
+		if err = common.RedisSet(fmt.Sprintf("user_group:%d", id), group, time.Duration(UserId2GroupCacheSeconds)*time.Second); err != nil {
 			logger.SysError("Redis set user group error: " + err.Error())
 		}
+		return group, nil
 	}
-	return group, err
+	return group, nil
 }
 
 func fetchAndUpdateUserQuota(ctx context.Context, id int) (quota int64, err error) {
@@ -195,7 +196,10 @@ func CacheGetUserQuota(ctx context.Context, id int) (quota int64, err error) {
 	}
 	quota, err = strconv.ParseInt(quotaString, 10, 64)
 	if err != nil {
-		return 0, nil
+		// dyt-104: 缓存值损坏按未命中处理，回源 DB 并刷新（原实现吞错误返回 0，
+		// 会让用户收到误导性的"额度不足"）
+		logger.Errorf(ctx, "invalid cached user quota for user %d: %q, refreshing from db", id, quotaString)
+		return fetchAndUpdateUserQuota(ctx, id)
 	}
 	if quota <= config.PreConsumedQuota { // when user's quota is less than pre-consumed quota, we need to fetch from db
 		logger.Infof(ctx, "user %d's cached quota is too low: %d, refreshing from db", quota, id)
@@ -252,11 +256,11 @@ func CacheIsUserEnabled(userId int) (bool, error) {
 	if userEnabled {
 		enabled = "1"
 	}
-	err = common.RedisSet(fmt.Sprintf("user_enabled:%d", userId), enabled, time.Duration(UserId2StatusCacheSeconds)*time.Second)
-	if err != nil {
+	// dyt-104: 缓存写失败仅记日志，不得阻断鉴权（否则 Redis 抖动会让所有 API 请求 500）
+	if err = common.RedisSet(fmt.Sprintf("user_enabled:%d", userId), enabled, time.Duration(UserId2StatusCacheSeconds)*time.Second); err != nil {
 		logger.SysError("Redis set user enabled error: " + err.Error())
 	}
-	return userEnabled, err
+	return userEnabled, nil
 }
 
 func CacheGetGroupModels(ctx context.Context, group string) ([]string, error) {

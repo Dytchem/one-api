@@ -27,6 +27,10 @@ func GetAllTokens(c *gin.Context) {
 			size = parsedSize
 		}
 	}
+	// dyt-104: 分页上限，防止超大 size 拖垮 DB / 产生超大响应
+	if size > 200 {
+		size = 200
+	}
 	tokens, err := model.GetAllUserTokens(userId, p*size, size, order)
 
 	if err != nil {

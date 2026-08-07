@@ -74,8 +74,10 @@ func BackfillFailFlags() {
 	if err := DB.First(&flag, Option{Key: "backfill_is_failed_done"}).Error; err == nil {
 		return // 已完成
 	}
+	// dyt-104: HTTP 条件收紧为 "HTTP 1xx~5xx"，与 isFailContent 的正则口径一致；
+	// 原 '%HTTP %' 会把内容仅含 "HTTP " 字样的成功日志误标为失败
 	err := LOG_DB.Model(&Log{}).
-		Where("type IN (2, 4, 5) AND is_failed = ? AND (content LIKE '%探测失败%' OR content LIKE '%回复为空%' OR content LIKE '%状态：失败%' OR content LIKE '%状态: 失败%' OR content LIKE '%请求失败%' OR content LIKE '%HTTP %')", false).
+		Where("type IN (2, 4, 5) AND is_failed = ? AND (content LIKE '%探测失败%' OR content LIKE '%回复为空%' OR content LIKE '%状态：失败%' OR content LIKE '%状态: 失败%' OR content LIKE '%请求失败%' OR content LIKE '%HTTP 1%' OR content LIKE '%HTTP 2%' OR content LIKE '%HTTP 3%' OR content LIKE '%HTTP 4%' OR content LIKE '%HTTP 5%')", false).
 		Update("is_failed", true).Error
 	if err != nil {
 		logger.SysError("failed to backfill is_failed flags: " + err.Error())
@@ -350,7 +352,10 @@ func SearchAllLogs(keyword string) (logs []*Log, err error) {
 }
 
 func SearchUserLogs(userId int, keyword string) (logs []*Log, err error) {
-	err = LOG_DB.Where("user_id = ? and type = ?", userId, keyword).Order("id desc").Limit(config.MaxRecentItems).Omit("id").Find(&logs).Error
+	// dyt-104: 原实现把 keyword 传给 int 列 type 做比较——PostgreSQL 直接报
+	// "invalid input syntax for integer"→500，MySQL 隐式转换语义错误，SQLite 恒空。
+	// 与 SearchAllLogs 对齐：按 content 前缀匹配。
+	err = LOG_DB.Where("user_id = ? and content LIKE ?", userId, keyword+"%").Order("id desc").Limit(config.MaxRecentItems).Omit("id").Find(&logs).Error
 	return logs, err
 }
 

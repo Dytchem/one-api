@@ -267,6 +267,8 @@ func UpdateUserQuota(userId int, quota int64) error {
 
 // UpdateUserRole 显式更新角色（支持降为 RoleGuestUser=0，Updates 的零值补齐会吞掉该值）
 func UpdateUserRole(userId int, role int) error {
+	// dyt-104: 失效进程内用户缓存，否则降权后最长一个 SyncFrequency 窗口内旧角色仍生效
+	DeleteUserMemCache(userId)
 	return DB.Model(&User{}).Where("id = ?", userId).Update("role", role).Error
 }
 
@@ -363,28 +365,29 @@ func (user *User) FillUserByUsername() error {
 	return nil
 }
 
+// dyt-104: 存在性判断只取 id 列，避免 Find(&User{}) 拉全列（含密码哈希/access_token）
 func IsEmailAlreadyTaken(email string) bool {
-	return DB.Where("email = ?", email).Find(&User{}).RowsAffected == 1
+	return DB.Select("id").Where("email = ?", email).Find(&User{}).RowsAffected == 1
 }
 
 func IsWeChatIdAlreadyTaken(wechatId string) bool {
-	return DB.Where("wechat_id = ?", wechatId).Find(&User{}).RowsAffected == 1
+	return DB.Select("id").Where("wechat_id = ?", wechatId).Find(&User{}).RowsAffected == 1
 }
 
 func IsGitHubIdAlreadyTaken(githubId string) bool {
-	return DB.Where("github_id = ?", githubId).Find(&User{}).RowsAffected == 1
+	return DB.Select("id").Where("github_id = ?", githubId).Find(&User{}).RowsAffected == 1
 }
 
 func IsLarkIdAlreadyTaken(githubId string) bool {
-	return DB.Where("lark_id = ?", githubId).Find(&User{}).RowsAffected == 1
+	return DB.Select("id").Where("lark_id = ?", githubId).Find(&User{}).RowsAffected == 1
 }
 
 func IsOidcIdAlreadyTaken(oidcId string) bool {
-	return DB.Where("oidc_id = ?", oidcId).Find(&User{}).RowsAffected == 1
+	return DB.Select("id").Where("oidc_id = ?", oidcId).Find(&User{}).RowsAffected == 1
 }
 
 func IsUsernameAlreadyTaken(username string) bool {
-	return DB.Where("username = ?", username).Find(&User{}).RowsAffected == 1
+	return DB.Select("id").Where("username = ?", username).Find(&User{}).RowsAffected == 1
 }
 
 func ResetUserPasswordByEmail(email string, password string) error {

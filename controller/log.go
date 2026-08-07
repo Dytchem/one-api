@@ -20,6 +20,10 @@ func GetAllLogs(c *gin.Context) {
 			size = parsedSize
 		}
 	}
+	// dyt-104: 分页上限，防止超大 size 拖垮 DB / 产生超大响应
+	if size > 200 {
+		size = 200
+	}
 	logType, _ := strconv.Atoi(c.Query("type"))
 	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
 	endTimestamp, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)

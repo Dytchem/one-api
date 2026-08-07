@@ -2,7 +2,6 @@ package middleware
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"time"
 
@@ -10,6 +9,7 @@ import (
 
 	"github.com/songquanpeng/one-api/common"
 	"github.com/songquanpeng/one-api/common/config"
+	"github.com/songquanpeng/one-api/common/logger"
 )
 
 var timeFormat = "2006-01-02T15:04:05.000Z"
@@ -22,9 +22,9 @@ func redisRateLimiter(c *gin.Context, maxRequestNum int, duration int64, mark st
 	key := "rateLimit:" + mark + c.ClientIP()
 	listLength, err := rdb.LLen(ctx, key).Result()
 	if err != nil {
-		fmt.Println(err.Error())
-		c.Status(http.StatusInternalServerError)
-		c.Abort()
+		// dyt-104: Redis 故障时 fail-open——限流是防滥用手段，不应让 Redis 抖动
+		// 把全站请求打成 500；错误走统一日志（原 fmt.Println 绕过日志系统）
+		logger.SysError("redis rate limiter LLen failed (fail-open): " + err.Error())
 		return
 	}
 	if listLength < int64(maxRequestNum) {
@@ -34,22 +34,14 @@ func redisRateLimiter(c *gin.Context, maxRequestNum int, duration int64, mark st
 		oldTimeStr, _ := rdb.LIndex(ctx, key, -1).Result()
 		oldTime, err := time.Parse(timeFormat, oldTimeStr)
 		if err != nil {
-			fmt.Println(err)
-			c.Status(http.StatusInternalServerError)
-			c.Abort()
-			return
-		}
-		nowTimeStr := time.Now().Format(timeFormat)
-		nowTime, err := time.Parse(timeFormat, nowTimeStr)
-		if err != nil {
-			fmt.Println(err)
-			c.Status(http.StatusInternalServerError)
-			c.Abort()
+			// dyt-104: 时间戳损坏时清键放行（原实现直接 500）
+			logger.SysError("redis rate limiter invalid stored timestamp (reset key): " + err.Error())
+			rdb.Del(ctx, key)
 			return
 		}
 		// time.Since will return negative number!
 		// See: https://stackoverflow.com/questions/50970900/why-is-time-since-returning-negative-durations-on-windows
-		if int64(nowTime.Sub(oldTime).Seconds()) < duration {
+		if int64(time.Now().Sub(oldTime).Seconds()) < duration {
 			rdb.Expire(ctx, key, config.RateLimitKeyExpirationDuration)
 			c.Status(http.StatusTooManyRequests)
 			c.Abort()

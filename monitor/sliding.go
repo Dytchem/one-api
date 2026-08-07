@@ -315,12 +315,17 @@ func (s *PerformanceStore) GetRecentTTFT(channelId int) int64 {
 	m, ok := s.channels[channelId]
 	s.mu.RUnlock()
 
-	if !ok || m == nil || m.count == 0 {
+	if !ok || m == nil {
 		return 0
 	}
 
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+
+	// dyt-104: m.count 由写路径持锁更新，必须在 RLock 内读取（原先在锁外读，属数据竞争）
+	if m.count == 0 {
+		return 0
+	}
 
 	var totalTTFT int64
 	var count int
@@ -416,6 +421,13 @@ func (s *PerformanceStore) ResetChannelMetrics(channelId int) {
 		m.count = 0
 		m.consecutiveFailures = 0
 		m.degradedSince = 0
+		// dyt-104: 原子快照必须一并清零，否则重置后健康分/成功率仍按旧窗口聚合值计算
+		m.snapshotSuccesses.Store(0)
+		m.snapshotFailures.Store(0)
+		m.snapshotTokens.Store(0)
+		m.snapshotElapsedMs.Store(0)
+		m.snapshotProbes.Store(0)
+		m.snapshotValid.Store(false)
 	}
 }
 
