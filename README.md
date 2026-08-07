@@ -97,7 +97,7 @@ docker run -d --name one-api --restart unless-stopped --network host \
   -e HTTP_PROXY='http://127.0.0.1:8118' \
   -e HTTPS_PROXY='http://127.0.0.1:8118' \
   -e NO_PROXY='localhost,127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16' \
-  ghcr.io/dytchem/one-api:latest
+  ghcr.io/dytchem/one-api:v0.6.11-dyt-100
 ```
 
 > - `PORT` 非默认（3000）时必须同时设置 `ONEAPI_BASE` 与它同值（bridge 同步模型用）
