@@ -49,13 +49,15 @@ export async function loadRemoteSessions(kind, userId) {
   return null;
 }
 
-// 合并本地与远程：远程为准（同 id 覆盖），本地独有的补入；按 updatedAt 降序
+// 合并本地与远程：本地优先（本地是最新状态，含 streaming 续传标志/未同步消息），
+// 远程只用于补入本地没有的会话（跨设备新会话）；按 updatedAt 降序。
+// 注意：绝不能反向覆盖——否则刷新后 streaming 标志丢失，断点续传失效且消息被旧快照清空
 export function mergeSessions(local, remote) {
   if (!remote || remote.length === 0) return local;
-  const merged = [...remote];
-  const remoteIds = new Set(remote.map((s) => s.id));
-  for (const l of local) {
-    if (!remoteIds.has(l.id)) merged.push(l);
+  const merged = [...local];
+  const localIds = new Set(local.map((s) => s.id));
+  for (const r of remote) {
+    if (!localIds.has(r.id)) merged.push(r);
   }
   merged.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
   return merged;
