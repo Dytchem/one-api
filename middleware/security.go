@@ -17,7 +17,9 @@ func SecurityHeaders() gin.HandlerFunc {
 		h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
 		// 允许 inline style（KaTeX 依赖）、http/https 图片与 API（支持 LAN 纯 HTTP 部署）；
 		// unsafe-inline：react 事件属性依赖；dyt-96 移除 unsafe-eval（react-scripts 5 生产构建无需 eval）
-		h.Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https: http:; connect-src 'self' https: http:; frame-src 'self' https:; frame-ancestors 'self'; base-uri 'self'; form-action 'self'; object-src 'none'")
+		// dyt-101: font-src 显式声明 —— semantic-ui 的 Dropdown 箭头用 data: URI 内嵌字体，
+		// 缺 font-src 时回退 default-src 'self' 会拦截 data: 字体，下拉图标显示为方块
+		h.Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob: https: http:; connect-src 'self' https: http:; frame-src 'self' https:; frame-ancestors 'self'; base-uri 'self'; form-action 'self'; object-src 'none'")
 		// HSTS：仅建议在 HTTPS 反代部署时启用（通过环境变量 SESSION_COOKIE_SECURE 一并控制）
 		if os.Getenv("SESSION_COOKIE_SECURE") == "true" {
 			h.Set("Strict-Transport-Security", "max-age=31536000")
