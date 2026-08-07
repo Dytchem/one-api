@@ -58,6 +58,10 @@ func SetApiRouter(router *gin.Engine) {
 				// dyt-96: GET→POST（GET 有轮换 access_token 的副作用，可被跨站触发凭证轮换）
 				selfRoute.POST("/token", controller.GenerateAccessToken)
 				selfRoute.GET("/available_models", controller.GetUserAvailableModels)
+				// dyt-103: 会话记录（跨设备同步）
+				selfRoute.GET("/session", controller.GetChatSessions)
+				selfRoute.PUT("/session", controller.UpsertChatSession)
+				selfRoute.DELETE("/session/:kind/:sessionId", controller.DeleteChatSession)
 			}
 
 			adminRoute := userRoute.Group("/")

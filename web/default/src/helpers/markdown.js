@@ -26,11 +26,18 @@ DOMPurify.addHook('afterSanitizeAttributes', (node) => {
   }
 });
 
+// KaTeX 输出依赖的标签/属性：根号等符号由内联 SVG path 绘制，MathML 供无障碍使用。
+// DOMPurify 的 html profile 不含 svg/math 标签，必须显式放行，否则根号等符号被删
+const katexTags = ['svg', 'path', 'g', 'line', 'rect', 'polyline', 'math', 'semantics', 'mrow', 'mi', 'mo', 'mn', 'msqrt', 'mfrac', 'msup', 'msub', 'mtext', 'mstyle', 'annotation'];
+const katexAttrs = ['viewBox', 'preserveAspectRatio', 'fill', 'stroke', 'stroke-width', 'stroke-linecap', 'stroke-linejoin', 'xmlns', 'xlink:href', 'width', 'height', 'd'];
+
 export function renderMarkdown(content) {
   if (!content) return '';
   const html = md.render(String(content));
   return DOMPurify.sanitize(html, {
     USE_PROFILES: { html: true },
+    ADD_TAGS: katexTags,
+    ADD_ATTR: katexAttrs,
     FORBID_TAGS: ['style', 'form', 'input', 'button', 'iframe', 'object', 'embed', 'link', 'meta', 'base'],
     // 事件属性一律移除；style 交给上面的 hook 处理（仅 KaTeX 保留）
     FORBID_ATTR: ['onerror', 'onload', 'onclick', 'onmouseover', 'onfocus', 'onblur', 'onchange', 'onsubmit', 'onkeydown', 'onkeyup', 'onkeypress'],

@@ -147,6 +147,9 @@ func migrateDB() error {
 	if err = DB.AutoMigrate(&User{}); err != nil {
 		return err
 	}
+	if err = DB.AutoMigrate(&ChatSession{}); err != nil { // dyt-103: 会话记录（跨设备同步）
+		return err
+	}
 	if err = DB.AutoMigrate(&Option{}); err != nil {
 		return err
 	}

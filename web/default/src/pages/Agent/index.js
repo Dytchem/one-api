@@ -1,6 +1,7 @@
 import React, { useContext, useEffect, useRef, useState } from 'react';
 import { Button, Card, Dropdown, Icon } from 'semantic-ui-react';
 import { API, showError } from '../../helpers';
+import { syncSessions, deleteRemoteSession, loadRemoteSessions, mergeSessions } from '../../helpers/session-sync';
 import { renderMarkdown } from '../../helpers/markdown';
 import { UserContext } from '../../context/User';
 import { useTranslation } from 'react-i18next';
@@ -99,6 +100,8 @@ const Agent = () => {
     }
   };
   const persist = (list) => {
+    // dyt-103: 登录用户同步到服务器（跨设备），未登录仅本地
+    syncSessions('agent', list, userId);
     try {
       localStorage.setItem(storageKey, JSON.stringify(list));
     } catch (e) {
@@ -221,6 +224,19 @@ const Agent = () => {
     } catch (e) {
       setSessions([]);
     }
+    // dyt-103: 拉取服务器会话合并（跨设备同步）
+    let cancelled = false;
+    loadRemoteSessions('agent', userId).then((remote) => {
+      if (cancelled || !remote) return;
+      setSessions((prev) => {
+        const merged = mergeSessions(prev, remote);
+        if (merged !== prev) persist(merged);
+        return merged;
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [storageKey]);
 
   const activeSession = sessions.find((s) => s.id === activeId) || null;
@@ -366,6 +382,8 @@ const Agent = () => {
     const list = sessions.filter((s) => s.id !== id);
     setSessions(list);
     persist(list);
+    // dyt-103: 服务器同步删除（跨设备）
+    deleteRemoteSession('agent', id, userId);
     if (activeId === id) {
       const next = list[0]?.id || null;
       setActiveId(next);
