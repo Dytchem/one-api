@@ -92,3 +92,67 @@ jobs:
           min-versions-to-keep: 5
           delete-only-untagged-versions: true
           token: ${{ secrets.GITHUB_TOKEN }}
+
+  # dyt-102: 发布二进制（官方风格：单文件，tag 发布时附加到 release）
+  release-assets:
+    name: Release binaries (${{ matrix.name }})
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: push_to_registries
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-amd64
+            runner: ubuntu-latest
+            goos: linux
+            goarch: amd64
+            cc: ''
+            asset: one-api
+          - name: linux-arm64
+            runner: ubuntu-latest
+            goos: linux
+            goarch: arm64
+            cc: aarch64-linux-gnu-gcc
+            apt: gcc-aarch64-linux-gnu
+            asset: one-api-arm64
+          - name: windows-amd64
+            runner: ubuntu-latest
+            goos: windows
+            goarch: amd64
+            cc: x86_64-w64-mingw32-gcc
+            apt: gcc-mingw-w64-x86-64
+            asset: one-api.exe
+          - name: macos-amd64
+            runner: macos-latest
+            goos: darwin
+            goarch: amd64
+            cc: ''
+            asset: one-api-macos
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Install cross compiler (linux runners)
+        if: matrix.apt != ''
+        run: sudo apt-get update && sudo apt-get install -y ${{ matrix.apt }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Build
+        env:
+          CC: ${{ matrix.cc }}
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: '1'
+        run: |
+          go build -trimpath -ldflags "-s -w" -o dist/${{ matrix.asset }} .
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          fail_on_unmatched_files: true
