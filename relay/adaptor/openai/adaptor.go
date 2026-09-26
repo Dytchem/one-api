@@ -68,6 +68,23 @@ func (a *Adaptor) GetRequestURL(meta *meta.Meta) (string, error) {
 		if meta.Mode == relaymode.Responses {
 			requestURLPath = strings.Replace(requestURLPath, "/v1/responses", "/v1/chat/completions", 1)
 		}
+		// dyt-113: 原生入口（Anthropic Messages / Gemini Interactions）的上游仍是
+		// OpenAI chat API。meta.RequestURLPath 是"客户端请求的路径"（如 /v1/messages），
+		// 若不改写会把它原样透传给上游，导致上游 404 或收到空 body 语义错位。
+		// 这两种入口的请求已在入口侧转成 chat 格式，故统一指向 /v1/chat/completions。
+		switch meta.Mode {
+		case relaymode.AnthropicMessages:
+			requestURLPath = strings.Replace(requestURLPath, "/v1/messages", "/v1/chat/completions", 1)
+		case relaymode.GeminiInteractions:
+			requestURLPath = strings.Replace(requestURLPath, "/v1beta/interactions", "/v1/chat/completions", 1)
+			requestURLPath = strings.Replace(requestURLPath, "/v1/interactions", "/v1/chat/completions", 1)
+		}
+		// dyt-114: 出口侧 Responses API。当渠道显式启用（只提供 Responses 端点的上游），
+		// 无论客户端从哪个入口进来，上游地址都改为 /v1/responses。
+		// 注意：必须在上面所有 chat 改写之后统一覆盖，避免被逐个 case 遗漏。
+		if meta.Config.UseResponsesAPI {
+			requestURLPath = "/v1/responses"
+		}
 		return GetFullRequestURL(meta.BaseURL, requestURLPath, meta.ChannelType), nil
 	}
 }
@@ -99,6 +116,12 @@ func (a *Adaptor) ConvertRequest(c *gin.Context, relayMode int, request *model.G
 		}
 		request.StreamOptions.IncludeUsage = true
 	}
+	// dyt-114: 出口侧 Responses API —— 上游只认 Responses 格式，转换后再发。
+	// 注意流式下 Responses 也有自己的事件格式，这里仍请求 include usage 语义
+	// 由上游默认给出。
+	if meta.GetByContext(c).Config.UseResponsesAPI {
+		return ConvertRequestToResponses(*request), nil
+	}
 	return request, nil
 }
 
@@ -129,6 +152,12 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, meta *meta.Met
 		case relaymode.ImagesGenerations:
 			err, _ = ImageHandler(c, resp)
 		default:
+			// dyt-114: 出口侧 Responses API —— 上游返回的是 Responses 结构，
+			// 需转回 chat 格式，保持网关对客户端输出统一。
+			if meta.Config.UseResponsesAPI {
+				err, usage = ResponsesHandler(c, resp, meta.PromptTokens, meta.ActualModelName)
+				break
+			}
 			err, usage = Handler(c, resp, meta.PromptTokens, meta.ActualModelName)
 		}
 	}

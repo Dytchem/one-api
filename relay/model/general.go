@@ -54,6 +54,12 @@ type GeneralOpenAIRequest struct {
 	User                string          `json:"user,omitempty"`
 	FunctionCall        any             `json:"function_call,omitempty"`
 	Functions           any             `json:"functions,omitempty"`
+	// dyt-114: Anthropic 扩展思考与上下文管理。
+	// 这两个字段在 OpenAI 协议里没有对应物，但必须在网关内部一路带到
+	// Anthropic 出口适配器，否则客户端开启的 thinking / compaction 会被静默丢弃。
+	// 放在这里（而非 ctxkey）是因为它必须能被 marshal 进发往上游的请求体。
+	Thinking          any `json:"thinking,omitempty"`
+	ContextManagement any `json:"context_management,omitempty"`
 	// https://platform.openai.com/docs/api-reference/embeddings/create
 	Input          any    `json:"input,omitempty"`
 	EncodingFormat string `json:"encoding_format,omitempty"`

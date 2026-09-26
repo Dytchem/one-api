@@ -115,7 +115,7 @@ func Handler(c *gin.Context, resp *http.Response, promptTokens int, modelName st
 	}
 	if textResponse.Error.Type != "" {
 		return &model.ErrorWithStatusCode{
-			Error:     textResponse.Error,
+			Error:      textResponse.Error,
 			StatusCode: resp.StatusCode,
 		}, nil
 	}

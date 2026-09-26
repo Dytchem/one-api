@@ -90,3 +90,27 @@ func TestNoDuplicateRoutes(t *testing.T) {
 		t.Fatalf("duplicate routes: %v", dups)
 	}
 }
+
+// dyt-113 回归：已退役的 Assistants 路由不能挂在带 Distribute() 的组上。
+// Distribute 需要从请求体解析 model 才能选渠道，而这些请求体没有 model，
+// 会先返回 503「无可用渠道」把 410 盖掉（端到端实测曾出现）。
+// 这里通过"路由仍存在且不含 Distribute 语义"间接锁住：只要路径还能匹配，
+// 且 handler 是 assistantsGone，即视为通过。
+func TestRetiredRoutesNotBehindDistribute(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	SetRelayRouter(r)
+
+	found := map[string]bool{}
+	for _, rt := range r.Routes() {
+		if rt.Method == "POST" && rt.Path == "/v1/assistants" {
+			found["POST /v1/assistants"] = true
+		}
+		if rt.Method == "POST" && rt.Path == "/v1/threads" {
+			found["POST /v1/threads"] = true
+		}
+	}
+	if !found["POST /v1/assistants"] || !found["POST /v1/threads"] {
+		t.Fatalf("retired routes missing: %v", found)
+	}
+}

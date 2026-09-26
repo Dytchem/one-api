@@ -110,6 +110,16 @@ Fork 自 [songquanpeng/one-api](https://github.com/songquanpeng/one-api)，在�
   > 澄清一个常见误读：**Chat Completions 并未被废弃**。2026-11-30 关停的是 **Prompt Objects（可复用提示词）** 与部分旧模型；`/v1/chat/completions` 官方明确"continues to be supported indefinitely"。本次未做任何迁移，仅补齐 Responses 之外的入口能力
 - 导航顺序调整为 **总览 → 渠道 → 令牌 → 对话 → Agent → 用户 → 日志 → …**（原实现靠 `splice` 往数组中间插入 chat/agent，顺序隐晦且易错，现改为显式声明）
 
+### 上游协议出口（v114）
+
+上一节解决的是「客户端 → 网关」；本节解决「网关 → 上游」。此前网关对绝大多数渠道只会说 OpenAI chat 一种协议，遇到只提供新协议端点的上游就打不通，遇到新特性字段就静默丢弃。
+
+- **Gemini Interactions 出口**（渠道配置 `"use_interactions_api": true`）：网关可把请求发成新版统一入口 `POST /v1beta/interactions`，而不再只是旧的 `:generateContent`。含 `system_instruction` 正确外提、`input` 的 `user_input`/`model_output` 角色映射、data URL 图片拆成 `data`+`mime_type`、普通图片走 `uri`、`generation_config`（temperature/top_p/max_output_tokens/stop_sequences/response_mime_type）。响应侧解析 Interactions 的 `output[]` 并转回 chat 格式，`usage` 取上游真值
+- **OpenAI Responses 出口**（渠道配置 `"use_responses_api": true`）：用于只提供 Responses 端点的上游。把内部 chat 请求转成 Responses 格式——`system` 消息外提为顶层 `instructions`、`max_tokens` 改名为 `max_output_tokens`、内容块用 `input_text`/`input_image`、`tool_calls` 转 `function_call` 项、`role=tool` 回执转 `function_call_output`。响应侧把 `output[]` 的 message 与 function_call 合并回 chat 的 content/tool_calls
+- **Anthropic 新特性透传**（无需配置，修复静默失效）：原实现把 `anthropic-beta` **硬编码**为 `messages-2023-12-15`，客户端声明的 beta（扩展思考 `interleaved-thinking-*`、上下文压缩 `compact-*`、细粒度工具流等）全部被丢弃；且出口 `Request` 结构里根本没有 `thinking` / `context_management` 字段。结果是**请求返回 200 但新特性完全没生效**——属于最难排查的一类问题。现改为：客户端 beta 全量保留（支持多次 header 与逗号分隔，去重）后再补上网关自身必需的基础 beta；`thinking` 与 `context_management` 作为一等字段贯穿 ingress → 内部请求 → 出口，真正抵达上游
+
+> 两个出口开关都是**按渠道可选、默认关闭**，不改变任何既有渠道的行为。网关→上游的协议选择与客户端→网关的入口协议相互独立，可任意组合。
+
 ### 界面与体验
 
 - **统一画布**：全部设备渲染同一 1440px 画布（iframe 隔离视口），任意端所见一致

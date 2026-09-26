@@ -54,6 +54,15 @@ type Request struct {
 	Tools         []Tool    `json:"tools,omitempty"`
 	ToolChoice    any       `json:"tool_choice,omitempty"`
 	//Metadata    `json:"metadata,omitempty"`
+
+	// dyt-114: 扩展思考（extended thinking / adaptive thinking）。
+	// 原实现完全丢弃该字段，导致客户端开了思考而网关发出去的请求里没有，
+	// 上游按"未开启思考"处理——用户以为在用 thinking，实际没生效。
+	// 形如 {"type":"enabled","budget_tokens":10000} 或 {"type":"adaptive"}。
+	Thinking any `json:"thinking,omitempty"`
+	// dyt-114: 上下文管理（服务端压缩 compaction / context editing）。
+	// 形如 {"edits":[{"type":"compact_20260112"}]}，需配合 anthropic-beta 头。
+	ContextManagement any `json:"context_management,omitempty"`
 }
 
 type Usage struct {
@@ -62,7 +71,7 @@ type Usage struct {
 	CacheReadInputTokens     int `json:"cache_read_input_tokens,omitempty"`     // dyt-40
 	CacheCreationInputTokens int `json:"cache_creation_input_tokens,omitempty"` // dyt-40
 	// dyt-40: 新版 Anthropic 区分 5min / 1h TTL
-	CacheCreation            *CacheCreation `json:"cache_creation,omitempty"`
+	CacheCreation *CacheCreation `json:"cache_creation,omitempty"`
 }
 
 // dyt-40: Anthropic 5min / 1h 区分

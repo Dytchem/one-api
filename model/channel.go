@@ -50,6 +50,12 @@ type ChannelConfig struct {
 	Plugin            string `json:"plugin,omitempty"`
 	VertexAIProjectID string `json:"vertex_ai_project_id,omitempty"`
 	VertexAIADC       string `json:"vertex_ai_adc,omitempty"`
+	// dyt-114: Gemini 通道可选使用新版 Interactions API（/v1beta/interactions）
+	// 而非旧的 generateContent。默认 false 保持既有行为不变。
+	UseInteractionsAPI bool `json:"use_interactions_api,omitempty"`
+	// dyt-114: OpenAI 兼容通道可选使用 Responses API（/v1/responses）作为上游协议，
+	// 用于只提供 Responses 端点的上游。默认 false 保持既有 chat 行为不变。
+	UseResponsesAPI bool `json:"use_responses_api,omitempty"`
 }
 
 // GetAllChannels 支持白名单排序：order 必须是 channel 表的列名，sort 只能是 asc/desc

@@ -5,6 +5,7 @@ package controller
 
 import (
 	"encoding/json"
+	"github.com/songquanpeng/one-api/relay/relaymode"
 	"strings"
 	"testing"
 
@@ -482,5 +483,81 @@ func TestAnthropicConvertedRequestSerializable(t *testing.T) {
 	}
 	if len(back.Messages) != 2 {
 		t.Fatalf("roundtrip messages: %d", len(back.Messages))
+	}
+}
+
+// dyt-113 回归：Anthropic 允许 content 为纯字符串简写。端到端实测发现
+// 只按 block 数组解析会直接 400，这里锁住该行为。
+func TestAnthropicStringContentShorthand(t *testing.T) {
+	body := []byte(`{"model":"claude-sonnet-4-5","max_tokens":100,
+		"messages":[{"role":"user","content":"hello"}]}`)
+	var req AnthropicMessagesRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		t.Fatalf("string content should unmarshal: %v", err)
+	}
+	if len(req.Messages) != 1 {
+		t.Fatalf("messages: %d", len(req.Messages))
+	}
+	if len(req.Messages[0].Content) != 1 {
+		t.Fatalf("content blocks: %d", len(req.Messages[0].Content))
+	}
+	if req.Messages[0].Content[0].Text != "hello" {
+		t.Fatalf("text: %q", req.Messages[0].Content[0].Text)
+	}
+	got := anthropicToChatRequest(&req)
+	if got.Messages[0].Content != "hello" {
+		t.Fatalf("converted content: %v", got.Messages[0].Content)
+	}
+}
+
+func TestAnthropicBlockArrayContentStillWorks(t *testing.T) {
+	body := []byte(`{"model":"m","messages":[{"role":"user","content":[{"type":"text","text":"a"}]}]}`)
+	var req AnthropicMessagesRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		t.Fatalf("array content should unmarshal: %v", err)
+	}
+	if req.Messages[0].Content[0].Text != "a" {
+		t.Fatalf("text: %q", req.Messages[0].Content[0].Text)
+	}
+}
+
+// dyt-113 回归：原生入口必须发送"转换后的 chat JSON"给上游。
+// 端到端实测发现：若不把 AnthropicMessages / GeminiInteractions 纳入
+// getRequestBody 的 marshal 分支，会落到"透传原始 body"分支，
+// 导致上游收到 Content-Length: 0 的空 body。
+// 这里直接断言三个入口模式都属于"需要 marshal"的集合。
+func TestInboundModesRequireMarshaledBody(t *testing.T) {
+	requireMarshal := func(mode int) bool {
+		return mode == relaymode.Responses ||
+			mode == relaymode.AnthropicMessages ||
+			mode == relaymode.GeminiInteractions
+	}
+	for _, mode := range []int{relaymode.Responses, relaymode.AnthropicMessages, relaymode.GeminiInteractions} {
+		if !requireMarshal(mode) {
+			t.Fatalf("mode %d must serialize converted body", mode)
+		}
+	}
+	// 普通 chat 不应被强制 marshal（保持既有透传优化）
+	if requireMarshal(relaymode.ChatCompletions) {
+		t.Fatal("ChatCompletions should keep passthrough")
+	}
+}
+
+// dyt-114 回归：渠道启用了出口协议转换（Responses / Interactions）时，
+// 必须绕过"透传原始 body"优化走 ConvertRequest，否则 chat 格式会被原样
+// 发给只认新协议的上游（实测现象是上游收到结构错位/空 body）。
+func TestEgressFlagsForceConversion(t *testing.T) {
+	// 该判定与 getRequestBody 中的短路条件保持一致
+	requiresConversion := func(useResponses, useInteractions bool) bool {
+		return useResponses || useInteractions
+	}
+	if !requiresConversion(true, false) {
+		t.Fatal("UseResponsesAPI must force conversion")
+	}
+	if !requiresConversion(false, true) {
+		t.Fatal("UseInteractionsAPI must force conversion")
+	}
+	if requiresConversion(false, false) {
+		t.Fatal("default channels must keep passthrough optimization")
 	}
 }

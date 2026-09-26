@@ -50,6 +50,47 @@ type anthropicInboundMessage struct {
 	Content []anthropicInboundContent `json:"content"`
 }
 
+// UnmarshalJSON 让 content 同时接受两种官方形态：
+//
+//	"content": "hello"                                  （字符串简写）
+//	"content": [{"type":"text","text":"hello"}]         （block 数组）
+//
+// 字符串简写在实际客户端（含 curl 示例、部分 SDK）里很常见，
+// 只按数组解析会直接 400，必须在入口处兼容。
+func (m *anthropicInboundMessage) UnmarshalJSON(data []byte) error {
+	// 用一个中间结构把 content 先当 RawMessage 接住
+	var raw struct {
+		Role    string          `json:"role"`
+		Content json.RawMessage `json:"content"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	m.Role = raw.Role
+
+	trimmed := strings.TrimSpace(string(raw.Content))
+	if trimmed == "" || trimmed == "null" {
+		m.Content = nil
+		return nil
+	}
+	// 字符串简写 -> 单个 text block
+	if strings.HasPrefix(trimmed, "\"") {
+		var s string
+		if err := json.Unmarshal(raw.Content, &s); err != nil {
+			return err
+		}
+		m.Content = []anthropicInboundContent{{Type: "text", Text: s}}
+		return nil
+	}
+	// 数组形态
+	var blocks []anthropicInboundContent
+	if err := json.Unmarshal(raw.Content, &blocks); err != nil {
+		return err
+	}
+	m.Content = blocks
+	return nil
+}
+
 type anthropicInboundTool struct {
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
@@ -71,8 +112,10 @@ type AnthropicMessagesRequest struct {
 	Tools         []anthropicInboundTool    `json:"tools,omitempty"`
 	ToolChoice    any                       `json:"tool_choice,omitempty"`
 	Metadata      any                       `json:"metadata,omitempty"`
-	// dyt-113: Anthropic 扩展思考。透传给上游（若上游为 Anthropic 通道由 adaptor 处理）
-	Thinking any `json:"thinking,omitempty"`
+	// dyt-113/114: Anthropic 扩展思考与上下文管理。
+	// 这两项必须一路带到出口适配器，否则上游会按"未开启"处理。
+	Thinking          any `json:"thinking,omitempty"`
+	ContextManagement any `json:"context_management,omitempty"`
 }
 
 // anthropicSystemToText 把 system 字段（字符串或 block 数组）压成纯文本。
@@ -217,6 +260,10 @@ func anthropicToChatRequest(req *AnthropicMessagesRequest) *relaymodel.GeneralOp
 		Temperature: req.Temperature,
 		TopP:        req.TopP,
 		TopK:        req.TopK,
+		// dyt-114: 扩展思考与上下文管理透传（OpenAI 通道会忽略这两个字段，
+		// Anthropic 通道会真正带给上游）
+		Thinking:          req.Thinking,
+		ContextManagement: req.ContextManagement,
 	}
 	// Anthropic 的 max_tokens 是必填项；缺省时给一个安全值，避免上游报错
 	if req.MaxTokens > 0 {

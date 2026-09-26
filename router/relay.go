@@ -105,6 +105,10 @@ func SetRelayRouter(router *gin.Engine) {
 		"/threads/:id/runs/:runsId", "/threads/:id/runs/:runsId/submit_tool_outputs",
 		"/threads/:id/runs/:runsId/cancel", "/threads/:id/runs/:runsId/steps",
 		"/threads/:id/runs/:runsId/steps/:stepId"} {
-		relayV1Router.Any(p, assistantsGone)
+		// 关键：不能挂在 relayV1Router 上。该组带 Distribute() 中间件，
+		// 而它需要从请求体解析出 model 才能选渠道；已退役接口的请求体里没有
+		// model，Distribute 会先返回 503「无可用渠道」，把 410 盖掉。
+		// 这里单独注册，只保留限流与鉴权，确保稳稳返回 410。
+		router.Any("/v1"+p, middleware.RelayRateLimit(), middleware.TokenAuth(), assistantsGone)
 	}
 }

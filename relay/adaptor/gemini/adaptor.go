@@ -43,6 +43,13 @@ func (a *Adaptor) GetRequestURL(meta *meta.Meta) (string, error) {
 		action = "streamGenerateContent?alt=sse"
 	}
 
+	// dyt-114: 出口侧 Interactions API（新版统一入口）。
+	// 该协议是单端点 POST /v1beta/interactions，不再是 :action 形式，
+	// 流式由请求体 stream:true 表达（不是 URL 参数），故单独返回。
+	if meta.Config.UseInteractionsAPI && meta.Mode != relaymode.Embeddings {
+		return fmt.Sprintf("%s/v1beta/interactions", strings.TrimSuffix(meta.BaseURL, "/")), nil
+	}
+
 	return fmt.Sprintf("%s/%s/models/%s:%s", meta.BaseURL, version, meta.ActualModelName, action), nil
 }
 
@@ -55,6 +62,10 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Request, meta *me
 func (a *Adaptor) ConvertRequest(c *gin.Context, relayMode int, request *model.GeneralOpenAIRequest) (any, error) {
 	if request == nil {
 		return nil, errors.New("request is nil")
+	}
+	// dyt-114: 出口侧 Interactions API —— 请求体结构完全不同，单独转换
+	if meta.GetByContext(c).Config.UseInteractionsAPI && relayMode != relaymode.Embeddings {
+		return ConvertRequestToInteractions(*request), nil
 	}
 	switch relayMode {
 	case relaymode.Embeddings:
@@ -87,6 +98,11 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, meta *meta.Met
 		case relaymode.Embeddings:
 			err, usage = EmbeddingHandler(c, resp)
 		default:
+			// dyt-114: 出口侧 Interactions API 的响应结构不同，单独解析并转回 OpenAI 格式
+			if meta.Config.UseInteractionsAPI {
+				err, usage = InteractionsHandler(c, resp, meta.PromptTokens, meta.ActualModelName)
+				break
+			}
 			err, usage = Handler(c, resp, meta.PromptTokens, meta.ActualModelName)
 		}
 	}

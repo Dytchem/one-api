@@ -749,10 +749,32 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 
 func getRequestBody(c *gin.Context, meta *meta.Meta, textRequest *model.GeneralOpenAIRequest, adaptor adaptor.Adaptor) (io.Reader, error) {
 	// dyt-53: Responses 模式必须发送转换后的 chat JSON（原始 body 是 Responses 格式）
-	if meta.Mode == relaymode.Responses {
+	// dyt-113: 原生入口同理——客户端发来的是 Anthropic / Interactions 格式，
+	// 而上游要的是 chat 格式，因此必须发送转换后的 textRequest。
+	// 绝不能落到下面的"透传原始 body"分支：那会把原生格式原样发给上游
+	// （实测现象是上游收到 Content-Length: 0 的空 body）。
+	if meta.Mode == relaymode.Responses ||
+		meta.Mode == relaymode.AnthropicMessages ||
+		meta.Mode == relaymode.GeminiInteractions {
 		jsonData, err := json.Marshal(textRequest)
 		if err != nil {
-			logger.Debugf(c.Request.Context(), "responses request json marshal failed: %s\n", err.Error())
+			logger.Debugf(c.Request.Context(), "inbound protocol request json marshal failed: %s\n", err.Error())
+			return nil, err
+		}
+		return bytes.NewBuffer(jsonData), nil
+	}
+	// dyt-114: 渠道启用了"出口协议转换"（Responses / Interactions）时必须走
+	// 下面的 ConvertRequest 分支。否则会命中透传优化，把 chat 格式原样发给
+	// 只认 Responses/Interactions 的上游（实测现象：上游收到空 body 或结构错位）。
+	if meta.Config.UseResponsesAPI || meta.Config.UseInteractionsAPI {
+		convertedRequest, err := adaptor.ConvertRequest(c, meta.Mode, textRequest)
+		if err != nil {
+			logger.Debugf(c.Request.Context(), "egress protocol convert failed: %s\n", err.Error())
+			return nil, err
+		}
+		jsonData, err := json.Marshal(convertedRequest)
+		if err != nil {
+			logger.Debugf(c.Request.Context(), "egress protocol marshal failed: %s\n", err.Error())
 			return nil, err
 		}
 		return bytes.NewBuffer(jsonData), nil

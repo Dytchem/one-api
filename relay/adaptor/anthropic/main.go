@@ -61,6 +61,11 @@ func ConvertRequest(textRequest model.GeneralOpenAIRequest) *Request {
 		TopK:        textRequest.TopK,
 		Stream:      textRequest.Stream,
 		Tools:       claudeTools,
+		// dyt-114: 把扩展思考与上下文管理带到上游。
+		// 缺了这两行，客户端开启的 thinking / compaction 会在网关处静默失效
+		// （请求成功但行为不符预期，属于最难排查的一类问题）。
+		Thinking:          textRequest.Thinking,
+		ContextManagement: textRequest.ContextManagement,
 	}
 	if len(claudeTools) > 0 {
 		claudeToolChoice := struct {

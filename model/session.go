@@ -11,7 +11,7 @@ import (
 type ChatSession struct {
 	Id        int    `json:"id" gorm:"primaryKey"`
 	UserId    int    `json:"user_id" gorm:"index"`
-	Kind      string `json:"kind" gorm:"size:16;index"`       // chat | agent
+	Kind      string `json:"kind" gorm:"size:16;index"` // chat | agent
 	SessionId string `json:"session_id" gorm:"size:64;uniqueIndex:idx_user_kind_sid"`
 	Title     string `json:"title" gorm:"size:512"`
 	Messages  string `json:"messages"` // JSON 字符串（大附件/工具结果已由前端压缩）

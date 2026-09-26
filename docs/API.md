@@ -98,6 +98,26 @@ curl https://oneapi.dytchem.cn/v1beta/interactions \
 
 **以下能力网关无法代持，会返回明确错误而非静默降级**：`tools`（`google_search`/`mcp_server`/`computer_use` 等服务端工具）、`background`、`environment`、`previous_interaction_id`（网关无状态，请改为发送完整 `input` 历史）。
 
+## 上游协议（出口）
+
+网关默认以 **OpenAI chat** 协议与上游通信。以下协议可按渠道开启，**默认关闭**，不影响既有渠道：
+
+| 渠道配置 | 上游协议 | 适用 |
+| --- | --- | --- |
+| `{"use_responses_api": true}` | `POST /v1/responses` | 只提供 Responses 端点的上游 |
+| `{"use_interactions_api": true}` | `POST /v1beta/interactions` | Gemini 新版统一入口（替代 generateContent） |
+
+在渠道的「配置」里填上述 JSON 即可。入口协议与出口协议相互独立，可任意组合，例如：客户端用 Anthropic 原生协议进来，网关用 Responses 协议发给上游。
+
+### Anthropic 新特性透传
+
+经网关转发到 Anthropic 渠道时，以下内容会**完整保留**（无需配置）：
+
+- `anthropic-beta` 请求头：客户端声明的 beta 全部保留（支持多次 header 与逗号分隔），网关再补上基础 beta
+- `anthropic-version`：按客户端声明透传，缺省 `2023-06-01`
+- `thinking`：扩展思考（`{"type":"enabled","budget_tokens":N}` 或 `{"type":"adaptive"}`）
+- `context_management`：上下文压缩 / context editing
+
 ### 已退役端点
 OpenAI **Assistants / Threads API 已于 2026-08-26 全面关停**。`/v1/assistants*` 与 `/v1/threads*` 路径仍保留映射，但返回 **410 Gone** 并提示迁移到 `/v1/responses`（不再返回 501，以免被误读为"尚未实现"）。
 

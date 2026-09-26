@@ -55,29 +55,29 @@ var ChannelBaseURLs = []string{
 
 	"https://generativelanguage.googleapis.com/v1beta/openai/", // 51
 
-	"https://api.perplexity.ai",                 // 52 Perplexity
-	"https://api.mok.ai",                        // 53 MokaAI
-	"",                                          // 54 Xinference（需自填 base_url）
-	"https://api.cerebras.ai/v1",                // 55 Cerebras
-	"https://api.hyperbolic.xyz/v1",             // 56 Hyperbolic
-	"https://api.fireworks.ai/inference/v1",     // 57 Fireworks AI
-	"https://api.lambdalabs.com/v1",             // 58 Lambda
-	"https://open.bigmodel.cn/api/paas/v4",      // 59 智谱 GLM（OpenAI 兼容 v4）
-	"https://api.jina.ai",                       // 60 Jina
+	"https://api.perplexity.ai",             // 52 Perplexity
+	"https://api.mok.ai",                    // 53 MokaAI
+	"",                                      // 54 Xinference（需自填 base_url）
+	"https://api.cerebras.ai/v1",            // 55 Cerebras
+	"https://api.hyperbolic.xyz/v1",         // 56 Hyperbolic
+	"https://api.fireworks.ai/inference/v1", // 57 Fireworks AI
+	"https://api.lambdalabs.com/v1",         // 58 Lambda
+	"https://open.bigmodel.cn/api/paas/v4",  // 59 智谱 GLM（OpenAI 兼容 v4）
+	"https://api.jina.ai",                   // 60 Jina
 
 	// dyt-54: 常用聚合/知名提供商
-	"https://api.xiaomimimo.com/v1",             // 61 小米 MiMo
-	"https://opencode.ai/zen/v1",                // 62 OpenCode Zen
-	"https://opencode.ai/zen/go/v1",             // 63 OpenCode Go
-	"https://ollama.com/v1",                     // 64 Ollama Cloud
-	"https://integrate.api.nvidia.com/v1",       // 65 NVIDIA NIM
-	"https://router.huggingface.co/v1",          // 66 Hugging Face
-	"https://api-inference.modelscope.cn/v1",    // 67 ModelScope 魔搭
-	"https://api.deepinfra.com/v1",              // 68 Deep Infra
-	"https://api.z.ai/api/paas/v4",              // 69 Z.AI 智谱国际
-	"https://api.moonshot.ai/v1",                // 70 Moonshot AI 国际
-	"https://api.vultrinference.com/v1",         // 71 Vultr
-	"https://apihub.agnes-ai.com/v1",            // 72 Agnes
+	"https://api.xiaomimimo.com/v1",          // 61 小米 MiMo
+	"https://opencode.ai/zen/v1",             // 62 OpenCode Zen
+	"https://opencode.ai/zen/go/v1",          // 63 OpenCode Go
+	"https://ollama.com/v1",                  // 64 Ollama Cloud
+	"https://integrate.api.nvidia.com/v1",    // 65 NVIDIA NIM
+	"https://router.huggingface.co/v1",       // 66 Hugging Face
+	"https://api-inference.modelscope.cn/v1", // 67 ModelScope 魔搭
+	"https://api.deepinfra.com/v1",           // 68 Deep Infra
+	"https://api.z.ai/api/paas/v4",           // 69 Z.AI 智谱国际
+	"https://api.moonshot.ai/v1",             // 70 Moonshot AI 国际
+	"https://api.vultrinference.com/v1",      // 71 Vultr
+	"https://apihub.agnes-ai.com/v1",         // 72 Agnes
 }
 
 func init() {
