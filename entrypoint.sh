@@ -46,16 +46,49 @@ mkdir -p "$(dirname "$BRIDGE_LOG")" 2>/dev/null || BRIDGE_LOG=/tmp/pi-bridge.log
 PORT=$BRIDGE_PORT node /pi-bridge/server.js >>"$BRIDGE_LOG" 2>&1 &
 
 # 等待 bridge 就绪（dyt-105: 原实现 20 次循环后无条件继续，bridge 启动失败时
-# 外部只会看到 502，没有任何失败信号。现在失败则打印日志并非零退出）
+# 外部只会看到 502，没有任何失败信号。现在失败则打印日志并显式告警）
+#
+# dyt-108: 探测方式必须匹配镜像内实际可用的工具。
+# 本镜像最终阶段是 node:20-alpine，只装了 ca-certificates/tzdata，**没有 curl**，
+# 而 v105 的就绪检查用的是 curl —— 于是它必然失败，每次启动都误报
+# "pi-bridge 未就绪"（bridge 其实秒起且健康）。这属于误报，比不检查更糟：
+# 会把真正的启动失败淹没在噪声里。
+# 现改为按可用工具依次退化：busybox wget -> node 原生 -> nc 端口探测。
+bridge_health_ok() {
+  if command -v wget >/dev/null 2>&1; then
+    wget -q -T 2 -O /dev/null "http://127.0.0.1:$BRIDGE_PORT/health" 2>/dev/null
+    return $?
+  fi
+  if command -v node >/dev/null 2>&1; then
+    node -e "const h=require('http');const r=h.get({host:'127.0.0.1',port:process.env.BRIDGE_PORT,path:'/health',timeout:2000},s=>{process.exit(s.statusCode===200?0:1)});r.on('error',()=>process.exit(1));r.on('timeout',()=>{r.destroy();process.exit(1)});" >/dev/null 2>&1
+    return $?
+  fi
+  if command -v nc >/dev/null 2>&1; then
+    nc -z -w 2 127.0.0.1 "$BRIDGE_PORT" >/dev/null 2>&1
+    return $?
+  fi
+  # 无任何可用探测工具：不做判断，视为"未知"而非"失败"，避免误报
+  return 2
+}
+
 BRIDGE_OK=0
+BRIDGE_UNKNOWN=0
 for i in $(seq 1 40); do
-  if curl -sf --max-time 2 http://127.0.0.1:$BRIDGE_PORT/health >/dev/null 2>&1; then
+  bridge_health_ok
+  rc=$?
+  if [ "$rc" -eq 0 ]; then
     BRIDGE_OK=1
+    break
+  fi
+  if [ "$rc" -eq 2 ]; then
+    BRIDGE_UNKNOWN=1
     break
   fi
   sleep 0.5
 done
-if [ "$BRIDGE_OK" != "1" ]; then
+if [ "$BRIDGE_UNKNOWN" = "1" ]; then
+  echo "[entrypoint] WARN: 镜像内无 wget/node/nc 可用，跳过 pi-bridge 就绪探测（不视为失败）" >&2
+elif [ "$BRIDGE_OK" != "1" ]; then
   echo "[entrypoint] ERROR: pi-bridge 未在 20s 内就绪（端口 $BRIDGE_PORT）。日志尾部：" >&2
   tail -n 40 "$BRIDGE_LOG" 2>/dev/null >&2 || true
   echo "[entrypoint] one-api 将继续启动（Chat/Agent 功能不可用）" >&2
