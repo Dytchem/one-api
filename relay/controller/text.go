@@ -574,7 +574,7 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 				}
 			}
 
-			go postConsumeQuota(ctx, lastProbeUsage, meta, textRequest, 1, preConsumedQuota, 0, 0, systemPromptReset, lastResponseSnippet)
+			goPostConsumeQuota(ctx, lastProbeUsage, meta, textRequest, 1, preConsumedQuota, 0, 0, systemPromptReset, lastResponseSnippet)
 			return nil
 		}
 
@@ -678,7 +678,7 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 		c.Writer.WriteHeader(http.StatusOK)
 		usage := renderResponsesNonStream(c, body, meta.ActualModelName, promptTokens)
 		if usage != nil {
-			go postConsumeQuota(ctx, usage, meta, textRequest, 1, preConsumedQuota, 0, 0, systemPromptReset, responseSnippet)
+			goPostConsumeQuota(ctx, usage, meta, textRequest, 1, preConsumedQuota, 0, 0, systemPromptReset, responseSnippet)
 		}
 		return nil
 	}
@@ -734,7 +734,7 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 		}
 		return openai.ErrorWrapper(fmt.Errorf("empty response from channel"), "empty_response", http.StatusBadGateway)
 	}
-	go postConsumeQuota(ctx, usage, meta, textRequest, 1, preConsumedQuota, 0, 0, systemPromptReset, responseSnippet)
+	goPostConsumeQuota(ctx, usage, meta, textRequest, 1, preConsumedQuota, 0, 0, systemPromptReset, responseSnippet)
 	return nil
 }
 

@@ -176,6 +176,33 @@ func postConsumeQuota(ctx context.Context, usage *relaymodel.Usage, meta *meta.M
 	)
 }
 
+// ---- dyt-111: 消费入账的有界异步派发 ----
+//
+// postConsumeQuota 原先由 `go postConsumeQuota(...)` 无界启动：每个成功请求一个
+// goroutine，且该 goroutine 会一直持有 meta/textRequest（内含整个请求体的 messages
+// 与响应片段）直到 DB 写入完成。高并发下 goroutine 与内存无上限增长，
+// 属审计指出的 P1 项。
+//
+// 这里用一个带缓冲的 semaphore 限流：超过上限时**同步执行**而不是丢弃——
+// 消费入账影响 dashboard 统计与日志，丢弃会造成静默的数据缺口；
+// 同步执行会短暂让请求多等一次 DB 写，属于可控的背压。
+var consumeQuotaSem = make(chan struct{}, 256)
+
+func goPostConsumeQuota(ctx context.Context, usage *relaymodel.Usage, meta *meta.Meta,
+	textRequest *relaymodel.GeneralOpenAIRequest, ratio float64, preConsumedQuota int64,
+	modelRatio float64, groupRatio float64, systemPromptReset bool, responseSnippet string) {
+	select {
+	case consumeQuotaSem <- struct{}{}:
+		go func() {
+			defer func() { <-consumeQuotaSem }()
+			postConsumeQuota(ctx, usage, meta, textRequest, ratio, preConsumedQuota, modelRatio, groupRatio, systemPromptReset, responseSnippet)
+		}()
+	default:
+		// 已达并发上限：退化为同步执行，保证不丢数据（有界背压）
+		postConsumeQuota(ctx, usage, meta, textRequest, ratio, preConsumedQuota, modelRatio, groupRatio, systemPromptReset, responseSnippet)
+	}
+}
+
 func getMappedModelName(modelName string, mapping map[string]string) (string, bool) {
 	if mapping == nil {
 		return modelName, false
