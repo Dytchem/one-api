@@ -14,6 +14,7 @@ import (
 	"github.com/songquanpeng/one-api/model"
 	"io"
 	"net/http"
+	"path"
 	"strconv"
 	"strings"
 )
@@ -240,7 +241,11 @@ func shouldCheckModel(c *gin.Context) bool {
 }
 
 // isAllowedProxyPath: dyt-96 非 admin 经 proxy 路由可达的目标路径白名单
-func isAllowedProxyPath(path string) bool {
+func isAllowedProxyPath(rawPath string) bool {
+	// dyt-106: 先归一化再匹配。Go/gin 保留原始 `..`，
+	// `/v1/oneapi/proxy/5/v1/images/../../admin` 会因 HasPrefix("/v1/images") 通过白名单。
+	// （适配层也已做 Clean 兜底，此处是第二道防线。）
+	rawPath = path.Clean(rawPath)
 	allowed := []string{
 		"/v1/chat/completions",
 		"/v1/completions",
@@ -251,7 +256,7 @@ func isAllowedProxyPath(path string) bool {
 		"/v1/moderations",
 	}
 	for _, p := range allowed {
-		if strings.HasPrefix(path, p) {
+		if strings.HasPrefix(rawPath, p) {
 			return true
 		}
 	}

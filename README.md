@@ -121,6 +121,11 @@ Fork 自 [songquanpeng/one-api](https://github.com/songquanpeng/one-api)，在�
 - **entrypoint 就绪检查闭环**：原 20 次循环后无条件继续（bridge 启动失败时外部只见 502、无任何信号），现失败即打印日志并显式告警；日志移出未挂卷的 `/tmp`
 - **渠道分发防御性判空**：`channel.Id` 解引用前加显式守卫（两条查询路径都不会返回 `(nil, nil)`，但真出现时会把请求打成 panic）
 
+### 越权与限流加固（v106）
+
+- **proxy 路由路径逃逸修复（越权）**：普通用户的 proxy 目标白名单用 `HasPrefix` 判定，而 Go/gin **不做路径清理**——`/v1/oneapi/proxy/5/v1/images/../../../../admin/setting` 因前缀 `/v1/images` 通过白名单，适配层又把原样路径拼到 `BaseURL` 上，非管理员即可触达上游任意路径。现：适配层解析并 `path.Clean` 后**强制约束在 `/v1/` 命名空间内**（在 `/v1` 外的目标一律拒绝），白名单侧也先归一化再匹配（第二道防线）
+- **`/v1` 转发路径限流**：原先 `/v1` 只有 `TokenAuth`、完全没有限流，而 token 未命中缓存时每个请求都查一次库（token **无负缓存**）——用随机 `sk-` 键刷 `/v1` 即可无上限压数据库。新增独立的 `RelayRateLimit`（`RELAY_RATE_LIMIT`，默认 3000/3min，置于 `TokenAuth` 之前以在查库前生效；设 0 关闭），与 `/api` 的配额互不挤占，默认值宽松以免误伤流式长连接
+
 ### 性能（v100 性能大更新）
 
 - 每请求 DB 往返 ~11 次 → **~4 次**

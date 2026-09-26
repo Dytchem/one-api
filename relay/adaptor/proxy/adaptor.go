@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"path"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -59,7 +61,32 @@ func (a *Adaptor) GetChannelName() string {
 // GetRequestURL remove static prefix, and return the real request url to the upstream service
 func (a *Adaptor) GetRequestURL(meta *meta.Meta) (string, error) {
 	prefix := fmt.Sprintf("/v1/oneapi/proxy/%d", meta.ChannelId)
-	return meta.BaseURL + strings.TrimPrefix(meta.RequestURLPath, prefix), nil
+	target := strings.TrimPrefix(meta.RequestURLPath, prefix)
+	// dyt-106: 归一化路径并强制约束在 /v1/ 命名空间内，阻断 `..` 越权。
+	// Go/gin 不做路径清理，`/v1/oneapi/proxy/5/v1/images/../../../../admin/setting`
+	// 会原样保留；普通用户的 proxy 目标白名单用的是 HasPrefix("/v1/images")，
+	// 于是前缀匹配通过、`..` 却把请求带到上游任意路径（越权/SSRF 放大）。
+	// 注意：仅 Clean 不够——Clean 会把它变成上游的 /admin/setting（仍是越权），
+	// 所以这里额外要求清理后的路径必须以 /v1/ 开头且不含残余的 `..`。
+	u, err := url.Parse(target)
+	if err != nil {
+		return "", errors.New("invalid proxy target path")
+	}
+	cleaned := path.Clean(u.Path)
+	if cleaned == "." || cleaned == "/" {
+		return "", errors.New("invalid proxy target path")
+	}
+	if !strings.HasPrefix(cleaned, "/v1/") {
+		return "", errors.New("proxy target path must stay within /v1/")
+	}
+	if cleaned == ".." || strings.HasPrefix(cleaned, "../") || strings.Contains(cleaned, "/../") {
+		return "", errors.New("invalid proxy target path")
+	}
+	target = cleaned
+	if u.RawQuery != "" {
+		target += "?" + u.RawQuery
+	}
+	return meta.BaseURL + target, nil
 
 }
 

@@ -35,7 +35,9 @@ func SetRelayRouter(router *gin.Engine) {
 	}
 	relayV1Router := router.Group("/v1")
 	// dyt-93: bodySizeLimit 必须在 TokenAuth 之前（extractChannelId 会先读 body）
-	relayV1Router.Use(middleware.RelayPanicRecover(), bodySizeLimit(), middleware.TokenAuth(), middleware.Distribute())
+	// dyt-106: RelayRateLimit 放在 TokenAuth 之前——它要挡的正是"未命中 token 缓存
+	// 的随机 sk- 洪峰"，必须在查库之前生效才有意义。
+	relayV1Router.Use(middleware.RelayPanicRecover(), middleware.RelayRateLimit(), bodySizeLimit(), middleware.TokenAuth(), middleware.Distribute())
 	{
 		relayV1Router.Any("/oneapi/proxy/:channelid/*target", controller.Relay)
 		relayV1Router.POST("/completions", controller.Relay)

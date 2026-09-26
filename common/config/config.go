@@ -151,6 +151,14 @@ var (
 
 	CriticalRateLimitNum            = 20
 	CriticalRateLimitDuration int64 = 20 * 60
+
+	// dyt-106: /v1 转发路径的限流。原先 /v1 只有 TokenAuth、完全没有限流，
+	// 而 TokenAuth 未命中缓存时会各查一次库（token 无负缓存），
+	// 攻击者用随机 sk- 键刷 /v1 即可无上限地压数据库。
+	// 默认值取得很宽松（仅拦异常洪峰），并与 /api 的 GlobalApiRateLimit 分开配置，
+	// 避免误伤正常的长连接流式客户端。设为 0 可关闭。
+	RelayRateLimitNum            = env.Int("RELAY_RATE_LIMIT", 3000)
+	RelayRateLimitDuration int64 = 3 * 60
 )
 
 var RateLimitKeyExpirationDuration = 20 * time.Minute

@@ -98,6 +98,12 @@ func GlobalAPIRateLimit() func(c *gin.Context) {
 	return rateLimitFactory(config.GlobalApiRateLimitNum, config.GlobalApiRateLimitDuration, "GA")
 }
 
+// dyt-106: /v1 转发路径限流。原先 /v1 无限流，随机 sk- 键洪峰会无上限打库。
+// 用独立 mark 与独立配额，避免与 /api 的限流互相挤占。
+func RelayRateLimit() func(c *gin.Context) {
+	return rateLimitFactory(config.RelayRateLimitNum, config.RelayRateLimitDuration, "RL")
+}
+
 func CriticalRateLimit() func(c *gin.Context) {
 	return rateLimitFactory(config.CriticalRateLimitNum, config.CriticalRateLimitDuration, "CT")
 }
