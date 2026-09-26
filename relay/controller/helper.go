@@ -13,6 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/songquanpeng/one-api/common"
+	"github.com/songquanpeng/one-api/common/ctxkey"
 	"github.com/songquanpeng/one-api/common/logger"
 	"github.com/songquanpeng/one-api/model"
 	"github.com/songquanpeng/one-api/monitor"
@@ -38,6 +39,46 @@ func getAndValidateTextRequest(c *gin.Context, relayMode int) (*relaymodel.Gener
 		if err := validator.ValidateTextRequest(chatReq, relaymode.ChatCompletions); err != nil {
 			return nil, err
 		}
+		return chatReq, nil
+	}
+	// dyt-113: Anthropic Messages 原生入口。请求是 Anthropic 格式，
+	// 先转成 chat 请求，之后完全复用既有 relay 流程（按渠道 apitype 再转换出口格式）。
+	if relayMode == relaymode.AnthropicMessages {
+		var anthropicReq AnthropicMessagesRequest
+		if err := common.UnmarshalBodyReusable(c, &anthropicReq); err != nil {
+			return nil, err
+		}
+		if err := ensureAnthropicModel(&anthropicReq); err != nil {
+			return nil, err
+		}
+		chatReq := anthropicToChatRequest(&anthropicReq)
+		if err := validator.ValidateTextRequest(chatReq, relaymode.ChatCompletions); err != nil {
+			return nil, err
+		}
+		// dyt-113: 记录入口协议，供 RelayTextHelper 选择 Anthropic 格式的响应回写
+		c.Set(ctxkey.InboundProtocol, ctxkey.InboundAnthropic)
+		return chatReq, nil
+	}
+	// dyt-113: Gemini Interactions 原生入口。previous_interaction_id 表示
+	// 服务端状态，网关不代持状态，这里按"无历史"处理并显式告知客户端（见下）。
+	if relayMode == relaymode.GeminiInteractions {
+		var interactionsReq GeminiInteractionsRequest
+		if err := common.UnmarshalBodyReusable(c, &interactionsReq); err != nil {
+			return nil, err
+		}
+		var history []relaymodel.Message
+		if interactionsReq.PreviousInteractionID != "" {
+			// 网关无状态：不接受 previous_interaction_id，否则会静默丢失上下文
+			return nil, fmt.Errorf("previous_interaction_id is not supported by this stateless gateway; send the full input history instead")
+		}
+		chatReq, err := geminiInteractionsToChatRequest(&interactionsReq, history)
+		if err != nil {
+			return nil, err
+		}
+		if err := validator.ValidateTextRequest(chatReq, relaymode.ChatCompletions); err != nil {
+			return nil, err
+		}
+		c.Set(ctxkey.InboundProtocol, ctxkey.InboundGeminiInteractions)
 		return chatReq, nil
 	}
 	textRequest := &relaymodel.GeneralOpenAIRequest{}

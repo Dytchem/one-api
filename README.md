@@ -102,6 +102,14 @@ Fork 自 [songquanpeng/one-api](https://github.com/songquanpeng/one-api)，在�
 - **全库审计（6 轮）**：SSRF 钉 IP 防 rebinding（image_url 抓取加固：超时/限体/禁重定向/私网阻断）、会话伪造与孤儿会话重放防护、bridge 鉴权（`BRIDGE_SECRET` 兼容模式）、验证码爆破防护、审计日志 key 脱敏、GET 副作用改 POST、CSP 收紧、管理员 HTML 清洗、GORM 零值更新修复、数据库弱口令收敛
 - **bridge 鉴权（v96–v98）**：`BRIDGE_SECRET` / `AGENT_BRIDGE_SECRET` 共享密钥 + `X-Bridge-Token` 头；**v105 起默认开启**，未配置时自动生成持久化密钥，不再有不校验的兼容模式
 
+### 原生协议入口（v113）
+
+- **Anthropic Messages 原生入口 `POST /v1/messages`**：此前网关只有 OpenAI 入口，Claude Code 等只会讲 Anthropic 协议的客户端必须依赖第三方转换层。现网关可直接接收 Anthropic 原生请求，在入口侧转成 chat 格式走完整 relay 流程，出口再按渠道类型自行转换——因此**同一个 Anthropic 客户端既能打到 Anthropic 渠道，也能打到任意 OpenAI 兼容渠道**。覆盖：`system` 的字符串/block 数组两种形态、`tool_use` ↔ `tool_calls` 双向映射、`tool_result` → `role=tool`（含 block 数组形态的 content）、base64 与 URL 两种图片来源、`stop_sequences` 单/多元素、`tool_choice` 四种枚举。响应侧按 Anthropic 语义重建，含 `message_start` / `content_block_delta` / `message_delta` / `message_stop` 全套 SSE 事件与 `event:` 行（部分客户端依赖该行）
+- **Gemini Interactions 原生入口 `POST /v1beta/interactions`**：Google 已于 2026-06 将该 API GA 并作为 Gemini 主推入口（替代旧 `generateContent`）。支持字符串 input、`user_input`/`model_output` 对话形态、扁平 text/image block（连续 block 合并为同一条消息）、`system_instruction` 字符串与 `parts` 两种形态、`agent` 字段作为模型来源。**对网关无法代持的能力显式拒绝而非静默降级**：`google_search`/`mcp_server`/`computer_use` 等**服务端工具**、`background` 异步执行、`environment` 远端环境、`previous_interaction_id` 服务端状态（本网关无状态，静默丢弃该字段会导致上下文凭空丢失，故明确报错让客户端改发完整历史）
+- **OpenAI Assistants / Threads 路由下线**：该 API 已由 OpenAI **于 2026-08-26 全面关停**，此前 20+ 条 `/v1/assistants`、`/v1/threads` 路由全部指向 `RelayNotImplemented`（返回 501，对已关停的接口是误导）。现移除实现并保留路径映射返回 **410 Gone** 且附迁移提示，让老客户端拿到"接口已退役、请改用 Responses API"的明确信号，而不是 404 被误判为路径写错
+  > 澄清一个常见误读：**Chat Completions 并未被废弃**。2026-11-30 关停的是 **Prompt Objects（可复用提示词）** 与部分旧模型；`/v1/chat/completions` 官方明确"continues to be supported indefinitely"。本次未做任何迁移，仅补齐 Responses 之外的入口能力
+- 导航顺序调整为 **总览 → 渠道 → 令牌 → 对话 → Agent → 用户 → 日志 → …**（原实现靠 `splice` 往数组中间插入 chat/agent，顺序隐晦且易错，现改为显式声明）
+
 ### 界面与体验
 
 - **统一画布**：全部设备渲染同一 1440px 画布（iframe 隔离视口），任意端所见一致

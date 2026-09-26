@@ -82,6 +82,15 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 	}
 	meta.IsStream = textRequest.Stream
 
+	// dyt-113: 原生入口（Anthropic Messages / Gemini Interactions）的响应回写。
+	// 请求已被转成 OpenAI chat 格式走完整流程，这里把输出再编码回客户端期望的
+	// 原生格式。必须在任何写出动作之前替换 c.Writer。
+	// finalizeInbound 用 defer 保证：即使中途 return，非流式缓存也会被刷出。
+	finalizeInbound := maybeWrapForInboundProtocol(c, meta.OriginModelName, meta.IsStream)
+	if c.GetString(ctxkey.InboundProtocol) != "" {
+		defer finalizeInbound()
+	}
+
 	// dyt-53: Responses 协议仅支持 OpenAI 兼容渠道（请求/响应都按 chat 格式转换）
 	if meta.Mode == relaymode.Responses && meta.APIType != apitype.OpenAI {
 		return openai.ErrorWrapper(

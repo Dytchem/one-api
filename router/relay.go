@@ -41,6 +41,12 @@ func SetRelayRouter(router *gin.Engine) {
 	// 的随机 sk- 洪峰"，必须在查库之前生效才有意义。
 	relayV1Router.Use(middleware.RelayPanicRecover(), middleware.RelayRateLimit(), bodySizeLimit(), middleware.TokenAuth(), middleware.Distribute())
 	{
+		// dyt-113: Anthropic Messages API 原生入口。
+		// Claude Code / Anthropic SDK 等只能讲 Anthropic 协议的客户端可直接打这里。
+		relayV1Router.POST("/messages", controller.Relay)
+		// /v1/messages/count_tokens 是 Anthropic 的 token 预估接口，
+		// 网关侧不做精确分词，直接拒绝（而不是 404），让客户端能明确降级。
+		relayV1Router.POST("/messages/count_tokens", controller.RelayNotImplemented)
 		relayV1Router.Any("/oneapi/proxy/:channelid/*target", controller.Relay)
 		relayV1Router.POST("/completions", controller.Relay)
 		relayV1Router.POST("/chat/completions", controller.Relay)
@@ -66,31 +72,39 @@ func SetRelayRouter(router *gin.Engine) {
 		relayV1Router.GET("/fine_tuning/jobs/:id/events", controller.RelayNotImplemented)
 		relayV1Router.DELETE("/models/:model", controller.RelayNotImplemented)
 		relayV1Router.POST("/moderations", controller.Relay)
-		relayV1Router.POST("/assistants", controller.RelayNotImplemented)
-		relayV1Router.GET("/assistants/:id", controller.RelayNotImplemented)
-		relayV1Router.POST("/assistants/:id", controller.RelayNotImplemented)
-		relayV1Router.DELETE("/assistants/:id", controller.RelayNotImplemented)
-		relayV1Router.GET("/assistants", controller.RelayNotImplemented)
-		relayV1Router.POST("/assistants/:id/files", controller.RelayNotImplemented)
-		relayV1Router.GET("/assistants/:id/files/:fileId", controller.RelayNotImplemented)
-		relayV1Router.DELETE("/assistants/:id/files/:fileId", controller.RelayNotImplemented)
-		relayV1Router.GET("/assistants/:id/files", controller.RelayNotImplemented)
-		relayV1Router.POST("/threads", controller.RelayNotImplemented)
-		relayV1Router.GET("/threads/:id", controller.RelayNotImplemented)
-		relayV1Router.POST("/threads/:id", controller.RelayNotImplemented)
-		relayV1Router.DELETE("/threads/:id", controller.RelayNotImplemented)
-		relayV1Router.POST("/threads/:id/messages", controller.RelayNotImplemented)
-		relayV1Router.GET("/threads/:id/messages/:messageId", controller.RelayNotImplemented)
-		relayV1Router.POST("/threads/:id/messages/:messageId", controller.RelayNotImplemented)
-		relayV1Router.GET("/threads/:id/messages/:messageId/files/:filesId", controller.RelayNotImplemented)
-		relayV1Router.GET("/threads/:id/messages/:messageId/files", controller.RelayNotImplemented)
-		relayV1Router.POST("/threads/:id/runs", controller.RelayNotImplemented)
-		relayV1Router.GET("/threads/:id/runs/:runsId", controller.RelayNotImplemented)
-		relayV1Router.POST("/threads/:id/runs/:runsId", controller.RelayNotImplemented)
-		relayV1Router.GET("/threads/:id/runs", controller.RelayNotImplemented)
-		relayV1Router.POST("/threads/:id/runs/:runsId/submit_tool_outputs", controller.RelayNotImplemented)
-		relayV1Router.POST("/threads/:id/runs/:runsId/cancel", controller.RelayNotImplemented)
-		relayV1Router.GET("/threads/:id/runs/:runsId/steps/:stepId", controller.RelayNotImplemented)
-		relayV1Router.GET("/threads/:id/runs/:runsId/steps", controller.RelayNotImplemented)
+	}
+
+	// dyt-113: Gemini Interactions API 原生入口。
+	// Google 已于 2026-06 将该 API GA 并作为 Gemini 主推入口（路径 /v1beta/interactions）。
+	// 单独开 /v1beta 组，中间件与 relayV1Router 保持一致（限流->body 限制->鉴权->分发）。
+	relayV1BetaRouter := router.Group("/v1beta")
+	relayV1BetaRouter.Use(middleware.RelayPanicRecover(), middleware.RelayRateLimit(), bodySizeLimit(), middleware.TokenAuth(), middleware.Distribute())
+	{
+		relayV1BetaRouter.POST("/interactions", controller.Relay)
+		// 取回带服务端状态的 interaction；网关不代持状态，明确拒绝而不是 404
+		relayV1BetaRouter.GET("/interactions/:id", controller.RelayNotImplemented)
+		relayV1BetaRouter.DELETE("/interactions/:id", controller.RelayNotImplemented)
+		relayV1BetaRouter.POST("/interactions/:id/cancel", controller.RelayNotImplemented)
+	}
+
+	// dyt-113: OpenAI Assistants / Threads 已于 2026-08-26 全面关停，相关路由整体移除。
+	// 保留 410 Gone 以便老客户端拿到明确信号（而不是 404 导致误判为路径写错）。
+	assistantsGone := func(c *gin.Context) {
+		c.JSON(http.StatusGone, gin.H{
+			"error": gin.H{
+				"message": "The Assistants API was shut down by OpenAI on 2026-08-26. Migrate to the Responses API (/v1/responses).",
+				"type":    "assistants_api_retired",
+				"code":    "assistants_api_retired",
+			},
+		})
+	}
+	for _, p := range []string{"/assistants", "/assistants/:id", "/assistants/:id/files",
+		"/assistants/:id/files/:fileId", "/threads", "/threads/:id", "/threads/:id/messages",
+		"/threads/:id/messages/:messageId", "/threads/:id/messages/:messageId/files",
+		"/threads/:id/messages/:messageId/files/:filesId", "/threads/:id/runs",
+		"/threads/:id/runs/:runsId", "/threads/:id/runs/:runsId/submit_tool_outputs",
+		"/threads/:id/runs/:runsId/cancel", "/threads/:id/runs/:runsId/steps",
+		"/threads/:id/runs/:runsId/steps/:stepId"} {
+		relayV1Router.Any(p, assistantsGone)
 	}
 }

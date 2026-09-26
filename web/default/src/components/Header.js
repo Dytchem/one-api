@@ -20,7 +20,15 @@ import {
 import '../index.css';
 
 // Header Buttons
+// dyt-113: 导航顺序按用户要求固定为：
+//   总览 → 渠道 → 令牌 → 对话(chat) → Agent → 用户 → 日志 → ...
+// 之前是靠 splice 往数组里插 chat/agent，顺序隐晦且易错，这里改成显式声明。
 let headerButtons = [
+  {
+    name: 'header.dashboard',
+    to: '/dashboard',
+    icon: 'chart bar',
+  },
   {
     name: 'header.channel',
     to: '/channel',
@@ -33,15 +41,22 @@ let headerButtons = [
     icon: 'key',
   },
   {
+    // dyt-61: 聊天入口固定显示，与渠道/令牌等并列（不再依赖 chat_link 设置）
+    name: 'header.chat',
+    to: '/chat',
+    icon: 'comments',
+  },
+  {
+    // dyt-64: Agent 入口（pi agent）
+    name: 'header.agent',
+    to: '/agent',
+    icon: 'magic',
+  },
+  {
     name: 'header.user',
     to: '/user',
     icon: 'user',
     admin: true,
-  },
-  {
-    name: 'header.dashboard',
-    to: '/dashboard',
-    icon: 'chart bar',
   },
   {
     name: 'header.log',
@@ -64,20 +79,6 @@ let headerButtons = [
     icon: 'info circle',
   },
 ];
-
-// dyt-61: 聊天入口固定显示，与渠道/日志等并列（不再依赖 chat_link 设置）
-headerButtons.splice(1, 0, {
-  name: 'header.chat',
-  to: '/chat',
-  icon: 'comments',
-});
-
-// dyt-64: Agent 入口（pi agent）
-headerButtons.splice(2, 0, {
-  name: 'header.agent',
-  to: '/agent',
-  icon: 'magic',
-});
 
 // dyt-57: 单一布局 —— 所有分辨率使用同一套顶部导航（无手机/桌面分支），
 // 窄屏通过 CSS 收缩（隐藏 logo 文字、菜单项压缩、溢出横向滚动兜底）

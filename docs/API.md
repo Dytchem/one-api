@@ -43,6 +43,66 @@ One API 使用 JSON 格式进行请求和响应。
 }
 ```
 
+## 转发协议入口
+
+网关提供多种协议的**原生入口**，同一个令牌即可使用。客户端用哪种协议请求，就用哪种格式得到响应（网关内部统一转成 chat 格式转发，出口再按渠道类型转换）。
+
+### OpenAI 兼容（默认）
+| 端点 | 说明 |
+| --- | --- |
+| **POST** `/v1/chat/completions` | 对话补全（标准入口） |
+| **POST** `/v1/responses` | Responses API（新项目推荐；助手/工具场景） |
+| **POST** `/v1/completions` | 旧版补全 |
+| **POST** `/v1/embeddings` | 向量 |
+| **POST** `/v1/images/generations` | 图像生成 |
+| **POST** `/v1/audio/{speech,transcriptions,translations}` | 语音 |
+| **POST** `/v1/moderations` | 内容审核 |
+| **GET** `/v1/models` | 模型列表 |
+
+### Anthropic Messages 原生入口
+**POST** `/v1/messages`
+
+让 Claude Code / Anthropic SDK 等原生 Anthropic 客户端直接接入。请求与响应均为 Anthropic 格式：
+
+```bash
+curl https://oneapi.dytchem.cn/v1/messages \
+  -H "Authorization: Bearer sk-xxxx" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "claude-sonnet-4-5",
+    "max_tokens": 1024,
+    "system": "You are concise.",
+    "messages": [{"role": "user", "content": "hello"}]
+  }'
+```
+
+支持的映射：`system`（字符串或 block 数组）、`tool_use` ↔ `tool_calls`、`tool_result` → `role=tool`、base64/URL 图片、`stop_sequences`、`tool_choice`（`auto`/`any`/`tool`/`none`）。流式响应会输出完整 Anthropic SSE 事件序列（`message_start` → `content_block_*` → `message_delta` → `message_stop`）。
+
+> 该入口的**渠道选择与 OpenAI 入口完全一致**——Anthropic 客户端也可以路由到任意 OpenAI 兼容渠道，反之亦然。
+>
+> `POST /v1/messages/count_tokens` 未实现，返回 501。
+
+### Gemini Interactions 原生入口
+**POST** `/v1beta/interactions`
+
+Google 自 2026-06 起将该 API 作为 Gemini 主推入口。
+
+```bash
+curl https://oneapi.dytchem.cn/v1beta/interactions \
+  -H "Authorization: Bearer sk-xxxx" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "gemini-3.6-flash", "input": "Tell me a short story."}'
+```
+
+`input` 支持纯字符串、`{"type":"user_input"|"model_output","content":[...]}` 对话数组，以及扁平的 `text`/`image` block 数组。
+
+**以下能力网关无法代持，会返回明确错误而非静默降级**：`tools`（`google_search`/`mcp_server`/`computer_use` 等服务端工具）、`background`、`environment`、`previous_interaction_id`（网关无状态，请改为发送完整 `input` 历史）。
+
+### 已退役端点
+OpenAI **Assistants / Threads API 已于 2026-08-26 全面关停**。`/v1/assistants*` 与 `/v1/threads*` 路径仍保留映射，但返回 **410 Gone** 并提示迁移到 `/v1/responses`（不再返回 501，以免被误读为"尚未实现"）。
+
+> 注意：**Chat Completions 未被废弃**，仍可长期使用；2026-11-30 关停的是 Prompt Objects 与部分旧模型。
+
 ## 其他
 ### 充值链接上的附加参数
 One API 会在用户点击充值按钮的时候，将用户的信息和充值信息附加在链接上，例如：

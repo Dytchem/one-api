@@ -421,7 +421,7 @@ func (s *responsesStreamState) emitTextDone(c *gin.Context) {
 		"type": "response.output_item.done", "output_index": 0,
 		"item": map[string]any{
 			"id": s.msgID, "type": "message", "status": "completed",
-			"role": "assistant",
+			"role":    "assistant",
 			"content": []any{map[string]any{"type": "output_text", "text": text, "annotations": []any{}}},
 		},
 	})
@@ -489,7 +489,7 @@ func (s *responsesStreamState) emitCompleted(c *gin.Context) {
 		text := s.text.String()
 		outputs = append(outputs, map[string]any{
 			"id": s.msgID, "type": "message", "status": "completed",
-			"role": "assistant",
+			"role":    "assistant",
 			"content": []any{map[string]any{"type": "output_text", "text": text, "annotations": []any{}}},
 		})
 	}
