@@ -54,18 +54,32 @@ PORT=$BRIDGE_PORT node /pi-bridge/server.js >>"$BRIDGE_LOG" 2>&1 &
 # "pi-bridge 未就绪"（bridge 其实秒起且健康）。这属于误报，比不检查更糟：
 # 会把真正的启动失败淹没在噪声里。
 # 现改为按可用工具依次退化：busybox wget -> node 原生 -> nc 端口探测。
+#
+# dyt-112: 上述函数体与调用点都必须对 `set -e` 安全。
+# 事故复盘：v108 把探测写成裸函数调用 `bridge_health_ok`（在 for 里），
+# 而本脚本是 `set -e` —— 函数首次返回 1（bridge 尚未就绪）即让整个脚本立刻退出，
+# 容器进入 Restarting 崩溃循环。原 curl 版本之所以没事，是因为它写在
+# `if curl ...; then` 里：处于"被测试"位置的非零返回不触发 set -e。
+# 现在：① 用 `rc=$?` 承接返回值（赋值不会因非零而退出）；
+#       ② 函数体内每个可能失败的命令都显式 `|| return N`，避免函数中途被 set -e 打断。
 bridge_health_ok() {
   if command -v wget >/dev/null 2>&1; then
-    wget -q -T 2 -O /dev/null "http://127.0.0.1:$BRIDGE_PORT/health" 2>/dev/null
-    return $?
+    if wget -q -T 2 -O /dev/null "http://127.0.0.1:$BRIDGE_PORT/health" 2>/dev/null; then
+      return 0
+    fi
+    return 1
   fi
   if command -v node >/dev/null 2>&1; then
-    node -e "const h=require('http');const r=h.get({host:'127.0.0.1',port:process.env.BRIDGE_PORT,path:'/health',timeout:2000},s=>{process.exit(s.statusCode===200?0:1)});r.on('error',()=>process.exit(1));r.on('timeout',()=>{r.destroy();process.exit(1)});" >/dev/null 2>&1
-    return $?
+    if node -e "const h=require('http');const r=h.get({host:'127.0.0.1',port:process.env.BRIDGE_PORT,path:'/health',timeout:2000},s=>{s.resume();process.exit(s.statusCode===200?0:1)});r.on('error',()=>process.exit(1));r.on('timeout',()=>{r.destroy();process.exit(1)});" >/dev/null 2>&1; then
+      return 0
+    fi
+    return 1
   fi
   if command -v nc >/dev/null 2>&1; then
-    nc -z -w 2 127.0.0.1 "$BRIDGE_PORT" >/dev/null 2>&1
-    return $?
+    if nc -z -w 2 127.0.0.1 "$BRIDGE_PORT" >/dev/null 2>&1; then
+      return 0
+    fi
+    return 1
   fi
   # 无任何可用探测工具：不做判断，视为"未知"而非"失败"，避免误报
   return 2
@@ -74,8 +88,8 @@ bridge_health_ok() {
 BRIDGE_OK=0
 BRIDGE_UNKNOWN=0
 for i in $(seq 1 40); do
-  bridge_health_ok
-  rc=$?
+  # 用赋值承接返回码：`rc=$?` 形式不受 set -e 影响，避免非零即退出脚本
+  bridge_health_ok && rc=0 || rc=$?
   if [ "$rc" -eq 0 ]; then
     BRIDGE_OK=1
     break
