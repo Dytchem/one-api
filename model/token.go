@@ -66,7 +66,9 @@ func ValidateUserToken(key string) (token *Token, err error) {
 	token, err = CacheGetTokenByKey(key)
 	if err != nil {
 		logger.SysError("CacheGetTokenByKey failed: " + err.Error())
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+		// dyt-108: 负缓存命中时返回 ErrTokenNotExist，语义与 ErrRecordNotFound 等价，
+		// 必须走同一个"无效的令牌"分支，否则会误报成"令牌验证失败"。
+		if errors.Is(err, gorm.ErrRecordNotFound) || errors.Is(err, ErrTokenNotExist) {
 			return nil, errors.New("无效的令牌")
 		}
 		return nil, errors.New("令牌验证失败")

@@ -121,6 +121,11 @@ Fork 自 [songquanpeng/one-api](https://github.com/songquanpeng/one-api)，在�
 - **entrypoint 就绪检查闭环**：原 20 次循环后无条件继续（bridge 启动失败时外部只见 502、无任何信号），现失败即打印日志并显式告警；日志移出未挂卷的 `/tmp`
 - **渠道分发防御性判空**：`channel.Id` 解引用前加显式守卫（两条查询路径都不会返回 `(nil, nil)`，但真出现时会把请求打成 panic）
 
+### 缓存与侦测加固（v108）
+
+- **无效令牌负缓存**：`CacheGetTokenByKey` 原先查库失败直接返回错误、**不缓存失败结果**，于是任何随机 `sk-` 键的请求都会打到数据库（找不到也要查一次库），公网可无上限铸造随机键即构成 DB 放大面。现对 `gorm.ErrRecordNotFound`（**且仅**该情形——连接失败/超时等不缓存，避免把数据库抖动固化成假"令牌无效"）做 30s 负缓存；令牌增删改路径连带清除负缓存，保证新建令牌立即可用。v106 的 `/v1` 限流是兜底，这条才是让缓存真正生效的正解
+- **entrypoint 就绪探测修复**：原探测用 `curl`，而最终镜像 `node:20-alpine` 只装了 `ca-certificates tzdata`、**没有 curl**，导致每次启动都误报"pi-bridge 未就绪"（bridge 其实秒起健康）——这种必然失败的检查比不检查更糟，会把真正的启动失败淹没在噪声里。现按镜像内实际可用工具退化探测（busybox `wget` → `node` 原生 http → `nc`），并把"无工具可用"与"探测失败"区分开
+
 ### 越权与限流加固（v106 / v107）
 
 - **proxy 目标白名单把 `URL.Path` 当成 `target` 用（真实存在、影响可用性）**：非 admin 的 proxy 白名单判定用的是 `c.Request.URL.Path`，而它形如 `/v1/oneapi/proxy/5/v1/chat/completions`（**含路由前缀**），白名单项全是 `/v1/...` → `HasPrefix` 对任何输入**恒为 false**，即普通用户的 proxy 请求从未被放行过（proxy 对非 admin 完全不可用）。v107 改用 `c.Param("target")`（通配段捕获值），并在匹配前 `path.Clean`，使合法端点恢复可用、`..` 逃逸与 `/v1` 外目标仍被拒

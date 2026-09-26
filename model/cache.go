@@ -5,16 +5,23 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/songquanpeng/one-api/common"
-	"github.com/songquanpeng/one-api/common/config"
-	"github.com/songquanpeng/one-api/common/logger"
-	"github.com/songquanpeng/one-api/common/random"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"gorm.io/gorm"
+
+	"github.com/songquanpeng/one-api/common"
+	"github.com/songquanpeng/one-api/common/config"
+	"github.com/songquanpeng/one-api/common/logger"
+	"github.com/songquanpeng/one-api/common/random"
 )
+
+// dyt-108: 令牌不存在（负缓存命中时返回的稳定错误值）。
+// 调用方一律按"令牌无效"处理，与 gorm.ErrRecordNotFound 语义等价。
+var ErrTokenNotExist = errors.New("token not exist")
 
 var (
 	TokenCacheSeconds         = config.SyncFrequency
@@ -80,6 +87,14 @@ var (
 	userGroupMemCache     = newMemCache[string](time.Duration(UserId2GroupCacheSeconds) * time.Second)
 	userEnabledMemCache   = newMemCache[bool](time.Duration(UserId2StatusCacheSeconds) * time.Second)
 	channelStatusMemCache = newMemCache[int](time.Duration(config.SyncFrequency) * time.Second)
+	// dyt-108: 无效 token key 的负缓存。
+	// 原实现：CacheGetTokenByKey 查库失败直接 return err，**不缓存失败结果**，
+	// 于是任何随机 `sk-` 键的请求都会打到数据库（找不到也要查一次库）。
+	// 公网可无上限铸造随机键 ⇒ 典型 DB 放大/DoS 面
+	// （v106 已加 /v1 限流兜底，本条是让缓存真正生效的正解）。
+	// TTL 取较短值：既要挡住洪峰，又要在令牌新建/变更后尽快可见
+	// （相关写路径会主动 Delete，见 DeleteTokenMemCache）。
+	invalidTokenMemCache = newMemCache[bool](30 * time.Second)
 )
 
 // DeleteUserMemCache: 用户变更（更新/封禁/删除/额度/角色）后调用，失效进程内缓存
@@ -92,6 +107,9 @@ func DeleteUserMemCache(id int) {
 // DeleteTokenMemCache: 令牌变更（增删改/状态）后调用，按 key 失效
 func DeleteTokenMemCache(key string) {
 	tokenMemCache.Delete(key)
+	// dyt-108: 连带清掉负缓存。否则"先被随机键撞出负缓存、之后才新建同名令牌"
+	// 的场景会在 TTL 内一直报令牌无效（改用已有 key 重建令牌时就会踩到）。
+	invalidTokenMemCache.Delete(key)
 }
 
 // DeleteChannelMemCache: 渠道变更后调用（状态/权重/配置），供健康路由缓存使用
@@ -110,8 +128,17 @@ func CacheGetTokenByKey(key string) (*Token, error) {
 		if v, ok := tokenMemCache.Get(key); ok {
 			return v, nil
 		}
+		// dyt-108: 命中负缓存直接返回，避免无效键每次都查库（随机 sk- 洪峰放大 DB）
+		if _, ok := invalidTokenMemCache.Get(key); ok {
+			return nil, ErrTokenNotExist
+		}
 		err := DB.Where(keyCol+" = ?", key).First(&token).Error
 		if err != nil {
+			// dyt-108: 仅对"确实不存在"做负缓存。其它错误（连接失败/超时等）不缓存，
+			// 否则数据库抖动会把短暂的失败固化成 30s 的假"令牌无效"。
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				invalidTokenMemCache.Set(key, true)
+			}
 			return nil, err
 		}
 		// 深拷贝：Models/Subnet 是指针字段，防止调用方修改污染缓存
