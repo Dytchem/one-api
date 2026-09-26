@@ -3,6 +3,7 @@ package openai
 import (
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -105,33 +106,11 @@ func sessionKey(m *meta.Meta) string {
 	if model == "" {
 		model = m.OriginModelName
 	}
-	return strings.Join([]string{
-		"ch", itoa(m.ChannelId),
-		"t", itoa(m.ChannelType),
-		"m", model,
-	}, "|")
-}
-
-func itoa(i int) string {
-	if i == 0 {
-		return "0"
-	}
-	neg := i < 0
-	if neg {
-		i = -i
-	}
-	var buf [20]byte
-	pos := len(buf)
-	for i > 0 {
-		pos--
-		buf[pos] = byte('0' + i%10)
-		i /= 10
-	}
-	if neg {
-		pos--
-		buf[pos] = '-'
-	}
-	return string(buf[pos:])
+	// dyt-107: 用 strconv.Itoa。原先手写的 itoa 对 math.MinInt64 会因 -i 溢出
+	// 返回 "-"（实际不可达，但没必要留坑），也少维护一份转换逻辑。
+	return "ch" + strconv.Itoa(m.ChannelId) +
+		"|t" + strconv.Itoa(m.ChannelType) +
+		"|m" + model
 }
 
 // pruneOpenCodeSessionsLocked 清理过期桶，避免渠道/模型组合长期累积导致 map 无界增长。

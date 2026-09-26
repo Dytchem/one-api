@@ -2,6 +2,7 @@ package openai
 
 import (
 	"net/http"
+	"strconv"
 	"testing"
 	"time"
 
@@ -118,7 +119,7 @@ func TestOpenCodeSessionRotationAndPrune(t *testing.T) {
 		openCodeSessions = map[string]*sessionBucket{}
 		stale := time.Now().Add(-2 * openCodeSessionTTL)
 		for i := 0; i < 128; i++ {
-			openCodeSessions[itoa(i)] = &sessionBucket{id: "x", refreshed: stale}
+			openCodeSessions[strconv.Itoa(i)] = &sessionBucket{id: "x", refreshed: stale}
 		}
 		pruneOpenCodeSessionsLocked(time.Now())
 		left := len(openCodeSessions)

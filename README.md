@@ -100,7 +100,7 @@ Fork 自 [songquanpeng/one-api](https://github.com/songquanpeng/one-api)，在�
 
 - **早期加固**：CORS 白名单、SMTP TLS 严格校验、crypto/rand 替换 math/rand、Go 1.22 + gin + sonic + golang-jwt v5 升级、Dockerfile 固定基础镜像、cookie 安全配置（HttpOnly/SameSite）、防邮箱枚举、启动日志去默认密码
 - **全库审计（6 轮）**：SSRF 钉 IP 防 rebinding（image_url 抓取加固：超时/限体/禁重定向/私网阻断）、会话伪造与孤儿会话重放防护、bridge 鉴权（`BRIDGE_SECRET` 兼容模式）、验证码爆破防护、审计日志 key 脱敏、GET 副作用改 POST、CSP 收紧、管理员 HTML 清洗、GORM 零值更新修复、数据库弱口令收敛
-- **bridge 鉴权（v96–v98）**：`BRIDGE_SECRET` / `AGENT_BRIDGE_SECRET` 共享密钥 + `X-Bridge-Token` 头；未配置时兼容模式（功能不受影响）
+- **bridge 鉴权（v96–v98）**：`BRIDGE_SECRET` / `AGENT_BRIDGE_SECRET` 共享密钥 + `X-Bridge-Token` 头；**v105 起默认开启**，未配置时自动生成持久化密钥，不再有不校验的兼容模式
 
 ### 界面与体验
 
@@ -112,7 +112,7 @@ Fork 自 [songquanpeng/one-api](https://github.com/songquanpeng/one-api)，在�
 
 ### 稳定性与安全加固（v105 全库审计第二轮）
 
-- **pi-bridge 鉴权默认开启（提权面收敛）**：原实现在 `BRIDGE_SECRET` 未配置时 `requireAuth` 直接放行，而 bridge 信任调用方自报的 `user_id`，同机任意进程都能以管理员身份驱动 Agent 工具。现改为：未显式配置时由 `entrypoint.sh` 自动生成一次性随机密钥并同时注入两侧（**零配置即可启用鉴权**）；bridge 在无密钥且未显式 `BRIDGE_ALLOW_INSECURE=1` 时**拒绝启动**
+- **pi-bridge 鉴权默认开启（提权面收敛）**：原实现在 `BRIDGE_SECRET` 未配置时 `requireAuth` 直接放行，而 bridge 信任调用方自报的 `user_id`，同机任意进程都能以管理员身份驱动 Agent 工具。现改为：未显式配置时由 `entrypoint.sh` 自动生成随机密钥（持久化到 `/data/bridge_secret`）并同时注入两侧（**零配置即可启用鉴权**）；bridge 在无密钥且未显式 `BRIDGE_ALLOW_INSECURE=1` 时**拒绝启动**
 - **限流器 key 回收修复（内存无界增长）**：原 `clearExpiredItems` 判定对「正在被访问」的 key 恒为假（队列尾部是刚写入的时间戳），活跃 key 永不回收；key 由 `ClientIP` 生成且 CORS 为 `AllowAllOrigins`，公网可铸造任意多 key ⇒ map 无界增长至 OOM。同时修掉 `expirationDuration` 的无锁读（data race）
 - **响应体泄漏与无界读取**：`GetResponseBody` 原先只在 200 且读取成功时 `Close()`，非 200 / 读取出错的早退路径泄漏 fd（余额刷新为定时循环，渠道抖动时会耗尽 fd）；连同渠道测试、Agent 桥接响应一并限制读取上限
 - **请求体改写后同步 `ContentLength`**：`extractChannelId` 重写 body 却未更新长度，下游按旧长度读取（音频路径会原样转发给 Azure）导致上游截断/挂起
@@ -121,10 +121,13 @@ Fork 自 [songquanpeng/one-api](https://github.com/songquanpeng/one-api)，在�
 - **entrypoint 就绪检查闭环**：原 20 次循环后无条件继续（bridge 启动失败时外部只见 502、无任何信号），现失败即打印日志并显式告警；日志移出未挂卷的 `/tmp`
 - **渠道分发防御性判空**：`channel.Id` 解引用前加显式守卫（两条查询路径都不会返回 `(nil, nil)`，但真出现时会把请求打成 panic）
 
-### 越权与限流加固（v106）
+### 越权与限流加固（v106 / v107）
 
-- **proxy 路由路径逃逸修复（越权）**：普通用户的 proxy 目标白名单用 `HasPrefix` 判定，而 Go/gin **不做路径清理**——`/v1/oneapi/proxy/5/v1/images/../../../../admin/setting` 因前缀 `/v1/images` 通过白名单，适配层又把原样路径拼到 `BaseURL` 上，非管理员即可触达上游任意路径。现：适配层解析并 `path.Clean` 后**强制约束在 `/v1/` 命名空间内**（在 `/v1` 外的目标一律拒绝），白名单侧也先归一化再匹配（第二道防线）
-- **`/v1` 转发路径限流**：原先 `/v1` 只有 `TokenAuth`、完全没有限流，而 token 未命中缓存时每个请求都查一次库（token **无负缓存**）——用随机 `sk-` 键刷 `/v1` 即可无上限压数据库。新增独立的 `RelayRateLimit`（`RELAY_RATE_LIMIT`，默认 3000/3min，置于 `TokenAuth` 之前以在查库前生效；设 0 关闭），与 `/api` 的配额互不挤占，默认值宽松以免误伤流式长连接
+- **proxy 目标白名单把 `URL.Path` 当成 `target` 用（真实存在、影响可用性）**：非 admin 的 proxy 白名单判定用的是 `c.Request.URL.Path`，而它形如 `/v1/oneapi/proxy/5/v1/chat/completions`（**含路由前缀**），白名单项全是 `/v1/...` → `HasPrefix` 对任何输入**恒为 false**，即普通用户的 proxy 请求从未被放行过（proxy 对非 admin 完全不可用）。v107 改用 `c.Param("target")`（通配段捕获值），并在匹配前 `path.Clean`，使合法端点恢复可用、`..` 逃逸与 `/v1` 外目标仍被拒
+  > 说明：v106 曾把"非管理员可经 `..` 触达上游任意路径"记为可越权漏洞。经真实 gin 实测复核，该路径因上述恒 false 而**本就被 403**，**并不可达**；真正的缺陷是白名单判错对象导致功能不可用。此处据实更正
+- **proxy 适配层命名空间约束**：`GetRequestURL` 解析并 `path.Clean` 目标路径后强制要求落在 `/v1/` 内；并显式断言渠道前缀确实被剥离（重试换渠道时 `RequestURLPath` 仍是首次请求的 URL，`TrimPrefix` 会变成 no-op 而把前缀整体透传给上游）
+- **`/v1` 与 `/v1/models` 转发路径限流**：原先这两处只有 `TokenAuth`、完全没有限流，而 token 未命中缓存时每个请求都查一次库（token **无负缓存**）——用随机 `sk-` 键刷即可无上限压数据库。新增独立的 `RelayRateLimit`（`RELAY_RATE_LIMIT`，默认 3000/3min，置于 `TokenAuth` 之前以在查库前生效；设 0 关闭），并同时挂到 `/v1/models` 组；与 `/api` 配额互不挤占，默认值宽松以免误伤流式长连接。⚠️ 限流按 `ClientIP` 计，若前置反代**未**透传 `X-Forwarded-For`，所有用户会共用同一配额桶
+- **bridge 密钥持久化**：自动生成的 `BRIDGE_SECRET` 现持久化到 `/data/bridge_secret`（0600，与 `session_secret` 同卷），避免每次容器重启换新密钥导致 bridge 与 one-api 两侧 desync、Chat/Agent 静默失效
 
 ### 性能（v100 性能大更新）
 
@@ -158,7 +161,7 @@ docker run -d --name one-api --restart unless-stopped --network host \
 
 - `PORT` 非默认（3000）时必须设置 `ONEAPI_BASE` 同值；3005 被占时加 `AGENT_BRIDGE_URL` / `BRIDGE_PORT`
 - **无需任何部署级 key**：模型同步与工具凭据都用登录用户自己的令牌（前端自动选用当前账号第一个可用令牌）
-- 安全可选：`BRIDGE_SECRET` / `AGENT_BRIDGE_SECRET` 成对配置启用 bridge 鉴权，不配也能用
+- **bridge 鉴权默认开启**：未配置 `BRIDGE_SECRET` 时由 `entrypoint.sh` 自动生成并持久化到 `/data/bridge_secret`，同时注入 bridge 与 one-api（零配置即启用）；跨容器/跨机部署才需显式成对配置两侧同值。仅本机调试可用 `BRIDGE_ALLOW_INSECURE=1` 显式关闭（bridge 在无密钥且未显式放开时**拒绝启动**）
 - 代理仅用于出站（上游模型 / 搜索抓取），`NO_PROXY` 建议覆盖内网与自有域名
 
 ### 环境变量速查
@@ -169,7 +172,8 @@ docker run -d --name one-api --restart unless-stopped --network host \
 | `PORT` | 3000 | 网关端口 |
 | `ONEAPI_BASE` | — | 网关外部访问地址（`PORT` 非默认时必填） |
 | `AGENT_BRIDGE_URL` / `BRIDGE_PORT` | 3005 | Chat/Agent bridge 地址 / 端口 |
-| `BRIDGE_SECRET` / `AGENT_BRIDGE_SECRET` | — | 成对配置启用 bridge 严格鉴权 |
+| `BRIDGE_SECRET` / `AGENT_BRIDGE_SECRET` | 自动 | bridge 鉴权密钥（自动生成并持久化到 `/data/bridge_secret`，0600；跨容器部署需两侧显式同值） |
+| `RELAY_RATE_LIMIT` | 3000 | `/v1` 与 `/v1/models` 转发限流次数（固定 3 分钟窗口，按 ClientIP 计；0 关闭） |
 | `PROBE_TIMEOUT` | 120s | 渠道探测 SSE 首 token 超时 |
 | `LOG_PAYLOAD_TTL_HOURS` | 168 | 失败日志 payload 保留时长 |
 | `SESSION_SECRET` | 自动 | 会话密钥（自动生成持久化，0600） |

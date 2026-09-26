@@ -28,7 +28,9 @@ func SetRelayRouter(router *gin.Engine) {
 	router.Use(middleware.GzipDecodeMiddleware())
 	// https://platform.openai.com/docs/api-reference/introduction
 	modelsRouter := router.Group("/v1/models")
-	modelsRouter.Use(middleware.TokenAuth())
+	// dyt-106: 这组路由挂在 relayV1Router 之外，若不单独挂限流则 /v1/models
+	// 成为"随机 sk- 洪峰"仍可无上限打库的缺口（TokenAuth 未命中缓存时每请求查一次库）。
+	modelsRouter.Use(middleware.RelayRateLimit(), middleware.TokenAuth())
 	{
 		modelsRouter.GET("", controller.ListModels)
 		modelsRouter.GET("/:model", controller.RetrieveModel)

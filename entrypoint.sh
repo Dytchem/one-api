@@ -8,17 +8,32 @@ export BRIDGE_PORT="${BRIDGE_PORT:-3005}"
 # 原实现：BRIDGE_SECRET 未配置时 bridge 以兼容模式运行（requireAuth 直接 return true），
 # 而 bridge 的 /chat 等接口信任调用方自报的 user_id —— 同机/同网络任何进程都能
 # 以管理员身份驱动 Agent 工具（/api/channel、/api/user、/api/option），属提权面。
-# 现改为：未显式配置时，由 entrypoint 生成一次性随机密钥并同时注入 bridge 与 one-api，
+# 现改为：未显式配置时，由 entrypoint 生成随机密钥并同时注入 bridge 与 one-api，
 # 使鉴权始终生效而无需任何配置；显式配置的值优先（用于跨容器/跨机部署，两侧必须一致）。
+# dyt-107: 生成的密钥持久化到 /data（与 session_secret 同一挂载卷），
+# 否则每次容器重启都会换新密钥——bridge 与 one-api 若分别重启（或超时不一致），
+# 两侧密钥就desync，Chat/Agent 会以 401/404 静默失效。
+BRIDGE_SECRET_FILE="/data/bridge_secret"
 if [ -z "$BRIDGE_SECRET" ]; then
-  if [ -r /proc/sys/kernel/random/uuid ]; then
-    BRIDGE_SECRET="$(cat /proc/sys/kernel/random/uuid)"
+  if [ -s "$BRIDGE_SECRET_FILE" ]; then
+    BRIDGE_SECRET="$(cat "$BRIDGE_SECRET_FILE" 2>/dev/null || true)"
+  fi
+  if [ -z "$BRIDGE_SECRET" ]; then
+    if [ -r /proc/sys/kernel/random/uuid ]; then
+      BRIDGE_SECRET="$(cat /proc/sys/kernel/random/uuid)"
+    else
+      BRIDGE_SECRET="$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+    fi
+    # 尽力持久化；不可写则退回每次重启生成（不影响本次鉴权生效）
+    if mkdir -p "$(dirname "$BRIDGE_SECRET_FILE")" 2>/dev/null; then
+      (umask 077 && printf '%s' "$BRIDGE_SECRET" > "$BRIDGE_SECRET_FILE") 2>/dev/null || true
+    fi
+    echo "[entrypoint] BRIDGE_SECRET 未配置，已生成随机密钥并持久化到 $BRIDGE_SECRET_FILE（bridge 鉴权已启用，无需人工配置）" >&2
   else
-    BRIDGE_SECRET="$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+    echo "[entrypoint] BRIDGE_SECRET 未配置，复用已持久化密钥 $BRIDGE_SECRET_FILE（bridge 鉴权已启用）" >&2
   fi
   export BRIDGE_SECRET
   export AGENT_BRIDGE_SECRET="$BRIDGE_SECRET"
-  echo "[entrypoint] BRIDGE_SECRET 未配置，已自动生成一次性随机密钥（bridge 鉴权已启用，无需人工配置）" >&2
 else
   # 显式配置时保持一致：one-api 侧读 AGENT_BRIDGE_SECRET
   export AGENT_BRIDGE_SECRET="${AGENT_BRIDGE_SECRET:-$BRIDGE_SECRET}"

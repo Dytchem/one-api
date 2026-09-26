@@ -196,9 +196,14 @@ func TokenAuth() func(c *gin.Context) {
 		// （proxy 的 target 是任意路径，模型白名单无法校验，故仅校验渠道可用性与分组）
 		// dyt-96: 非 admin 的 proxy 目标路径限白名单（标准 OpenAI 兼容端点），
 		// 防止对内网渠道的管理端点/任意路径发起请求（SSRF 放大）
+		// dyt-107: 判定对象必须是 c.Param("target")（即 *target 通配捕获段），
+		// 而**不是** c.Request.URL.Path。URL.Path 含 `/v1/oneapi/proxy/<id>` 前缀，
+		// 白名单里全是 `/v1/...`，导致 HasPrefix 对任何输入恒为 false ——
+		// 即白名单从未放行过任何普通用户请求（proxy 对非 admin 完全不可用），
+		// 同时 v106 加在这里的 path.Clean 也只是死代码。已实测确认 gin 行为。
 		if channelId := c.Param("channelid"); channelId != "" {
 			if !model.IsAdmin(token.UserId) {
-				if !isAllowedProxyPath(c.Request.URL.Path) {
+				if !isAllowedProxyPath(c.Param("target")) {
 					abortWithMessage(c, http.StatusForbidden, "普通用户仅可使用标准模型端点（chat/completions/embeddings/images/audio/models）")
 					return
 				}
@@ -241,10 +246,14 @@ func shouldCheckModel(c *gin.Context) bool {
 }
 
 // isAllowedProxyPath: dyt-96 非 admin 经 proxy 路由可达的目标路径白名单
+//
+// 入参必须是 c.Param("target")（通配段捕获值，形如 `/v1/chat/completions`），
+// 而非 c.Request.URL.Path（形如 `/v1/oneapi/proxy/5/v1/chat/completions`）。
 func isAllowedProxyPath(rawPath string) bool {
-	// dyt-106: 先归一化再匹配。Go/gin 保留原始 `..`，
-	// `/v1/oneapi/proxy/5/v1/images/../../admin` 会因 HasPrefix("/v1/images") 通过白名单。
-	// （适配层也已做 Clean 兜底，此处是第二道防线。）
+	// dyt-106/107: 先归一化再匹配。gin 不做路径清理，`..` 会原样保留在 target 里，
+	// `/v1/images/../../../../admin/setting` 会因 HasPrefix("/v1/images") 通过白名单。
+	// Clean 后变成 `/admin/setting`，不再匹配任何白名单项，从而被拒。
+	// （适配层 GetRequestURL 亦做同样的归一化与命名空间约束，构成纵深防御。）
 	rawPath = path.Clean(rawPath)
 	allowed := []string{
 		"/v1/chat/completions",

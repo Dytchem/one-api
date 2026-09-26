@@ -62,6 +62,15 @@ func (a *Adaptor) GetChannelName() string {
 func (a *Adaptor) GetRequestURL(meta *meta.Meta) (string, error) {
 	prefix := fmt.Sprintf("/v1/oneapi/proxy/%d", meta.ChannelId)
 	target := strings.TrimPrefix(meta.RequestURLPath, prefix)
+	// dyt-107: 前缀必须真的被剥掉。重试时 SetupContextForSelectedChannel 会换成新渠道 id，
+	// 而 meta.RequestURLPath 仍是首次请求的原始 URL，TrimPrefix 于是变成 no-op，
+	// 残留的 `/v1/oneapi/proxy/<旧id>/...` 会被整体拼到上游（既错又不安全）。
+	if target == meta.RequestURLPath {
+		return "", errors.New("proxy request path does not match channel prefix")
+	}
+	if strings.Contains(target, "/oneapi/proxy/") {
+		return "", errors.New("nested proxy path is not allowed")
+	}
 	// dyt-106: 归一化路径并强制约束在 /v1/ 命名空间内，阻断 `..` 越权。
 	// Go/gin 不做路径清理，`/v1/oneapi/proxy/5/v1/images/../../../../admin/setting`
 	// 会原样保留；普通用户的 proxy 目标白名单用的是 HasPrefix("/v1/images")，
