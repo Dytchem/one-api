@@ -187,3 +187,74 @@ func TestResponsesEgressResponseFunctionCall(t *testing.T) {
 		t.Fatalf("tool: %+v", tools[0])
 	}
 }
+
+// dyt-115: 推理吃光 max_output_tokens 时，不能返回空 content。
+// 真实场景：Muse Spark 1.3 在 max_tokens=300 下可能把额度全用于推理，
+// upstream 返回 status=completed 但 output 里只有 reasoning、没有 message。
+func TestResponsesReasoningOnlyNotSilent(t *testing.T) {
+	ir := &responsesResponse{
+		Id:     "resp_1",
+		Status: "completed",
+		Output: []responsesOutputItem{
+			{Type: "reasoning", Id: "rs_1", Status: "completed"},
+		},
+		Usage: &responsesUsage{InputTokens: 13, OutputTokens: 300, TotalTokens: 313},
+	}
+	ir.Usage.OutputTokensDetails.ReasoningTokens = 300
+
+	text, tools, _ := MergeNonStreamResponsesIntoChat(ir)
+	if len(tools) != 0 {
+		t.Fatalf("tools: %d", len(tools))
+	}
+	if text == "" {
+		t.Fatal("must not be silent when reasoning consumed the whole budget")
+	}
+	if !strings.Contains(text, "max_tokens") {
+		t.Fatalf("hint should mention max_tokens: %q", text)
+	}
+}
+
+// 有推理摘要时优先返回摘要内容
+func TestResponsesReasoningSummaryUsed(t *testing.T) {
+	ir := &responsesResponse{
+		Output: []responsesOutputItem{
+			{Type: "reasoning", Summary: []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			}{{Type: "summary_text", Text: "I reasoned about it."}}},
+		},
+		Usage: &responsesUsage{OutputTokens: 100},
+	}
+	text, _, _ := MergeNonStreamResponsesIntoChat(ir)
+	if text != "I reasoned about it." {
+		t.Fatalf("expected summary text, got %q", text)
+	}
+}
+
+// 正常有 message 时不应被推理逻辑干扰
+func TestResponsesNormalMessageStillWins(t *testing.T) {
+	ir := &responsesResponse{
+		Output: []responsesOutputItem{
+			{Type: "reasoning", Status: "completed"},
+			{Type: "message", Content: []responsesOutputContent{{Type: "output_text", Text: "real answer"}}},
+		},
+		Usage: &responsesUsage{OutputTokens: 50},
+	}
+	ir.Usage.OutputTokensDetails.ReasoningTokens = 40
+	text, _, _ := MergeNonStreamResponsesIntoChat(ir)
+	if text != "real answer" {
+		t.Fatalf("got %q", text)
+	}
+}
+
+// 完全没有推理也没有内容时，不应编造提示
+func TestResponsesGenuinelyEmptyNotPadded(t *testing.T) {
+	ir := &responsesResponse{
+		Output: []responsesOutputItem{},
+		Usage:  &responsesUsage{OutputTokens: 0},
+	}
+	text, _, _ := MergeNonStreamResponsesIntoChat(ir)
+	if text != "" {
+		t.Fatalf("genuinely empty should stay empty, got %q", text)
+	}
+}

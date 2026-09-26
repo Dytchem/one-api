@@ -65,6 +65,10 @@ type responsesUsage struct {
 	InputTokens  int `json:"input_tokens"`
 	OutputTokens int `json:"output_tokens"`
 	TotalTokens  int `json:"total_tokens"`
+	// dyt-115: 其中有多少 output token 花在推理上
+	OutputTokensDetails struct {
+		ReasoningTokens int `json:"reasoning_tokens"`
+	} `json:"output_tokens_details,omitempty"`
 }
 
 type responsesOutputContent struct {
@@ -81,6 +85,14 @@ type responsesOutputItem struct {
 	Name      string                   `json:"name,omitempty"`
 	Arguments string                   `json:"arguments,omitempty"`
 	Status    string                   `json:"status,omitempty"`
+	// dyt-115: type=reasoning 的摘要。推理模型（如 Muse Spark 1.3）在
+	// max_output_tokens 较小时会把额度全用在推理上，message 项根本不会产生，
+	// 导致客户端拿到空 content。这里把 summary 读出来，至少在无正文时
+	// 能给客户端一个可解释的提示，而不是静默空响应。
+	Summary []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	} `json:"summary,omitempty"`
 }
 
 type responsesResponse struct {
@@ -89,7 +101,11 @@ type responsesResponse struct {
 	Status string                `json:"status"`
 	Output []responsesOutputItem `json:"output"`
 	Usage  *responsesUsage       `json:"usage,omitempty"`
-	Error  *struct {
+	// dyt-115: 上游因 token 预算耗尽而截断时的原因（如 max_output_tokens）
+	IncompleteDetails *struct {
+		Reason string `json:"reason"`
+	} `json:"incomplete_details,omitempty"`
+	Error *struct {
 		Message string `json:"message"`
 		Type    string `json:"type"`
 		Code    any    `json:"code"`
@@ -250,9 +266,17 @@ func responsesMessageText(message model.Message) string {
 // 返回 (文本, tool_calls, 上游 usage)。
 func MergeNonStreamResponsesIntoChat(ir *responsesResponse) (string, []model.Tool, *responsesUsage) {
 	var sb strings.Builder
+	var reasoningSB strings.Builder
 	toolCalls := make([]model.Tool, 0)
 	for _, o := range ir.Output {
 		switch o.Type {
+		case "reasoning":
+			// dyt-115: 推理摘要（多数实现只给 encrypted_content，summary 可能为空）
+			for _, sm := range o.Summary {
+				if sm.Text != "" {
+					reasoningSB.WriteString(sm.Text)
+				}
+			}
 		case "message":
 			for _, c := range o.Content {
 				if (c.Type == "output_text" || c.Type == "text") && c.Text != "" {
@@ -287,7 +311,37 @@ func MergeNonStreamResponsesIntoChat(ir *responsesResponse) (string, []model.Too
 			}
 		}
 	}
-	return sb.String(), toolCalls, ir.Usage
+	// dyt-115: 若上游只产出推理、没有任何正文与工具调用，说明推理吃光了
+	// max_output_tokens（Muse Spark 1.3 在 300 token 预算下就是这种情况：
+	// status 仍是 completed，但 output 里只有 reasoning，没有 message）。
+	// 返回空字符串会让客户端完全无法判断发生了什么，因此给出明确提示。
+	text := sb.String()
+	if text == "" && len(toolCalls) == 0 {
+		if reasoningSB.Len() > 0 {
+			text = reasoningSB.String()
+		} else if truncatedByReasoning(ir) {
+			// 推理吃光预算且上游没给 summary：给出可操作的提示，
+			// 否则客户端只看到空 content，无从判断这是配置问题。
+			text = "[reasoning consumed the entire max_output_tokens budget before any output was produced; raise max_tokens]"
+		}
+	}
+	return text, toolCalls, ir.Usage
+}
+
+// truncatedByReasoning 判断"有输出但全是推理、且因 token 预算截断"的情形。
+// 典型场景：Muse Spark 1.3 在 max_tokens=300 时 reasoning_tokens≈300、无 message 项。
+func truncatedByReasoning(ir *responsesResponse) bool {
+	if ir.Usage == nil || ir.Usage.OutputTokensDetails.ReasoningTokens == 0 {
+		return false
+	}
+	hasMessage := false
+	for _, o := range ir.Output {
+		if o.Type == "message" || o.Type == "function_call" {
+			hasMessage = true
+			break
+		}
+	}
+	return !hasMessage
 }
 
 // ---- 响应处理（出口侧）----

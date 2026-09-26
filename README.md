@@ -120,6 +120,16 @@ Fork 自 [songquanpeng/one-api](https://github.com/songquanpeng/one-api)，在�
 
 > 两个出口开关都是**按渠道可选、默认关闭**，不改变任何既有渠道的行为。网关→上游的协议选择与客户端→网关的入口协议相互独立，可任意组合。
 
+### Muse Spark 与推理模型支持（v115）
+
+- **接入 OpenCode Go 的 Muse Spark 1.3 / 1.2**。关键前提：这两个模型**只支持 Responses 协议**，打 `/v1/chat/completions` 会直接返回 `400 ModelProtocolUnsupported: "Model does not support this protocol."`。因此对应渠道必须开启 **`use_responses_api`**（渠道编辑页的开关），base_url 填 `https://opencode.ai/zen/go/v1`。官方端点表将其标注为 `@ai-sdk/openai` / `/v1/responses`，与实测一致
+  > 实测同时确认：DeepSeek V4.1 Flash 在 `/responses` 上同样正常，因此既有 OpenCode Go 渠道整条切到 Responses 也是安全的
+- **推理模型的空回复不再静默**：Muse Spark 1.3 这类重推理模型在 `max_output_tokens` 较小时，会把额度**全部用于推理**，上游返回 `status: completed` 但 `output` 里只有 `reasoning` 项、**没有任何 `message` 项**。此前网关如实返回空 `content`，客户端完全无法判断发生了什么。现在：
+  - 若上游给了推理 `summary`，无正文时返回该摘要；
+  - 若连摘要都没有（多数实现只给 `encrypted_content`），返回明确的提示 `[reasoning consumed the entire max_output_tokens budget before any output was produced; raise max_tokens]`；
+  - 真正空响应（无推理无内容）仍保持为空，不编造提示
+  - 建议给这类模型留足余量（实测 300 会踩坑，1000+ 稳定出正文）
+
 ### 界面与体验
 
 - **统一画布**：全部设备渲染同一 1440px 画布（iframe 隔离视口），任意端所见一致
