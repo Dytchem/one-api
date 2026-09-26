@@ -65,12 +65,17 @@ func AuditLog() gin.HandlerFunc {
 
 		var body string
 		if c.Request.Body != nil {
-			raw, err := io.ReadAll(c.Request.Body)
+			// dyt-105: 审计只需前 64KB（redactBody 本就只保留 1024 rune），
+			// 原实现无上限 io.ReadAll，配合 string(raw)+regex+[]rune 峰值达 3-4 倍 body 大小，
+			// 一个认证用户发大 body 即可放大内存占用。
+			const auditBodyLimit = 64 << 10
+			raw, err := io.ReadAll(io.LimitReader(c.Request.Body, auditBodyLimit))
 			if len(raw) > 0 {
 				body = redactBody(raw)
 			}
-			// 无论读取成败都恢复原 body，避免下游拿到空请求体
-			c.Request.Body = io.NopCloser(bytes.NewBuffer(raw))
+			// 无论读取成败都恢复原 body，避免下游拿到空请求体：
+			// 已读部分 + 未读完的剩余部分（MultiReader）拼回，超出上限的 body 不被截断。
+			c.Request.Body = io.NopCloser(io.MultiReader(bytes.NewReader(raw), c.Request.Body))
 			if err != nil {
 				body += "(body read error: " + err.Error() + ")"
 			}

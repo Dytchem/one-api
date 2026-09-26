@@ -138,14 +138,15 @@ func GetResponseBody(method, url string, channel *model.Channel, headers http.He
 	if err != nil {
 		return nil, err
 	}
+	// dyt-105: 必须无条件关闭响应体——原实现只在 200 且读取成功的路径上 Close，
+	// 非 200 与读取出错时直接 return，连接不会复用且泄漏 fd；
+	// 余额刷新是定时循环 + 用户手动触发，渠道抖动时会迅速耗尽 fd/TIME_WAIT。
+	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("status code: %d", res.StatusCode)
 	}
-	body, err := io.ReadAll(res.Body)
-	if err != nil {
-		return nil, err
-	}
-	err = res.Body.Close()
+	// dyt-105: 限制读取上限，防上游返回超大/无限 body 打爆内存
+	body, err := io.ReadAll(io.LimitReader(res.Body, 1<<20))
 	if err != nil {
 		return nil, err
 	}

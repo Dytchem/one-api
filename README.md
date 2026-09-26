@@ -110,6 +110,17 @@ Fork 自 [songquanpeng/one-api](https://github.com/songquanpeng/one-api)，在�
 - 全列表分页修复（日志/渠道/令牌/用户 hasMore 推断）+ 失败日志页统一格式
 - 手机端布局修复、页面白屏防护
 
+### 稳定性与安全加固（v105 全库审计第二轮）
+
+- **pi-bridge 鉴权默认开启（提权面收敛）**：原实现在 `BRIDGE_SECRET` 未配置时 `requireAuth` 直接放行，而 bridge 信任调用方自报的 `user_id`，同机任意进程都能以管理员身份驱动 Agent 工具。现改为：未显式配置时由 `entrypoint.sh` 自动生成一次性随机密钥并同时注入两侧（**零配置即可启用鉴权**）；bridge 在无密钥且未显式 `BRIDGE_ALLOW_INSECURE=1` 时**拒绝启动**
+- **限流器 key 回收修复（内存无界增长）**：原 `clearExpiredItems` 判定对「正在被访问」的 key 恒为假（队列尾部是刚写入的时间戳），活跃 key 永不回收；key 由 `ClientIP` 生成且 CORS 为 `AllowAllOrigins`，公网可铸造任意多 key ⇒ map 无界增长至 OOM。同时修掉 `expirationDuration` 的无锁读（data race）
+- **响应体泄漏与无界读取**：`GetResponseBody` 原先只在 200 且读取成功时 `Close()`，非 200 / 读取出错的早退路径泄漏 fd（余额刷新为定时循环，渠道抖动时会耗尽 fd）；连同渠道测试、Agent 桥接响应一并限制读取上限
+- **请求体改写后同步 `ContentLength`**：`extractChannelId` 重写 body 却未更新长度，下游按旧长度读取（音频路径会原样转发给 Azure）导致上游截断/挂起
+- **审计日志限读**：`AuditLog` 原无上限 `io.ReadAll` 请求体（`string`+正则+`[]rune` 峰值 3-4 倍），现只读前 64KB，未读部分经 `MultiReader` 拼回，**下游仍拿到完整 body**
+- **bridge 进程级兜底**：补 `unhandledRejection` / `uncaughtException` 处理——`readBody` 在客户端中途断开时以 `ECONNRESET` 拒绝且调用点在 try 之外，Node 默认会终止进程，单个 abort 请求即可打挂整个 Chat/Agent 子系统
+- **entrypoint 就绪检查闭环**：原 20 次循环后无条件继续（bridge 启动失败时外部只见 502、无任何信号），现失败即打印日志并显式告警；日志移出未挂卷的 `/tmp`
+- **渠道分发防御性判空**：`channel.Id` 解引用前加显式守卫（两条查询路径都不会返回 `(nil, nil)`，但真出现时会把请求打成 panic）
+
 ### 性能（v100 性能大更新）
 
 - 每请求 DB 往返 ~11 次 → **~4 次**

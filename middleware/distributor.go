@@ -115,6 +115,14 @@ func Distribute() func(c *gin.Context) {
 				return
 			}
 		}
+		// dyt-105: 防御性判空——(nil, nil) 在两条查询路径上都不应出现，
+		// 但此处 channel.Id 会 panic 打崩整个请求（gin.Recovery 兜底也会中断响应），
+		// 加一道显式守卫把"不可能"变成可诊断的 503。
+		if channel == nil {
+			logger.SysError(fmt.Sprintf("no available channel for group %s model %s (nil channel with nil error)", userGroup, requestModel))
+			abortWithMessage(c, http.StatusServiceUnavailable, fmt.Sprintf("当前分组 %s 下对于模型 %s 无可用渠道", userGroup, requestModel))
+			return
+		}
 		logger.Debugf(ctx, "user id %d, user group: %s, request model: %s, using channel #%d", userId, userGroup, requestModel, channel.Id)
 		SetupContextForSelectedChannel(c, channel, requestModel)
 		c.Next()

@@ -194,8 +194,11 @@ func testChannel(ctx context.Context, channel *model.Channel, request *relaymode
 		return "", err, nil, nil
 	}
 	result := w.Result()
+	defer result.Body.Close()
 	// print result.Body
-	respBody, err := io.ReadAll(result.Body)
+	// dyt-105: 限制上限——上游返回超大/无限 body 时无界 ReadAll 会打爆内存，
+	// 且此路径由渠道测试与定时探测触发，一旦命中影响整个网关。
+	respBody, err := io.ReadAll(io.LimitReader(result.Body, 1<<20))
 	if err != nil {
 		return "", err, nil, nil
 	}

@@ -276,7 +276,8 @@ func stopBridge(c *gin.Context, path string, body map[string]any) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
+		// dyt-105: 上游非 200 时限制读取上限，防超大/无限 body 打爆内存
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 		c.JSON(resp.StatusCode, gin.H{"success": false, "message": string(respBody)})
 		return
 	}

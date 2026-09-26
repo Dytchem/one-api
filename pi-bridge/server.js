@@ -20,14 +20,26 @@ const ONEAPI_BASE = process.env.ONEAPI_BASE || 'http://127.0.0.1:3000';
 // dyt-92: 管理员 token 必须显式配置；缺失时仅保留本地工具能力并警告（模型表不自动同步）。
 // 该 token 用于 /v1/models 同步，泄露会导致模型枚举，故不提供硬编码兜底。
 const ONEAPI_ADMIN_TOKEN = process.env.ONEAPI_ADMIN_TOKEN || '';
-// dyt-96/97: 与 one-api 的共享密钥（AGENT_BRIDGE_SECRET 同值），加固项而非强制项：
-// - 已配置：严格校验 X-Bridge-Token，同机其他进程无密钥无法调用
-// - 未配置：兼容模式（保持旧版行为，仅监听 127.0.0.1，不校验），启动时打印警告
-// 强烈建议生产环境成对配置（bridge 的 BRIDGE_SECRET = one-api 的 AGENT_BRIDGE_SECRET）。
+// dyt-96/97: 与 one-api 的共享密钥（AGENT_BRIDGE_SECRET 同值）
+// dyt-105: 改为"默认开启、缺失即拒绝服务"。原实现在未配置时 requireAuth 直接返回 true，
+// 而本服务信任调用方自报的 user_id（见 chat/resume 等 handler），
+// 于是同机/同网络任何进程都能以任意用户（含管理员）身份驱动 Agent 工具
+// （/api/channel、/api/user、/api/option），构成提权面。
+// 正常部署由 entrypoint.sh 自动生成并同时注入两侧，因此无需人工配置；
+// 若确实想以无鉴权方式运行，需显式设置 BRIDGE_ALLOW_INSECURE=1（不建议）。
 const BRIDGE_SECRET = process.env.BRIDGE_SECRET || '';
+const BRIDGE_ALLOW_INSECURE = process.env.BRIDGE_ALLOW_INSECURE === '1';
+if (!BRIDGE_SECRET && !BRIDGE_ALLOW_INSECURE) {
+  console.error('[pi-bridge] FATAL: BRIDGE_SECRET 未设置，拒绝以无鉴权模式启动。');
+  console.error('[pi-bridge] 正常部署由 entrypoint.sh 自动生成密钥；本地调试可设 BRIDGE_ALLOW_INSECURE=1。');
+  process.exit(1);
+}
+if (!BRIDGE_SECRET) {
+  console.error('[pi-bridge] WARNING: 无鉴权模式（BRIDGE_ALLOW_INSECURE=1），仅限本机调试！');
+}
 function requireAuth(req, res) {
   if (!BRIDGE_SECRET) {
-    // 兼容模式：未配置密钥不校验（v94 及更早版本行为），功能不受影响
+    // 仅在显式 opt-in 时走到这里（启动时已校验）
     return true;
   }
   const token = req.headers['x-bridge-token'];
@@ -1066,9 +1078,19 @@ server.listen(PORT, '127.0.0.1', () => {
   if (BRIDGE_SECRET) {
     console.log('[auth] BRIDGE_SECRET 已配置：X-Bridge-Token 严格校验已启用');
   } else {
-    console.warn('[auth] BRIDGE_SECRET 未配置：兼容模式（不校验请求头，仅监听 127.0.0.1）。' +
-      '建议与 one-api 的 AGENT_BRIDGE_SECRET 成对配置以启用鉴权');
+    console.warn('[auth] BRIDGE_ALLOW_INSECURE=1：无鉴权模式（仅限本机调试）');
   }
   if (ONEAPI_ADMIN_TOKEN) syncModels();
   else console.log('[models] ONEAPI_ADMIN_TOKEN 未配置（可选）：模型表由登录用户令牌在首次请求时自动同步');
+});
+
+// dyt-105: 进程级兜底。readBody 是 async generator，客户端在传输中途断开时
+// 迭代会以 ECONNRESET/"aborted" 拒绝；这些调用点在 try 之外，且 Node 对
+// 未处理的 rejection 默认行为是抛错终止进程 —— bridge 被单个 abort 请求打挂，
+// 会让整个 Chat/Agent 子系统返回 502。这里兜住并记录，不让进程退出。
+process.on('unhandledRejection', (reason) => {
+  console.error('[pi-bridge] unhandledRejection (已兜住，进程继续):', reason && reason.stack ? reason.stack : reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[pi-bridge] uncaughtException (已兜住，进程继续):', err && err.stack ? err.stack : err);
 });

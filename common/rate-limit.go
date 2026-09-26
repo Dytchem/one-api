@@ -27,13 +27,32 @@ func (l *InMemoryRateLimiter) Init(expirationDuration time.Duration) {
 
 func (l *InMemoryRateLimiter) clearExpiredItems() {
 	for {
-		time.Sleep(l.expirationDuration)
+		l.mutex.Lock()
+		d := l.expirationDuration
+		l.mutex.Unlock()
+		if d <= 0 {
+			return
+		}
+		time.Sleep(d)
 		l.mutex.Lock()
 		now := time.Now().Unix()
+		ttl := int64(d.Seconds())
+		if ttl < 1 {
+			ttl = 1
+		}
+		// dyt-105: 回收语义修正。原实现读 l.expirationDuration 时未持锁（data race），
+		// 且判定对"正在被访问"的 key 永远为假——队列尾部是刚写入的时间戳，
+		// 于是活跃 key 永不回收。限流 key 由 `mark + ClientIP()` 生成、
+		// CORS 为 AllowAllOrigins，任意公网 IP 都能铸造新 key ⇒ map 无界增长直至 OOM。
+		// 正确语义：以队列中最后一次请求时间为准，静默超过 ttl 即回收。
 		for key := range l.store {
 			queue := l.store[key]
+			if queue == nil || len(*queue) == 0 {
+				delete(l.store, key)
+				continue
+			}
 			size := len(*queue)
-			if size == 0 || now-(*queue)[size-1] > int64(l.expirationDuration.Seconds()) {
+			if now-(*queue)[size-1] > ttl {
 				delete(l.store, key)
 			}
 		}

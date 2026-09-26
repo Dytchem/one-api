@@ -309,6 +309,11 @@ func extractChannelId(c *gin.Context) string {
 	if newBody, err := json.Marshal(data); err == nil {
 		c.Set(ctxkey.KeyRequestBody, newBody)
 		c.Request.Body = io.NopCloser(bytes.NewBuffer(newBody))
+		// dyt-105: body 被重写后必须同步 ContentLength/Content-Length，
+		// 否则下游按旧长度读取（audio.go 会把它原样转发给 Azure），
+		// 造成上游截断/挂起。
+		c.Request.ContentLength = int64(len(newBody))
+		c.Request.Header.Set("Content-Length", strconv.Itoa(len(newBody)))
 	}
 	return idStr
 }
