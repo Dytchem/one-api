@@ -1,6 +1,6 @@
 import React, {useEffect, useState} from 'react';
 import {useTranslation} from 'react-i18next';
-import {Button, Card, Dropdown, Form, Input, Label, Message} from 'semantic-ui-react';
+import {Button, Card, Checkbox, Dropdown, Form, Input, Label, Message} from 'semantic-ui-react';
 import {useNavigate, useParams} from 'react-router-dom';
 import {API, copy, getChannelModels, showError, showInfo, showSuccess, verifyJSON} from '../../helpers';
 import {CHANNEL_OPTIONS, CHANNEL_MODEL_SUGGESTIONS} from '../../constants';
@@ -70,6 +70,9 @@ const EditChannel = () => {
     user_id: '',
     vertex_ai_project_id: '',
     vertex_ai_adc: '',
+    // dyt-114: 上游协议出口开关（默认关闭，不改变既有行为）
+    use_responses_api: false,
+    use_interactions_api: false,
   });
   const handleInputChange = (e, { name, value }) => {
     setInputs((inputs) => ({ ...inputs, [name]: value }));
@@ -820,6 +823,39 @@ const EditChannel = () => {
                 autoComplete=''
               />
             )}
+            {/* dyt-114: 上游协议出口开关。
+                决定"网关 -> 上游"说什么协议，与客户端用什么入口协议无关。
+                默认关闭，保持既有 chat 行为。 */}
+            <Form.Group widths='equal'>
+              <Form.Field>
+                <Checkbox
+                  toggle
+                  label='使用 Responses API 上游（/v1/responses）'
+                  name='use_responses_api'
+                  checked={!!config.use_responses_api}
+                  onChange={(e, { checked }) =>
+                    handleConfigChange(e, { name: 'use_responses_api', value: !!checked })
+                  }
+                />
+                <Label basic size='small' style={{ marginTop: '6px' }}>
+                  仅适用于上游只提供 Responses 端点的场景
+                </Label>
+              </Form.Field>
+              <Form.Field>
+                <Checkbox
+                  toggle
+                  label='使用 Gemini Interactions 上游（/v1beta/interactions）'
+                  name='use_interactions_api'
+                  checked={!!config.use_interactions_api}
+                  onChange={(e, { checked }) =>
+                    handleConfigChange(e, { name: 'use_interactions_api', value: !!checked })
+                  }
+                />
+                <Label basic size='small' style={{ marginTop: '6px' }}>
+                  仅 Gemini 渠道；替代旧的 generateContent
+                </Label>
+              </Form.Field>
+            </Form.Group>
             {inputs.type !== 33 &&
               inputs.type !== 42 &&
               (batch ? (
