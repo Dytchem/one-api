@@ -86,6 +86,7 @@ Fork 自 [songquanpeng/one-api](https://github.com/songquanpeng/one-api)，在�
 - 渠道健康指标 + **熔断器**（滑动窗口成功率/速度/首 token 延迟，失败自动降级）
 - 探测机制完善：tool_calls 流不误判失败、SSE 首 token 超时可配（`PROBE_TIMEOUT`）、keep-alive 注释不误判、空响应自动重试、失败自动禁用（可关）
 - **健康路由加权随机**：健康度前 k 渠道按 score×weight 分配（Weight 真正生效）
+- **OpenCode Zen / Go 请求头自动补充（v104）**：转发时自动注入上游必需的 `x-opencode-session` 与专用 `User-Agent`。非 opencode 原生客户端（OpenAI SDK / curl / Pi agent 等）直调 `opencode.ai/zen/go/v1` 会因缺该头被上游拒绝（`400 MissingSessionID`）；本网关按「渠道 × 模型」维护稳定会话 ID（30 分钟窗口，兼顾上游路由与 prompt-cache 亲和），调用方自带该头时尊重原值不覆盖，并以渠道类型 + `base_url` 双重识别（`OpenAICompatible` 直填 `opencode.ai` 域名同样生效）
 
 ### 日志系统
 

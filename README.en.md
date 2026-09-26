@@ -82,6 +82,7 @@ Forked from [songquanpeng/one-api](https://github.com/songquanpeng/one-api), kee
 
 - 12+ provider channel templates with model suggestions
 - OpenAI Responses API support (including streaming tool-call merging)
+- **Automatic OpenCode Zen / Go request headers (v104)**: relays inject the upstream-required `x-opencode-session` header plus a dedicated `User-Agent`. Non-native clients (OpenAI SDK / curl / Pi agent) hitting `opencode.ai/zen/go/v1` are otherwise rejected with `400 MissingSessionID`. The gateway keeps a stable session id per channel × model (30-min window, balancing routing and prompt-cache affinity), never overrides a caller-supplied session id, and detects OpenCode by channel type *and* `base_url` (so an `OpenAICompatible` channel pointing at an `opencode.ai` domain works too)
 - Visual model-mapping editor, one-click model list fetch, channel cloning
 - Channel health metrics + **circuit breaker** (sliding-window success rate / speed / first-token latency; auto degrade on failure)
 - Refined probing: tool_calls streams no longer misreported as failed, configurable SSE first-token timeout (`PROBE_TIMEOUT`), keep-alive comments ignored, empty-response auto retry, auto-disable on failure (toggleable)
