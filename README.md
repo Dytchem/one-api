@@ -124,6 +124,7 @@ Fork 自 [songquanpeng/one-api](https://github.com/songquanpeng/one-api)，在�
 ### 缓存与侦测加固（v108）
 
 - **无效令牌负缓存**：`CacheGetTokenByKey` 原先查库失败直接返回错误、**不缓存失败结果**，于是任何随机 `sk-` 键的请求都会打到数据库（找不到也要查一次库），公网可无上限铸造随机键即构成 DB 放大面。现对 `gorm.ErrRecordNotFound`（**且仅**该情形——连接失败/超时等不缓存，避免把数据库抖动固化成假"令牌无效"）做 30s 负缓存；令牌增删改路径连带清除负缓存，保证新建令牌立即可用。v106 的 `/v1` 限流是兜底，这条才是让缓存真正生效的正解
+- **gzip 解压炸弹防护**：`GzipDecodeMiddleware` 挂在 router 级、**先于** `bodySizeLimit` 执行，而 `bodySizeLimit` 的 `MaxBytesReader` 包的是解压**后**的 body —— 于是极小的 gzip（如 8KB 解出 8MB+）可绕过体积上限并在 `ReadAll` 时打爆内存。现对解压流直接设上限（同为 `MAX_REQUEST_BODY_MB`），超限即报错（不静默截断，避免得到半个 JSON 的误导性报错）。已验证：8KB 压缩体在 1MB 处被拦、正常 gzip 与非 gzip 请求均不受影响
 - **entrypoint 就绪探测修复**：原探测用 `curl`，而最终镜像 `node:20-alpine` 只装了 `ca-certificates tzdata`、**没有 curl**，导致每次启动都误报"pi-bridge 未就绪"（bridge 其实秒起健康）——这种必然失败的检查比不检查更糟，会把真正的启动失败淹没在噪声里。现按镜像内实际可用工具退化探测（busybox `wget` → `node` 原生 http → `nc`），并把"无工具可用"与"探测失败"区分开
 
 ### 越权与限流加固（v106 / v107）
