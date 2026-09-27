@@ -301,7 +301,11 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 				if !localConfirmed {
 					// Probe phase: write to buffer, check for first content
 					// dyt-88: 探测缓冲设 1MB 上限，防止异常上游灌入无限数据占内存
-					if localBuf.Len() < 1<<20 {
+					// dyt-116: 出口 Responses 渠道**不缓冲原始上游行**——上游流里有
+					// `event: xxx` 之类行，回放时会被当成 data 负载发出，产生
+					// `data: event: response.created` 这种畸形 SSE。
+					// 该渠道只缓冲转码后的 chat chunk（见下方 respInState 分支）。
+					if respInState == nil && localBuf.Len() < 1<<20 {
 						localBuf.WriteString(data)
 						localBuf.WriteString("\n")
 					}
@@ -434,9 +438,9 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 							if len(line) > 0 && !isKeepAliveLine(line) {
 								if meta.Mode == relaymode.Responses {
 									respStreamState.feedLine(c, line)
-								} else if respInState != nil {
-									render.StringData(c, line)
 								} else {
+									// respInState 渠道的 buf 里就是 chat chunk JSON；
+									// 其余渠道是原始上游行。两者都按 data: 负载发。
 									render.StringData(c, line)
 								}
 							}

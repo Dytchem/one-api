@@ -195,3 +195,36 @@ func TestProbeBodyUsesMaxOutputTokensForResponsesEgress(t *testing.T) {
 		}
 	}
 }
+
+// dyt-116 回归：转码层绝不能把上游的 `event:` 行当成 data 负载产出。
+// 实测畸形输出：`data: event: response.created`（客户端解析失败）。
+func TestTranscoderNeverEmitsEventLineAsData(t *testing.T) {
+	st := newResponsesToChatStreamState("m")
+	// 上游原始流里 event: 与 data: 交替出现，两者都会喂给 feed()
+	lines := loadMuseSSE(t)
+	for _, line := range lines {
+		chunk := st.feed(line)
+		if chunk == nil {
+			continue
+		}
+		s := string(chunk)
+		if strings.HasPrefix(s, "event:") || strings.Contains(s, "event: response") {
+			t.Fatalf("transcoder emitted an SSE event line as payload: %q", s)
+		}
+		// 产出必须是合法 JSON
+		var probe map[string]any
+		if err := json.Unmarshal(chunk, &probe); err != nil {
+			t.Fatalf("chunk is not valid JSON: %q", s)
+		}
+	}
+}
+
+// event: 行本身必须被忽略（不是 data 负载）
+func TestTranscoderIgnoresBareEventLine(t *testing.T) {
+	st := newResponsesToChatStreamState("m")
+	for _, l := range []string{"event: response.created", "event: response.output_text.delta"} {
+		if chunk := st.feed(l); chunk != nil {
+			t.Fatalf("bare event line produced output: %q -> %s", l, chunk)
+		}
+	}
+}
