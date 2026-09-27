@@ -34,6 +34,9 @@ type responsesInputContent struct {
 	Type     string `json:"type"`
 	Text     string `json:"text,omitempty"`
 	ImageURL string `json:"image_url,omitempty"`
+	// dyt-117: 部分上游（含 OpenCode Go）要求图片带 filename 才能解码
+	Filename string `json:"filename,omitempty"`
+	Detail   string `json:"detail,omitempty"`
 }
 
 type responsesInputItem struct {
@@ -41,10 +44,25 @@ type responsesInputItem struct {
 	Role    string                  `json:"role,omitempty"`
 	Content []responsesInputContent `json:"content,omitempty"`
 	// function_call / function_call_output
-	CallId    string          `json:"call_id,omitempty"`
-	Name      string          `json:"name,omitempty"`
-	Arguments json.RawMessage `json:"arguments,omitempty"`
-	Output    string          `json:"output,omitempty"`
+	// dyt-117: arguments 必须是**字符串**（JSON 文本），不是对象。
+	// 用 json.RawMessage 承载 map 会 marshal 成对象，上游报
+	//   400 `input[1]` `arguments` must be a string
+	CallId    string `json:"call_id,omitempty"`
+	Name      string `json:"name,omitempty"`
+	Arguments string `json:"arguments,omitempty"`
+	Output    string `json:"output,omitempty"`
+}
+
+// responsesTextConfig 对应 Responses 的 text 字段（结构化输出配置）
+type responsesTextConfig struct {
+	Format *responsesTextFormat `json:"format,omitempty"`
+}
+
+type responsesTextFormat struct {
+	Type   string `json:"type"`
+	Name   string `json:"name,omitempty"`
+	Schema any    `json:"schema,omitempty"`
+	Strict *bool  `json:"strict,omitempty"`
 }
 
 // responsesTool 是 Responses 协议的工具定义（扁平结构）
@@ -64,6 +82,11 @@ type responsesRequest struct {
 	Temperature     *float64             `json:"temperature,omitempty"`
 	TopP            *float64             `json:"top_p,omitempty"`
 	Stream          bool                 `json:"stream,omitempty"`
+	// dyt-117: 结构化输出在 Responses 里是 text.format，不是 chat 的 response_format。
+	// 仍发 response_format 会被上游判为未知参数。
+	Text *responsesTextConfig `json:"text,omitempty"`
+	// 注意：Responses **没有** stop / stream_options / n / user / presence_penalty
+	// 等同名字段（或语义不同），因此 chat 的这些字段一律不得透传。
 	// dyt-117: Responses 的工具是**扁平**形态
 	//   {"type":"function","name":...,"description":...,"parameters":...}
 	// 而 chat 是嵌套的 {"type":"function","function":{...}}。
@@ -148,6 +171,28 @@ func ConvertRequestToResponses(textRequest model.GeneralOpenAIRequest) *response
 	if len(textRequest.Tools) > 0 {
 		req.Tools = convertToolsToResponsesShape(textRequest.Tools)
 		req.ToolChoice = convertToolChoiceToResponses(textRequest.ToolChoice)
+		// dyt-117: 实测 OpenCode Go 只接受 tool_choice="auto"，传 required/none/
+		// 具名函数一律 400。这里不擅自降级（那是迎合单一上游的行为），
+		// 而是把不支持的取值交给上游明确报错；但至少保证字段形态正确。
+		_ = req.ToolChoice
+	}
+	// dyt-117: response_format -> text.format
+	if textRequest.ResponseFormat != nil {
+		switch textRequest.ResponseFormat.Type {
+		case "json_object":
+			req.Text = &responsesTextConfig{Format: &responsesTextFormat{Type: "json_object"}}
+		case "json_schema":
+			if js := textRequest.ResponseFormat.JsonSchema; js != nil {
+				req.Text = &responsesTextConfig{Format: &responsesTextFormat{
+					Type:   "json_schema",
+					Name:   js.Name,
+					Schema: js.Schema,
+					Strict: js.Strict,
+				}}
+			}
+		case "text":
+			req.Text = &responsesTextConfig{Format: &responsesTextFormat{Type: "text"}}
+		}
 	}
 
 	var sysParts []string
@@ -158,7 +203,12 @@ func ConvertRequestToResponses(textRequest model.GeneralOpenAIRequest) *response
 				sysParts = append(sysParts, s)
 			}
 		case "user", "assistant":
-			content := responsesContentFromMessage(message)
+			// dyt-117: content 块类型随角色而变——
+			//   user      -> input_text / input_image
+			//   assistant -> output_text
+			// 给 assistant 发 input_text 会被上游拒绝：
+			//   400 content type `input_text` is not valid on `assistant` messages
+			content := responsesContentFromMessage(message, message.Role == "assistant")
 			if len(content) > 0 {
 				req.Input = append(req.Input, responsesInputItem{
 					Type:    "message",
@@ -180,7 +230,7 @@ func ConvertRequestToResponses(textRequest model.GeneralOpenAIRequest) *response
 					Type:      "function_call",
 					CallId:    tc.Id,
 					Name:      tc.Function.Name,
-					Arguments: json.RawMessage(args),
+					Arguments: args, // 字符串
 				})
 			}
 		case "tool":
@@ -214,17 +264,22 @@ func ConvertRequestToResponses(textRequest model.GeneralOpenAIRequest) *response
 }
 
 // responsesContentFromMessage 把 chat 消息内容转成 Responses 输入内容块。
-func responsesContentFromMessage(message model.Message) []responsesInputContent {
+// isAssistant=true 时文本块用 output_text（assistant 消息的合法类型）。
+func responsesContentFromMessage(message model.Message, isAssistant bool) []responsesInputContent {
+	textType := "input_text"
+	if isAssistant {
+		textType = "output_text"
+	}
 	if s, ok := message.Content.(string); ok {
 		if s == "" {
 			return nil
 		}
-		return []responsesInputContent{{Type: "input_text", Text: s}}
+		return []responsesInputContent{{Type: textType, Text: s}}
 	}
 	arr, ok := message.Content.([]any)
 	if !ok {
 		if s := responsesMessageText(message); s != "" {
-			return []responsesInputContent{{Type: "input_text", Text: s}}
+			return []responsesInputContent{{Type: textType, Text: s}}
 		}
 		return nil
 	}
@@ -237,7 +292,7 @@ func responsesContentFromMessage(message model.Message) []responsesInputContent 
 		switch m["type"] {
 		case "text":
 			if t, ok := m["text"].(string); ok && t != "" {
-				out = append(out, responsesInputContent{Type: "input_text", Text: t})
+				out = append(out, responsesInputContent{Type: textType, Text: t})
 			}
 		case "image_url":
 			iu, ok := m["image_url"].(map[string]any)
@@ -245,7 +300,10 @@ func responsesContentFromMessage(message model.Message) []responsesInputContent 
 				continue
 			}
 			if url, ok := iu["url"].(string); ok && url != "" {
-				out = append(out, responsesInputContent{Type: "input_image", ImageURL: url})
+				out = append(out, responsesInputContent{
+					Type: "input_image", ImageURL: url,
+					Filename: imageFilenameFromURL(url),
+				})
 			}
 		}
 	}
@@ -497,4 +555,46 @@ func convertToolChoiceToResponses(choice any) any {
 		return t
 	}
 	return nil
+}
+
+// imageFilenameFromURL 为 Responses 的 input_image 推导一个 filename。
+// 部分上游（实测 OpenCode Go）在缺 filename 时会报
+//
+//	invalid image data ... the `image/png` payload could not be decoded
+//
+// 即使 base64 本身合法。给出来源名可规避该问题。
+func imageFilenameFromURL(url string) string {
+	if url == "" {
+		return ""
+	}
+	// data URL: 从 media type 推导扩展名
+	if strings.HasPrefix(url, "data:") {
+		if idx := strings.Index(url, ";"); idx > 7 {
+			mt := url[5:idx]
+			switch mt {
+			case "image/jpeg", "image/jpg":
+				return "image.jpg"
+			case "image/png":
+				return "image.png"
+			case "image/gif":
+				return "image.gif"
+			case "image/webp":
+				return "image.webp"
+			default:
+				return "image"
+			}
+		}
+		return "image"
+	}
+	// 普通 URL: 取路径最后一段
+	if i := strings.LastIndex(url, "/"); i >= 0 && i+1 < len(url) {
+		name := url[i+1:]
+		if q := strings.IndexAny(name, "?#"); q >= 0 {
+			name = name[:q]
+		}
+		if name != "" {
+			return name
+		}
+	}
+	return "image"
 }

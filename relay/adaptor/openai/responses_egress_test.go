@@ -381,3 +381,148 @@ func TestResponsesBodyHasFlatToolsWithTopLevelName(t *testing.T) {
 		t.Fatalf("tools[0] missing required field `name` (the real 400): %s", body)
 	}
 }
+
+// dyt-117: 上游明确拒绝的 chat-only 字段一律不得出现在 Responses body 里。
+// 实测（OpenCode Go /v1/responses）以下字段报 400 unknown parameter：
+//
+//	stop / n / seed / logprobs / response_format
+//
+// 另有 max_tokens / messages / stream_options 属 chat 专有，也不得透传。
+func TestResponsesNeverLeaksChatOnlyFields(t *testing.T) {
+	temp := 0.7
+	topP := 0.9
+	req := model.GeneralOpenAIRequest{
+		Model: "m", MaxTokens: 800,
+		Temperature: &temp, TopP: &topP,
+		Stop: "END", Seed: 42, N: 1, User: "u1",
+		ResponseFormat: &model.ResponseFormat{Type: "json_object"},
+		StreamOptions:  &model.StreamOptions{IncludeUsage: true},
+		Messages:       []model.Message{{Role: "user", Content: "hi"}},
+	}
+	body, _ := json.Marshal(ConvertRequestToResponses(req))
+	s := string(body)
+	for _, forbidden := range []string{
+		`"stop"`, `"n"`, `"seed"`, `"logprobs"`,
+		`"response_format"`, `"stream_options"`, `"max_tokens"`, `"messages"`,
+	} {
+		if strings.Contains(s, forbidden) {
+			t.Errorf("chat-only field %s leaked into Responses body: %s", forbidden, s)
+		}
+	}
+	// 允许且应保留的字段
+	if !strings.Contains(s, `"max_output_tokens":800`) {
+		t.Fatalf("max_output_tokens missing: %s", s)
+	}
+	if !strings.Contains(s, `"text":{"format":{"type":"json_object"}}`) {
+		t.Fatalf("text.format missing: %s", s)
+	}
+	if !strings.Contains(s, `"temperature":0.7`) || !strings.Contains(s, `"top_p":0.9`) {
+		t.Fatalf("temperature/top_p should pass through: %s", s)
+	}
+}
+
+// assistant 消息的文本块必须是 output_text（给 assistant 发 input_text 会 400）
+func TestResponsesAssistantUsesOutputText(t *testing.T) {
+	req := model.GeneralOpenAIRequest{
+		Model: "m",
+		Messages: []model.Message{
+			{Role: "user", Content: "hi"},
+			{Role: "assistant", Content: "hello there"},
+			{Role: "user", Content: "again"},
+		},
+	}
+	body, _ := json.Marshal(ConvertRequestToResponses(req))
+	s := string(body)
+
+	// 解析出 assistant 项的 content 类型
+	var parsed struct {
+		Input []struct {
+			Role    string `json:"role"`
+			Content []struct {
+				Type string `json:"type"`
+			} `json:"content"`
+		} `json:"input"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	var asstTypes, userTypes []string
+	for _, it := range parsed.Input {
+		for _, c := range it.Content {
+			switch it.Role {
+			case "assistant":
+				asstTypes = append(asstTypes, c.Type)
+			case "user":
+				userTypes = append(userTypes, c.Type)
+			}
+		}
+	}
+	if len(asstTypes) == 0 || asstTypes[0] != "output_text" {
+		t.Fatalf("assistant content must be output_text, got %v (%s)", asstTypes, s)
+	}
+	if len(userTypes) == 0 || userTypes[0] != "input_text" {
+		t.Fatalf("user content must be input_text, got %v", userTypes)
+	}
+}
+
+// function_call 的 arguments 必须是字符串
+func TestResponsesFunctionCallArgumentsIsString(t *testing.T) {
+	req := model.GeneralOpenAIRequest{
+		Model: "m",
+		Messages: []model.Message{
+			{Role: "user", Content: "go"},
+			{Role: "assistant", Content: "", ToolCalls: []model.Tool{{
+				Id: "call_1", Type: "function",
+				Function: model.Function{Name: "f", Arguments: map[string]any{"a": 1}},
+			}}},
+		},
+	}
+	body, _ := json.Marshal(ConvertRequestToResponses(req))
+	// arguments 若被序列化成对象则上游报 `arguments` must be a string
+	if strings.Contains(string(body), `"arguments":{"a":1}`) {
+		t.Fatalf("arguments must be a string, got object: %s", body)
+	}
+	if !strings.Contains(string(body), `"arguments":"{\"a\":1}"`) {
+		t.Fatalf("arguments should be JSON text: %s", body)
+	}
+}
+
+// response_format=json_schema 要映射到 text.format 并保留 schema
+func TestResponsesJSONSchemaMapping(t *testing.T) {
+	strict := true
+	req := model.GeneralOpenAIRequest{
+		Model:    "m",
+		Messages: []model.Message{{Role: "user", Content: "x"}},
+		ResponseFormat: &model.ResponseFormat{
+			Type: "json_schema",
+			JsonSchema: &model.JSONSchema{
+				Name: "out", Schema: map[string]any{"type": "object"}, Strict: &strict,
+			},
+		},
+	}
+	body, _ := json.Marshal(ConvertRequestToResponses(req))
+	s := string(body)
+	if !strings.Contains(s, `"text":{"format":{"type":"json_schema"`) {
+		t.Fatalf("json_schema not mapped: %s", s)
+	}
+	if !strings.Contains(s, `"name":"out"`) {
+		t.Fatalf("schema name lost: %s", s)
+	}
+}
+
+// 图片 filename 推导
+func TestImageFilenameDerivation(t *testing.T) {
+	cases := map[string]string{
+		"data:image/png;base64,AAAA":  "image.png",
+		"data:image/jpeg;base64,AAAA": "image.jpg",
+		"data:image/webp;base64,AA":   "image.webp",
+		"https://x.com/a/b.png":       "b.png",
+		"https://x.com/a/b.png?q=1":   "b.png",
+		"":                            "",
+	}
+	for in, want := range cases {
+		if got := imageFilenameFromURL(in); got != want {
+			t.Errorf("imageFilenameFromURL(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
