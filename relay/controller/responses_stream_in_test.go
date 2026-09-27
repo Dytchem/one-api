@@ -228,3 +228,49 @@ func TestTranscoderIgnoresBareEventLine(t *testing.T) {
 		}
 	}
 }
+
+// dyt-118: function_call 的名称只在 response.output_item.added 里，
+// arguments 增量里没有 name。若丢了这个事件，Agent 拿到的 tool_call 是
+// name=""，无法据此分发工具（表现为"模型说要调工具但什么都没发生"）。
+func TestResponsesSSEFunctionCallNameFromItemAdded(t *testing.T) {
+	st := newResponsesToChatStreamState("m")
+	// 上游真实形态：名称在 item 里
+	added := `data: {"type":"response.output_item.added","output_index":2,"item":{"id":"fc_1","type":"function_call","status":"in_progress","name":"list_channels","call_id":"call_1","arguments":""}}`
+	chunk := st.feed(added)
+	if chunk == nil {
+		t.Fatal("output_item.added for function_call must emit a tool_call chunk")
+	}
+	s := string(chunk)
+	if !strings.Contains(s, `"name":"list_channels"`) {
+		t.Fatalf("tool name missing: %s", s)
+	}
+	if !strings.Contains(s, `"id":"call_1"`) {
+		t.Fatalf("tool call id missing: %s", s)
+	}
+
+	// arguments 增量只带 arguments，不重复 name
+	delta := st.feed(`data: {"type":"response.function_call_arguments.delta","delta":"{\"a\":1}"}`)
+	if delta == nil {
+		t.Fatal("arguments delta must emit")
+	}
+	ds := string(delta)
+	if strings.Contains(ds, `"name":"list_channels"`) {
+		t.Fatalf("name must not repeat in arguments delta (would concatenate): %s", ds)
+	}
+	if !strings.Contains(ds, `"arguments":"{\"a\":1}"`) {
+		t.Fatalf("arguments missing: %s", ds)
+	}
+}
+
+// 非 function_call 的 output_item.added 不应产出内容
+func TestResponsesSSEItemAddedNonFunctionIgnored(t *testing.T) {
+	st := newResponsesToChatStreamState("m")
+	for _, l := range []string{
+		`data: {"type":"response.output_item.added","item":{"type":"reasoning","id":"rs_1"}}`,
+		`data: {"type":"response.output_item.added","item":{"type":"message","role":"assistant"}}`,
+	} {
+		if c := st.feed(l); c != nil {
+			t.Fatalf("non-function item should be ignored: %q -> %s", l, c)
+		}
+	}
+}

@@ -120,6 +120,26 @@ func (s *responsesToChatStreamState) feed(line string) []byte {
 	}
 
 	switch ev.Type {
+	case "response.output_item.added":
+		// dyt-118: function_call 的**名称只在这个事件里**出现
+		// （item.name / item.call_id），arguments 增量里没有 name。
+		// 若忽略该事件，客户端拿到的 tool_call 会是 name="" →
+		// Agent 无法据此执行工具（pi 按 name 分发）。
+		if ev.Item != nil && ev.Item.Type == "function_call" && ev.Item.Name != "" {
+			return s.chatChunk(map[string]any{
+				"tool_calls": []any{map[string]any{
+					"index": 0,
+					"id":    ev.Item.CallId,
+					"type":  "function",
+					"function": map[string]any{
+						"name":      ev.Item.Name,
+						"arguments": "",
+					},
+				}},
+			}, nil)
+		}
+		return nil
+
 	case "response.created", "response.in_progress":
 		// 记录 id / model，先发一个 role 起始块（与 OpenAI 行为一致）
 		if ev.Response != nil {
@@ -159,14 +179,12 @@ func (s *responsesToChatStreamState) feed(line string) []byte {
 		if ev.Delta == "" {
 			return nil
 		}
-		name := ""
-		if ev.Item != nil {
-			name = ev.Item.Name
-		}
+		// dyt-118: 只发 arguments 增量；name 已在 output_item.added 发过，
+		// 这里重复发会导致客户端把 name 拼接两次（变成 list_channelslist_channels）。
 		return s.chatChunk(map[string]any{
 			"tool_calls": []any{map[string]any{
 				"index": 0, "type": "function",
-				"function": map[string]any{"name": name, "arguments": ev.Delta},
+				"function": map[string]any{"arguments": ev.Delta},
 			}},
 		}, nil)
 
