@@ -407,6 +407,29 @@ func UpdateChannelBalance(c *gin.Context) {
 	return
 }
 
+// supportsBalanceQuery 判断该渠道类型是否在 updateChannelBalance 中有真实实现。
+// dyt-120: 原先批量更新按 `type != OpenAI && type != Custom` 过滤，而这个白名单与
+// updateChannelBalance 的 switch 完全对不上——DeepSeek / OpenRouter / SiliconFlow 等
+// 明明已实现却全被跳过（用户表现为"按钮点了但余额不动"），且遍历顺序恰好让
+// OpenAI/Custom 走的是 /dashboard/billing/* 那套早已停用的旧接口，等于全渠道空转。
+// 这里改为以 switch 的真实分支为准，新增实现无需再改这个列表。
+func supportsBalanceQuery(channelType int) bool {
+	switch channelType {
+	case channeltype.OpenAI, // /v1/dashboard/billing/{subscription,usage}
+		channeltype.Custom, // 同上，走用户自填 base_url
+		channeltype.CloseAI,
+		channeltype.OpenAISB,
+		channeltype.AIProxy,
+		channeltype.API2GPT,
+		channeltype.AIGC2D,
+		channeltype.SiliconFlow,
+		channeltype.DeepSeek,
+		channeltype.OpenRouter:
+		return true
+	}
+	return false
+}
+
 func updateAllChannelsBalance() error {
 	channels, err := model.GetAllChannels(0, 0, "all", "", "")
 	if err != nil {
@@ -417,17 +440,19 @@ func updateAllChannelsBalance() error {
 			continue
 		}
 		// TODO: support Azure
-		if channel.Type != channeltype.OpenAI && channel.Type != channeltype.Custom {
+		if !supportsBalanceQuery(channel.Type) {
 			continue
 		}
 		balance, err := updateChannelBalance(channel)
 		if err != nil {
+			// dyt-120: 原实现静默 continue，批量更新失败时用户完全看不到原因，
+			// 只能逐个点"更新余额"去撞墙。这里补日志便于定位是上游不支持还是 key 失效。
+			logger.SysError(fmt.Sprintf("failed to update balance for channel #%d (%s): %s", channel.Id, channel.Name, err.Error()))
 			continue
-		} else {
-			// err is nil & balance <= 0 means quota is used up
-			if balance <= 0 {
-				monitor.DisableChannel(channel.Id, channel.Name, "余额不足")
-			}
+		}
+		// err is nil & balance <= 0 means quota is used up
+		if balance <= 0 {
+			monitor.DisableChannel(channel.Id, channel.Name, "余额不足")
 		}
 		time.Sleep(config.RequestInterval)
 	}

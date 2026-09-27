@@ -194,6 +194,27 @@ Fork 自 [songquanpeng/one-api](https://github.com/songquanpeng/one-api)，在�
 - 消费日志批量写（100ms 合并 INSERT + 用户名一次 IN 回填）；日志表三合一索引
 - pi-bridge：脏会话标记 + 异步落盘（原子替换）+ SSE 头先发（模型同步不阻塞首字节）
 
+### 渠道余额查询支持范围
+
+渠道页的「更新余额 / 更新全部渠道余额」调用各上游的**账户余额接口**。上游是否开放该接口由厂商决定，与网关能力无关——以下为实测结论（无 key 探针：返回 401 即端点存在）。
+
+**已实现且上游可用：**
+
+| 渠道 | 接口 | 取用字段 |
+| --- | --- | --- |
+| DeepSeek | `GET /user/balance` | `balance_infos[currency=CNY].total_balance` |
+| OpenRouter | `GET /api/v1/credits` | `total_credits - total_usage` |
+| 硅基流动 SiliconFlow | `GET /v1/user/info` | `data.totalBalance`（`.cn` / `.com` 均可） |
+| OpenAI / Custom | `GET /v1/dashboard/billing/{subscription,usage}` | `hard_limit_usd - total_usage/100`；⚠️ 普通用户 key 已失效，需 Admin key |
+
+> 另有 CloseAI / OpenAI-SB / AIProxy / API2GPT / AIGC2D 五个历史实现，对应服务均已停服，保留仅为兼容旧配置。
+
+**上游未开放余额接口（实测 404，无法支持）：** OpenCode Go/Zen、小米 MiMo、Ollama Cloud、Agnes、Gemini、阿里百炼、Groq、Cerebras、Fireworks、Together、Mistral、Cohere、xAI、百川、零一万物、AI360、Perplexity、NVIDIA NIM、DeepInfra、ModelScope、HuggingFace、Vultr。
+
+**尚未实现、但上游已确认开放（可按需补充）：** 月之暗面 Kimi `GET /v1/users/me/balance`、智谱 GLM/Z.AI `GET /api/paas/v4/user/info`、阶跃星辰 `GET /v1/accounts/me`、Novita `GET /openapi/v1/billing/balance/detail`；MiniMax 与火山方舟火山引擎只提供**套餐用量**（非账户余额）。Anthropic 的 `GET /v1/organizations/cost_report` 仅 **Admin key** 可用，普通 `sk-ant-` key 返回 401。
+
+> 批量更新只遍历上表中**已实现**的渠道类型；未实现的渠道会被跳过而非发一次注定失败的请求。单个渠道的失败原因会写入系统日志。
+
 ## 快速开始
 
 ```bash
@@ -231,6 +252,9 @@ docker run -d --name one-api --restart unless-stopped --network host \
 | `BRIDGE_SECRET` / `AGENT_BRIDGE_SECRET` | 自动 | bridge 鉴权密钥（自动生成并持久化到 `/data/bridge_secret`，0600；跨容器部署需两侧显式同值） |
 | `RELAY_RATE_LIMIT` | 3000 | `/v1` 与 `/v1/models` 转发限流次数（固定 3 分钟窗口，按 ClientIP 计；0 关闭） |
 | `PROBE_TIMEOUT` | 120s | 渠道探测 SSE 首 token 超时 |
+| `BRIDGE_HEADER_TIMEOUT` | 180 | bridge 响应头超时（对 Chat 实为首 token 超时，推理模型需较大值） |
+| `CHANNEL_TEST_FREQUENCY` | 关闭 | 定期测试渠道可用性的间隔（分钟） |
+| `CHANNEL_UPDATE_FREQUENCY` | 关闭 | 定期刷新渠道余额的间隔（分钟），仅对有余额接口的渠道生效 |
 | `LOG_PAYLOAD_TTL_HOURS` | 168 | 失败日志 payload 保留时长 |
 | `SESSION_SECRET` | 自动 | 会话密钥（自动生成持久化，0600） |
 

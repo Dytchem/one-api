@@ -84,6 +84,20 @@ func main() {
 		}
 		go controller.AutomaticallyTestChannels(frequency)
 	}
+	// dyt-120: 接通渠道余额自动刷新。AutomaticallyUpdateChannels 此前是死代码——
+	// 定义在 controller/channel-billing.go 但 main.go 从未调用，文档里宣传的
+	// CHANNEL_UPDATE_FREQUENCY 环境变量实际上完全不起作用。0 或未设置 = 不启用，
+	// 避免在无意中定时打上游余额接口。
+	if os.Getenv("CHANNEL_UPDATE_FREQUENCY") != "" {
+		frequency, err := strconv.Atoi(os.Getenv("CHANNEL_UPDATE_FREQUENCY"))
+		if err != nil {
+			logger.FatalLog("failed to parse CHANNEL_UPDATE_FREQUENCY: " + err.Error())
+		}
+		if frequency > 0 {
+			logger.SysLog(fmt.Sprintf("channel balance auto-update enabled with frequency %d minutes", frequency))
+			go controller.AutomaticallyUpdateChannels(frequency)
+		}
+	}
 	if os.Getenv("BATCH_UPDATE_ENABLED") == "true" {
 		config.BatchUpdateEnabled = true
 		logger.SysLog("batch update enabled with interval " + strconv.Itoa(config.BatchUpdateInterval) + "s")
