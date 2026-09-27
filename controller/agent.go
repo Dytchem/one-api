@@ -2,7 +2,10 @@ package controller
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -54,16 +57,33 @@ func streamAgentBridge(c *gin.Context, path string, body map[string]any) {
 	// 依赖 c.Request.Context() 在客户端断开时取消；
 	// 但拨号与响应头仍设超时，避免 bridge 半开/无响应时无限等待
 	transport := &http.Transport{
-		DialContext:           (&net.Dialer{Timeout: 5 * time.Second}).DialContext,
-		ResponseHeaderTimeout: 15 * time.Second,
+		DialContext: (&net.Dialer{Timeout: 5 * time.Second}).DialContext,
+		// dyt-119: 该超时实为"首 token 超时"——bridge 要等模型吐出第一个
+		// token 才发 SSE 响应头。原硬编码 15s 会让推理模型（实测 Muse
+		// Spark 1.3 重负载 TTFB 26-30s）在 15s 处被判定不可达并返回 502。
+		// 注意与 Agent 路径的区别：Agent 先发头再执行，故不受此限，
+		// 这就是"Chat 失败、Agent 成功"的根因。
+		ResponseHeaderTimeout: time.Duration(config.BridgeHeaderTimeout) * time.Second,
 	}
 	client := &http.Client{Transport: transport, Timeout: 0}
 	resp, err := client.Do(httpReq)
 	if err != nil {
+		// 用户主动断开不算错误
 		if c.Request.Context().Err() != nil {
 			return
 		}
-		c.JSON(http.StatusBadGateway, gin.H{"success": false, "message": "Agent 服务不可达"})
+		// dyt-119: 区分"连不上"与"等首 token 超时"。原实现一律报
+		// "Agent 服务不可达"，但实测更常见的是推理模型首 token 过慢
+		// 超过 ResponseHeaderTimeout —— 报错文案会把人引向错误方向
+		// （误以为 bridge 挂了，实际只是模型在思考）。
+		msg := "Agent 服务不可达"
+		if errors.Is(err, context.DeadlineExceeded) || strings.Contains(err.Error(), "timeout awaiting response headers") {
+			msg = fmt.Sprintf("等待模型首个响应超时（%ds）：模型可能正在长思考，可提高 BRIDGE_HEADER_TIMEOUT 或降低思考等级",
+				config.BridgeHeaderTimeout)
+		} else {
+			msg = "Agent 服务不可达：" + err.Error()
+		}
+		c.JSON(http.StatusBadGateway, gin.H{"success": false, "message": msg})
 		return
 	}
 	defer resp.Body.Close()

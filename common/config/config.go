@@ -216,5 +216,12 @@ var MaxRequestBodyMB = env.Int("MAX_REQUEST_BODY_MB", 32)
 // dyt-52: 流式请求整体超时（秒）。0 表示跟随 HTTPClient.Timeout（默认 300s）
 var StreamingTimeout = env.Int("STREAMING_TIMEOUT", 0)
 
+// dyt-119: bridge 响应头超时。bridge 要先等模型产出首个 token 才会发 SSE 头，
+// 因此该值实质是"首 token 超时"。原来的硬编码 15s 对推理模型太苛刻：
+// 实测 Muse Spark 1.3 在长提示 + xhigh 思考下 TTFB 达 26-30s，
+// 会在 15s 处被掐断并对外报 502（而 Agent 路径因先返回头不受影响，
+// 表现为"Chat 失败、Agent 成功"）。
+var BridgeHeaderTimeout = env.Int("BRIDGE_HEADER_TIMEOUT", 180)
+
 var EnforceIncludeUsage = env.Bool("ENFORCE_INCLUDE_USAGE", false)
 var TestPrompt = env.String("TEST_PROMPT", "Output only your specific model name with no additional text.")

@@ -144,6 +144,13 @@ Fork 自 [songquanpeng/one-api](https://github.com/songquanpeng/one-api)，在�
   - 现按 Responses 规范扁平化 tools：`function.name/description/parameters` 提到顶层；无名工具丢弃（避免又触发同一条必填校验）；非 `function` 类型（`web_search` 等）丢弃而非误转——Responses 里这些类型语义不同，网关无法安全代换
   - `tool_choice` 同步转换：chat 的 `{"type":"function","function":{"name":"x"}}` → Responses 的 `{"type":"function","name":"x"}`；`auto`/`none`/`required` 原样保留；`nil` 保持不发该字段
 
+### Chat 首 token 超时修复（v119）
+
+- **修复「Chat 失败但 Agent 成功」**：Chat 与 Agent 走同一条 bridge，但响应头的产生时机不同——Chat 的 `/chat/v1` 要**等模型吐出第一个 token 才发 SSE 响应头**，而 Agent 先发头再执行。因此 `streamAgentBridge` 里的 `ResponseHeaderTimeout`（原硬编码 **15s**）对 Chat 而言实际是"首 token 超时"
+  - 实测 Muse Spark 1.3 在长提示 + `xhigh` 思考下 **TTFB 达 26–30s**，必然在 15s 处被掐断并对外报 502；Agent 不受此限所以正常。这解释了"同模型同渠道，Chat 不行 Agent 行"
+  - 现该超时可配：**`BRIDGE_HEADER_TIMEOUT`**（默认 180s），与 bridge 支持的最长执行时间相匹配
+  - 报错文案同时修正：原来无论何种原因都报「Agent 服务不可达」，会把排查方向引向 bridge 本身；现在区分「连不上」（附底层错误）与「等首 token 超时」（提示可提高 `BRIDGE_HEADER_TIMEOUT` 或降低思考等级）
+
 ### 界面与体验
 
 - **统一画布**：全部设备渲染同一 1440px 画布（iframe 隔离视口），任意端所见一致
