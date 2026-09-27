@@ -258,3 +258,126 @@ func TestResponsesGenuinelyEmptyNotPadded(t *testing.T) {
 		t.Fatalf("genuinely empty should stay empty, got %q", text)
 	}
 }
+
+// dyt-117: Responses 的工具是扁平形态，不能把 chat 的嵌套 tools 直接透传。
+// 真实故障：Agent 页面必然带 tools，透传后上游报
+//
+//	400 `tools[0]` missing required field `name`
+//
+// （Chat 不带 tools，所以只有 Agent 暴露这个问题。）
+func TestResponsesToolsFlattened(t *testing.T) {
+	req := model.GeneralOpenAIRequest{
+		Model:    "muse-spark-1.3-contributor",
+		Messages: []model.Message{{Role: "user", Content: "weather?"}},
+		Tools: []model.Tool{{
+			Type: "function",
+			Function: model.Function{
+				Name:        "get_weather",
+				Description: "get weather",
+				Parameters:  map[string]any{"type": "object"},
+			},
+		}},
+	}
+	got := ConvertRequestToResponses(req)
+	b, _ := json.Marshal(got)
+	s := string(b)
+
+	// 必须是扁平：顶层 name
+	if !strings.Contains(s, `"name":"get_weather"`) {
+		t.Fatalf("tool name not flattened to top level: %s", s)
+	}
+	// 不能出现 chat 的嵌套 function 包装
+	if strings.Contains(s, `"function":{`) {
+		t.Fatalf("chat-style nested function leaked: %s", s)
+	}
+	if len(got.Tools) != 1 {
+		t.Fatalf("tools: %d", len(got.Tools))
+	}
+	if got.Tools[0].Name != "get_weather" || got.Tools[0].Type != "function" {
+		t.Fatalf("tool: %+v", got.Tools[0])
+	}
+}
+
+func TestResponsesToolsSkippedWhenNameless(t *testing.T) {
+	req := model.GeneralOpenAIRequest{
+		Model:    "m",
+		Messages: []model.Message{{Role: "user", Content: "x"}},
+		Tools: []model.Tool{
+			{Type: "function", Function: model.Function{Name: ""}},
+			{Type: "function", Function: model.Function{Name: "ok"}},
+		},
+	}
+	got := ConvertRequestToResponses(req)
+	if len(got.Tools) != 1 || got.Tools[0].Name != "ok" {
+		t.Fatalf("nameless tool should be dropped: %+v", got.Tools)
+	}
+}
+
+func TestResponsesToolsDropsNonFunctionTypes(t *testing.T) {
+	// Responses 的 web_search 等类型语义不同，不应误转
+	req := model.GeneralOpenAIRequest{
+		Model:    "m",
+		Messages: []model.Message{{Role: "user", Content: "x"}},
+		Tools:    []model.Tool{{Type: "web_search", Function: model.Function{Name: "x"}}},
+	}
+	got := ConvertRequestToResponses(req)
+	if len(got.Tools) != 0 {
+		t.Fatalf("non-function tool should be dropped: %+v", got.Tools)
+	}
+}
+
+func TestResponsesToolChoiceFlattened(t *testing.T) {
+	// chat 嵌套 -> Responses 扁平
+	nested := map[string]any{"type": "function", "function": map[string]any{"name": "foo"}}
+	got := convertToolChoiceToResponses(nested)
+	m, ok := got.(map[string]any)
+	if !ok {
+		t.Fatalf("expected object, got %T", got)
+	}
+	if m["name"] != "foo" || m["type"] != "function" {
+		t.Fatalf("flatten failed: %+v", m)
+	}
+	if _, hasFn := m["function"]; hasFn {
+		t.Fatalf("nested function leaked: %+v", m)
+	}
+
+	// 字符串形态原样保留
+	for _, s := range []string{"auto", "none", "required"} {
+		if convertToolChoiceToResponses(s) != s {
+			t.Fatalf("%s should pass through", s)
+		}
+	}
+	// 已是扁平形态保持不变
+	flat := map[string]any{"type": "function", "name": "bar"}
+	fm := convertToolChoiceToResponses(flat).(map[string]any)
+	if fm["name"] != "bar" {
+		t.Fatalf("flat form broken: %+v", fm)
+	}
+	// nil 保持 nil（不发多余字段）
+	if convertToolChoiceToResponses(nil) != nil {
+		t.Fatal("nil should stay nil")
+	}
+}
+
+// 端到端结构断言：转换后的 body 必须能被"模拟上游校验"接受
+func TestResponsesBodyHasFlatToolsWithTopLevelName(t *testing.T) {
+	req := model.GeneralOpenAIRequest{
+		Model:    "m",
+		Messages: []model.Message{{Role: "user", Content: "x"}},
+		Tools:    []model.Tool{{Type: "function", Function: model.Function{Name: "t", Parameters: map[string]any{"type": "object"}}}},
+	}
+	body, _ := json.Marshal(ConvertRequestToResponses(req))
+	var parsed struct {
+		Tools []map[string]any `json:"tools"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(parsed.Tools) != 1 {
+		t.Fatalf("tools: %d", len(parsed.Tools))
+	}
+	// 模拟上游的必填校验：tools[i].name 必须存在
+	if _, ok := parsed.Tools[0]["name"]; !ok {
+		t.Fatalf("tools[0] missing required field `name` (the real 400): %s", body)
+	}
+}

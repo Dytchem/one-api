@@ -47,6 +47,15 @@ type responsesInputItem struct {
 	Output    string          `json:"output,omitempty"`
 }
 
+// responsesTool 是 Responses 协议的工具定义（扁平结构）
+type responsesTool struct {
+	Type        string `json:"type"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Parameters  any    `json:"parameters,omitempty"`
+	Strict      *bool  `json:"strict,omitempty"`
+}
+
 type responsesRequest struct {
 	Model           string               `json:"model"`
 	Input           []responsesInputItem `json:"input"`
@@ -55,8 +64,14 @@ type responsesRequest struct {
 	Temperature     *float64             `json:"temperature,omitempty"`
 	TopP            *float64             `json:"top_p,omitempty"`
 	Stream          bool                 `json:"stream,omitempty"`
-	Tools           []model.Tool         `json:"tools,omitempty"`
-	ToolChoice      any                  `json:"tool_choice,omitempty"`
+	// dyt-117: Responses 的工具是**扁平**形态
+	//   {"type":"function","name":...,"description":...,"parameters":...}
+	// 而 chat 是嵌套的 {"type":"function","function":{...}}。
+	// 直接把 chat 的 tools 透传过去会得到
+	//   400 `tools[0]` missing required field `name`
+	// —— Agent 页面必然带 tools，所以这个错误只在 Agent 场景暴露。
+	Tools      []responsesTool `json:"tools,omitempty"`
+	ToolChoice any             `json:"tool_choice,omitempty"`
 }
 
 // ---- 响应结构 ----
@@ -131,8 +146,8 @@ func ConvertRequestToResponses(textRequest model.GeneralOpenAIRequest) *response
 		Stream:          textRequest.Stream,
 	}
 	if len(textRequest.Tools) > 0 {
-		req.Tools = textRequest.Tools
-		req.ToolChoice = textRequest.ToolChoice
+		req.Tools = convertToolsToResponsesShape(textRequest.Tools)
+		req.ToolChoice = convertToolChoiceToResponses(textRequest.ToolChoice)
 	}
 
 	var sysParts []string
@@ -420,4 +435,66 @@ func ResponsesHandler(c *gin.Context, resp *http.Response, promptTokens int, mod
 		return ErrorWrapper(err, "write_response_body_failed", http.StatusInternalServerError), nil
 	}
 	return nil, &usage
+}
+
+// convertToolsToResponsesShape 把 chat 的嵌套 tools 转成 Responses 的扁平结构。
+//
+// chat:      {"type":"function","function":{"name":..,"description":..,"parameters":..}}
+// responses: {"type":"function","name":..,"description":..,"parameters":..}
+//
+// 非 function 类型的工具原样丢弃（Responses 的其它工具类型语义不同，
+// 例如 web_search / file_search / mcp，网关无法安全代换）。
+func convertToolsToResponsesShape(tools []model.Tool) []responsesTool {
+	out := make([]responsesTool, 0, len(tools))
+	for _, t := range tools {
+		// 只处理 function 工具；省略 type 的老式写法也按 function 处理
+		if t.Type != "" && t.Type != "function" {
+			continue
+		}
+		if t.Function.Name == "" {
+			continue
+		}
+		out = append(out, responsesTool{
+			Type:        "function",
+			Name:        t.Function.Name,
+			Description: t.Function.Description,
+			Parameters:  t.Function.Parameters,
+		})
+	}
+	return out
+}
+
+// convertToolChoiceToResponses 转换 tool_choice。
+//
+//	"auto"    -> "auto"
+//	"none"    -> "none"
+//	"required"-> "required"
+//	{"type":"function","function":{"name":"x"}} -> {"type":"function","name":"x"}
+//
+// 关键差异：chat 把函数名放在 function.name 下，Responses 直接放在顶层 name。
+func convertToolChoiceToResponses(choice any) any {
+	if choice == nil {
+		return nil
+	}
+	if s, ok := choice.(string); ok {
+		return s
+	}
+	m, ok := choice.(map[string]any)
+	if !ok {
+		return nil
+	}
+	// 已是扁平形态（含顶层 name）
+	if name, ok := m["name"].(string); ok && name != "" {
+		return map[string]any{"type": "function", "name": name}
+	}
+	// chat 嵌套形态
+	if fn, ok := m["function"].(map[string]any); ok {
+		if name, ok := fn["name"].(string); ok && name != "" {
+			return map[string]any{"type": "function", "name": name}
+		}
+	}
+	if t, ok := m["type"].(string); ok && (t == "auto" || t == "none" || t == "required") {
+		return t
+	}
+	return nil
 }

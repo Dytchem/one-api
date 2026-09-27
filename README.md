@@ -137,6 +137,13 @@ Fork 自 [songquanpeng/one-api](https://github.com/songquanpeng/one-api)，在�
   - 探测的"首个有效 token"判定同步支持 Responses 事件类型；回放与透传两条路径都经过转码
   - 用**真实捕获的上游流**（Muse Spark 1.3 经 OpenCode Go）做了 8 项断言回归，覆盖内容转码、chunk 形状、role 块、usage、推理增量、噪声事件忽略、畸形 JSON、失败事件
 
+### Responses 工具定义形态修复（v117）
+
+- **修复 Agent 页面 502（Chat 正常、Agent 报错）**：Responses 协议的 `tools` 是**扁平**形态（`{"type":"function","name":…,"parameters":…}`），而 chat 是嵌套的（`{"type":"function","function":{"name":…}}`）。v114 的出口实现把 chat 的 tools 直接透传，上游因此报 `` 400 `tools[0]` missing required field `name` ``
+  - **为什么只有 Agent 报错**：Chat 页面不带工具，Agent 页面必然带工具（它靠工具查渠道/令牌/日志），所以这个缺陷只在 Agent 场景暴露。同一渠道下「Chat 能用、Agent 不能用」正是这个原因
+  - 现按 Responses 规范扁平化 tools：`function.name/description/parameters` 提到顶层；无名工具丢弃（避免又触发同一条必填校验）；非 `function` 类型（`web_search` 等）丢弃而非误转——Responses 里这些类型语义不同，网关无法安全代换
+  - `tool_choice` 同步转换：chat 的 `{"type":"function","function":{"name":"x"}}` → Responses 的 `{"type":"function","name":"x"}`；`auto`/`none`/`required` 原样保留；`nil` 保持不发该字段
+
 ### 界面与体验
 
 - **统一画布**：全部设备渲染同一 1440px 画布（iframe 隔离视口），任意端所见一致
