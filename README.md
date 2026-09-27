@@ -130,6 +130,13 @@ Fork 自 [songquanpeng/one-api](https://github.com/songquanpeng/one-api)，在�
   - 真正空响应（无推理无内容）仍保持为空，不编造提示
   - 建议给这类模型留足余量（实测 300 会踩坑，1000+ 稳定出正文）
 
+### 流式探测与 Responses 出口的兼容修复（v116）
+
+- **修复 Chat / Agent 打不开（HTTP 502）**：v114 引入的出口 Responses 能力在**流式**下会失败。根因是流式路径先走"首 token 探测"，而探测只认 OpenAI chat 的 `data: {"choices":[...]}`；Responses 上游发的是 `response.output_text.delta` 等事件，探测永远匹配不到内容 → 判定 `all N probe attempts returned empty response` → 502。表现为**「网页 Chat/Agent 用不了，但 curl 非流式却正常」**这种极易误判的现象
+  - 现新增 Responses SSE → chat SSE 的转码层：`response.output_text.delta` → `choices[].delta.content`、推理摘要 → `reasoning_content`、工具参数增量 → `tool_calls`、`response.completed` 带出真实 `usage`；客户端始终拿到统一的 chat SSE
+  - 探测的"首个有效 token"判定同步支持 Responses 事件类型；回放与透传两条路径都经过转码
+  - 用**真实捕获的上游流**（Muse Spark 1.3 经 OpenCode Go）做了 8 项断言回归，覆盖内容转码、chunk 形状、role 块、usage、推理增量、噪声事件忽略、畸形 JSON、失败事件
+
 ### 界面与体验
 
 - **统一画布**：全部设备渲染同一 1440px 画布（iframe 隔离视口），任意端所见一致

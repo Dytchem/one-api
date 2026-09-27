@@ -197,6 +197,12 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 			if meta.Mode == relaymode.Responses {
 				respStreamState = newResponsesStreamState(meta.ActualModelName)
 			}
+			// dyt-116: 出口为 Responses API 的渠道，上游流是 Responses SSE，
+			// 需转成 chat SSE 才能让探测识别到首个 token、并让客户端拿到统一格式。
+			var respInState *responsesToChatStreamState
+			if meta.Config.UseResponsesAPI {
+				respInState = newResponsesToChatStreamState(meta.ActualModelName)
+			}
 
 			// 改进1：追踪上游返回细节
 			lineCount := 0
@@ -286,6 +292,28 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 						localBuf.WriteString("\n")
 					}
 
+					// dyt-116: 出口 Responses 渠道——用事件类型判定首个有效 token。
+					// 上游发的是 response.output_text.delta 等，不含 choices 字段，
+					// 若不走这条分支，探测永远无法确认内容 → 误报 empty → 502。
+					if respInState != nil {
+						if chunk := respInState.feed(data); chunk != nil {
+							if !localConfirmed {
+								localConfirmed = true
+							}
+							localBuf.Write(chunk)
+							localBuf.WriteString("\n")
+							if respInState.usage != nil {
+								localUsage = &model.Usage{
+									PromptTokens:     respInState.usage.PromptTokens,
+									CompletionTokens: respInState.usage.CompletionTokens,
+									TotalTokens:      respInState.usage.TotalTokens,
+								}
+							}
+						}
+						// 该渠道的 data 行已处理完毕，跳过下方 chat 解析
+						goto afterChatParse
+					}
+
 					// Check for first meaningful content token
 					// 兼容 data: xxx 与 data:xxx（无空格）
 					if len(data) > 6 && (data[:6] == "data: " || strings.HasPrefix(data, "data:")) {
@@ -323,6 +351,8 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 							}
 						}
 					}
+
+				afterChatParse:
 
 					// dyt-48: SSE首token超时 — 读 PROBE_TIMEOUT 环境变量（默认 120s）
 					// keep-alive 排队时使用更长的 keepAliveDeadline
@@ -382,6 +412,7 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 						common.SetEventStreamHeaders(c)
 
 						// dyt-53: Responses 模式回放 buffered chat SSE 时同步转成 responses SSE
+						// dyt-116: 出口 Responses 渠道回放的是"已转码的 chat SSE"，直接透传
 						bufReader := bytes.NewReader(localBuf.Bytes())
 						lineScanner := newLineScanner(bufReader)
 						for lineScanner.Scan() {
@@ -389,6 +420,8 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 							if len(line) > 0 && !isKeepAliveLine(line) {
 								if meta.Mode == relaymode.Responses {
 									respStreamState.feedLine(c, line)
+								} else if respInState != nil {
+									render.StringData(c, line)
 								} else {
 									render.StringData(c, line)
 								}
@@ -410,6 +443,18 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 						}
 						if meta.Mode == relaymode.Responses {
 							respStreamState.feedLine(c, data)
+						} else if respInState != nil {
+							// dyt-116: 上游 Responses SSE → 客户端 chat SSE 逐事件转码
+							if chunk := respInState.feed(data); chunk != nil {
+								writeChatChunk(c, chunk)
+							}
+							if respInState.usage != nil {
+								localUsage = &model.Usage{
+									PromptTokens:     respInState.usage.PromptTokens,
+									CompletionTokens: respInState.usage.CompletionTokens,
+									TotalTokens:      respInState.usage.TotalTokens,
+								}
+							}
 						} else {
 							render.StringData(c, data)
 						}
