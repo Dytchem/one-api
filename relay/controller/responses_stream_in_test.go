@@ -9,6 +9,9 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/songquanpeng/one-api/relay/adaptor/openai"
+	relaymodel "github.com/songquanpeng/one-api/relay/model"
 )
 
 func loadMuseSSE(t *testing.T) []string {
@@ -160,5 +163,35 @@ func TestResponsesSSEFailedSurfacesError(t *testing.T) {
 	}
 	if !strings.Contains(string(chunk), "boom") {
 		t.Fatalf("error message lost: %s", chunk)
+	}
+}
+
+// dyt-116 回归：流式探测不能把 chat 字段直接发给只认 Responses 的上游。
+// 实测故障：探测发出 max_tokens，上游回 400 unknown parameter `max_tokens`，
+// 探测把它当成"空响应"，最终对客户端报 empty_response（表现为 502）。
+func TestProbeBodyUsesMaxOutputTokensForResponsesEgress(t *testing.T) {
+	req := relaymodel.GeneralOpenAIRequest{
+		Model:     "muse-spark-1.3-contributor",
+		MaxTokens: 2000,
+		Stream:    true,
+		Messages:  []relaymodel.Message{{Role: "user", Content: "hi"}},
+	}
+	converted := openai.ConvertRequestToResponses(req)
+	b, err := json.Marshal(converted)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	got := string(b)
+	if strings.Contains(got, `"max_tokens"`) {
+		t.Fatalf("must not send max_tokens to Responses upstream: %s", got)
+	}
+	if !strings.Contains(got, `"max_output_tokens":2000`) {
+		t.Fatalf("max_output_tokens missing: %s", got)
+	}
+	// 也不能带 chat 专有字段
+	for _, bad := range []string{`"messages"`, `"stream_options"`} {
+		if strings.Contains(got, bad) {
+			t.Fatalf("chat-only field %s leaked: %s", bad, got)
+		}
 	}
 }

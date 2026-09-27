@@ -141,7 +141,21 @@ func RelayTextHelper(c *gin.Context) *model.ErrorWithStatusCode {
 		textRequest.StreamOptions.IncludeUsage = true
 
 		// 序列化 textRequest 作为 body（保持与原请求字段完全一致）
-		probeBodyBytes, _ := json.Marshal(textRequest)
+		// dyt-116: 但若渠道启用了出口协议转换（Responses / Interactions），
+		// 必须走 ConvertRequest —— 否则会把 chat 字段直接发给只认新协议的上游。
+		// 实测：Responses 上游收到 chat 的 max_tokens 会报
+		//   400 unknown parameter `max_tokens`
+		// 而探测把该 400 归为"空响应"，最终对客户端报 empty_response（502）。
+		var probeBodyBytes []byte
+		if meta.Config.UseResponsesAPI || meta.Config.UseInteractionsAPI {
+			converted, cerr := adaptor.ConvertRequest(c, meta.Mode, textRequest)
+			if cerr == nil {
+				probeBodyBytes, _ = json.Marshal(converted)
+			}
+		}
+		if len(probeBodyBytes) == 0 {
+			probeBodyBytes, _ = json.Marshal(textRequest)
+		}
 
 		// 重置 c.Request.Body 让后续 getRequestBody 调用走原 body 路径
 		c.Request.Body = io.NopCloser(bytes.NewBuffer(probeBodyBytes))
