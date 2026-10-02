@@ -158,6 +158,12 @@ Fork 自 [songquanpeng/one-api](https://github.com/songquanpeng/one-api)，在�
 - **会话持久化此前从未成功过一次（静默失效）**：`persistSessions` 在 ESM 里调用了 `require('path')`（package.json 是 `"type":"module"`），每次都抛 `ReferenceError` 并被空 `catch` 吞掉；更糟的是 `dirtySessions.clear()` 在抛错**之前**执行，数据不会重试。结果 `/data/pi-sessions.json` 永不生成，容器重启后 `/chat/v1/resume` 全部退化为 done（README 宣传的跨重启续传实际不可用）。现改用已 import 的 `path`、**写成功后**才清脏标记、失败打日志
 - **bridge 健壮性**：`/chat/v1` 补总时长上限（原来上游挂起会让 `holder.busy` 永久为 true）；SSE 行缓冲加上限；`Promise.race` 的 5min 定时器改为 finally 清理（原每请求滞留一个最长 5 分钟的定时器）；无界 `resp.text()` 改为有界读取；三个 handler 补 `.catch`（客户端中途断开时响应不再永久悬挂）；`/health` 不再回显会话数
 
+### 热路径优化（v122）
+
+- **ability 查询缓存**：`Distribute()` 的「未固定渠道」分支每个中继请求都要跑一次 `GetTopSatisfiedAbilities`（带 `MAX(priority)` 子查询的 SELECT）——fork 用健康感知选路取代了上游带缓存的 `CacheGetRandomSatisfiedChannel`，这条查询于是落到热路径上。现加进程内 10s TTL 缓存，渠道/ability 写路径经 `InitChannelCache` 主动失效，TTL 仅兜底；返回副本，避免调用方就地改动污染缓存
+- **渠道批量取**：健康选路一次最多要 3 个渠道，原实现逐个 `CacheGetChannelById`；在 `MEMORY_CACHE_ENABLED` 未开启（本部署即如此）时那是 **3 条 SELECT/请求**，现改为一次 `WHERE id IN (...)`。实测后每请求选路 SQL 由 4 条降到 1 条
+- **渠道写路径补齐缓存失效**：`Insert` / `Update` / `Delete` 原来都不刷新内存快照（只有 status/priority/weight 三个单字段接口刷新），意味着一旦打开 `MEMORY_CACHE_ENABLED`，改渠道（含改 key/base_url/model）最长 `SYNC_FREQUENCY`（默认 10 分钟）内仍按旧值路由。现补齐（受该开关保护，默认不改变行为）
+
 ### 数学公式渲染修复（v121）
 
 - **段落中间的行间公式 `\[ ... \]` 不渲染**：`markdown-it-texmath` 只给 `\[...\]` 注册了**块级**规则（要求 `\[` 出现在块首），而模型习惯写成「先一句提示，再换行写 `\[ ... \]`」——此时块规则不匹配，`\[ \]` 落到 markdown-it 的 escape 规则上被当成转义方括号，最终渲染成**字面方括号 + 原样 LaTeX**（线上实测：解的实根列表整段公式漏成正文，`x_1 \approx 0.397141` 原样显示）

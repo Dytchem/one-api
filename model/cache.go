@@ -82,11 +82,26 @@ func (c *memCache[T]) Delete(key string) {
 	delete(c.items, key)
 }
 
+// Clear 清空全部缓存项（用于"整表变了"这类无法逐 key 失效的场景）
+func (c *memCache[T]) Clear() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.items = make(map[string]memCacheItem[T])
+}
+
 var (
 	tokenMemCache         = newMemCache[*Token](time.Duration(TokenCacheSeconds) * time.Second)
 	userGroupMemCache     = newMemCache[string](time.Duration(UserId2GroupCacheSeconds) * time.Second)
 	userEnabledMemCache   = newMemCache[bool](time.Duration(UserId2StatusCacheSeconds) * time.Second)
 	channelStatusMemCache = newMemCache[int](time.Duration(config.SyncFrequency) * time.Second)
+	// dyt-122: ability 查询结果缓存（key = group|model）。
+	// Distribute() 的「未固定渠道」分支每个中继请求都要跑一次
+	// GetTopSatisfiedAbilities（带 MAX(priority) 子查询的 SELECT）——
+	// fork 用健康感知选路取代了上游带缓存的 CacheGetRandomSatisfiedChannel，
+	// 这条查询于是落到了热路径上。渠道/ability 写路径经 InitChannelCache
+	// 主动失效（见 ClearAbilityCache），另有 10s TTL 兜底：即便某条写路径
+	// 漏了失效，陈旧窗口也只有 10s。
+	abilityMemCache = newMemCache[[]Ability](10 * time.Second)
 	// dyt-108: 无效 token key 的负缓存。
 	// 原实现：CacheGetTokenByKey 查库失败直接 return err，**不缓存失败结果**，
 	// 于是任何随机 `sk-` 键的请求都会打到数据库（找不到也要查一次库）。
@@ -323,6 +338,47 @@ func CacheGetChannelById(id int, selectAll bool) (*Channel, error) {
 	return GetChannelById(id, selectAll)
 }
 
+// ClearAbilityCache: 渠道/ability 变更后失效 ability 查询缓存
+func ClearAbilityCache() {
+	abilityMemCache.Clear()
+}
+
+// CacheGetChannelsByIds: 批量取渠道（dyt-122）。
+// distributor 的健康选路一次最多要 3 个渠道，原实现逐个 CacheGetChannelById；
+// 在 MEMORY_CACHE_ENABLED 未开启（本部署即如此）时那就是 3 条 SELECT，
+// 现在最多 1 条 IN 查询（开启内存缓存时则直接命中快照）。
+func CacheGetChannelsByIds(ids []int) (map[int]*Channel, error) {
+	res := make(map[int]*Channel, len(ids))
+	if len(ids) == 0 {
+		return res, nil
+	}
+	var missing []int
+	if config.MemoryCacheEnabled {
+		channelSyncLock.RLock()
+		for _, id := range ids {
+			if ch, ok := channelId2channel[id]; ok && ch != nil {
+				res[id] = ch
+			} else {
+				missing = append(missing, id)
+			}
+		}
+		channelSyncLock.RUnlock()
+	} else {
+		missing = ids
+	}
+	if len(missing) == 0 {
+		return res, nil
+	}
+	var channels []*Channel
+	if err := DB.Where("id IN ?", missing).Find(&channels).Error; err != nil {
+		return nil, err
+	}
+	for _, ch := range channels {
+		res[ch.Id] = ch
+	}
+	return res, nil
+}
+
 func InitChannelCache() {
 	newChannelId2channel := make(map[int]*Channel)
 	var channels []*Channel
@@ -367,6 +423,7 @@ func InitChannelCache() {
 	group2model2channels = newGroup2model2channels
 	channelId2channel = newChannelId2channel // dyt-100: 渠道快照一并发布
 	channelSyncLock.Unlock()
+	ClearAbilityCache() // dyt-122: 渠道快照变了，ability 选路结果一并失效
 	logger.SysLog("channels synced from database")
 }
 

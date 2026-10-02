@@ -63,14 +63,20 @@ func Distribute() func(c *gin.Context) {
 						k = len(filtered)
 					}
 					pool := filtered[:k]
+					// dyt-122: 一次批量取渠道。原实现逐个 CacheGetChannelById，
+					// 在 MEMORY_CACHE_ENABLED 未开启（本部署即如此）时是 3 条 SELECT，
+					// 现在最多 1 条 IN 查询。
+					ids := make([]int, 0, len(pool))
+					for _, a := range pool {
+						ids = append(ids, a.ChannelId)
+					}
+					chMap, _ := model.CacheGetChannelsByIds(ids)
 					var total float64
 					weights := make([]float64, len(pool))
 					candidates := make([]*model.Channel, len(pool))
 					for i, a := range pool {
-						// dyt-100: 渠道优先从内存缓存取（MemoryCacheEnabled 时免 3 次查库），
-						// 缓存未开启/未命中回退查库
-						ch, cerr := model.CacheGetChannelById(a.ChannelId, true)
-						if cerr != nil || ch.Status != model.ChannelStatusEnabled {
+						ch := chMap[a.ChannelId]
+						if ch == nil || ch.Status != model.ChannelStatusEnabled {
 							weights[i] = 0
 							continue
 						}

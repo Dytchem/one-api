@@ -113,9 +113,8 @@ func GetGroupModels(ctx context.Context, group string) ([]string, error) {
 	return models, err
 }
 
-// GetTopSatisfiedAbilities returns all enabled abilities at max priority for group+model.
-// Caller can use monitor.FilterAbilities to filter degraded channels and sort by health.
-func GetTopSatisfiedAbilities(group string, model string) ([]Ability, error) {
+// queryTopSatisfiedAbilities returns all enabled abilities at max priority for group+model.
+func queryTopSatisfiedAbilities(group string, model string) ([]Ability, error) {
 	groupCol := "`group`"
 	trueVal := "1"
 	if common.UsingPostgreSQL {
@@ -127,6 +126,28 @@ func GetTopSatisfiedAbilities(group string, model string) ([]Ability, error) {
 	err := DB.Where(groupCol+" = ? and model = ? and enabled = "+trueVal+" and priority = (?)", group, model, maxPrioritySubQuery).
 		Find(&abilities).Error
 	return abilities, err
+}
+
+// GetTopSatisfiedAbilities returns all enabled abilities at max priority for group+model.
+// Caller can use monitor.FilterAbilities to filter degraded channels and sort by health.
+//
+// dyt-122: 进程内短 TTL 缓存（10s，见 model/cache.go 的 abilityMemCache）。
+// 该查询位于每个中继请求的热路径上；渠道写路径经 InitChannelCache →
+// ClearAbilityCache 主动失效，TTL 只是兜底。
+// 返回的切片是副本，避免调用方就地改动污染缓存。
+func GetTopSatisfiedAbilities(group string, model string) ([]Ability, error) {
+	key := group + "|" + model
+	if v, ok := abilityMemCache.Get(key); ok {
+		out := make([]Ability, len(v))
+		copy(out, v)
+		return out, nil
+	}
+	abilities, err := queryTopSatisfiedAbilities(group, model)
+	if err != nil {
+		return nil, err
+	}
+	abilityMemCache.Set(key, abilities)
+	return abilities, nil
 }
 
 // GetRandomSatisfiedChannelExcluding finds a random channel for the given group and model,

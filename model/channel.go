@@ -151,6 +151,13 @@ func (channel *Channel) Insert() error {
 		return err
 	}
 	err = channel.AddAbilities()
+	if config.MemoryCacheEnabled {
+		// dyt-122: 新增渠道后刷新内存快照。原来只有 status/priority/weight 三个
+		// 单字段接口会刷新，Insert/Update/Delete 都不刷新 —— 也就是说一旦打开
+		// MEMORY_CACHE_ENABLED，改渠道（含改 key/base_url/model）最长
+		// SYNC_FREQUENCY（默认 10 分钟）内仍按旧值路由。
+		InitChannelCache()
+	}
 	return err
 }
 
@@ -171,6 +178,9 @@ func (channel *Channel) Update() error {
 		"response_time", "base_url", "other", "balance", "balance_updated_time", "models", "group",
 		"used_quota", "model_mapping", "priority", "config", "system_prompt").First(channel, "id = ?", channel.Id)
 	err = channel.UpdateAbilities()
+	if config.MemoryCacheEnabled {
+		InitChannelCache() // dyt-122: 见 Insert() 注释
+	}
 	return err
 }
 
@@ -247,6 +257,9 @@ func (channel *Channel) Delete() error {
 		return err
 	}
 	err = channel.DeleteAbilities()
+	if config.MemoryCacheEnabled {
+		InitChannelCache() // dyt-122: 见 Insert() 注释
+	}
 	return err
 }
 
