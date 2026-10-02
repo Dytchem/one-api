@@ -91,6 +91,11 @@ func doImageRequest(method, rawURL string) (*http.Response, error) {
 	if err != nil {
 		return nil, err
 	}
+	// dyt-121: 必须显式带 User-Agent。Go 默认的 "Go-http-client/1.1" 会被不少
+	// 站点/CDN 直接 403（Wikimedia 现要求非浏览器客户端提供描述性 UA），
+	// 表现为 IsImageUrl / 图片尺寸解析对这类 URL 一律拿不到值（实测
+	// upload.wikimedia.org 返回 403 text/plain，同一个 URL 用 curl 带 UA 是 200）。
+	req.Header.Set("User-Agent", "one-api/1.0 (image metadata fetch; +https://github.com/Dytchem/one-api)")
 	return fetchClient().Do(req)
 }
 

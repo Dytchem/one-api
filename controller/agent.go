@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -35,6 +36,44 @@ func checkTokenOwnership(c *gin.Context, tokenKey string) (int, bool) {
 	return userId, true
 }
 
+// dyt-121: bridge 连接池复用。
+// 原实现每次请求都新建 http.Transport：连接无法复用（每条 Chat/Agent 消息
+// 重新 TCP 握手），且该 Transport 的空闲连接池随请求对象一起被丢弃 ——
+// 实测 50 个请求后 fd 4→56（对端是 Node 时靠其 5s keepAliveTimeout 自愈，
+// 但对不主动关空闲连接的反代（Go/nginx/LB）会退化为 fd 持续泄漏）。
+// ResponseHeaderTimeout 来自可热改的配置，因此只在配置值变化时重建。
+var (
+	bridgeTransportMu     sync.Mutex
+	bridgeTransportVal    int
+	bridgeTransportShared *http.Transport
+)
+
+func bridgeTransport() *http.Transport {
+	val := config.BridgeHeaderTimeout
+	bridgeTransportMu.Lock()
+	defer bridgeTransportMu.Unlock()
+	if bridgeTransportShared != nil && bridgeTransportVal == val {
+		return bridgeTransportShared
+	}
+	if bridgeTransportShared != nil {
+		bridgeTransportShared.CloseIdleConnections()
+	}
+	bridgeTransportVal = val
+	bridgeTransportShared = &http.Transport{
+		DialContext: (&net.Dialer{Timeout: 5 * time.Second}).DialContext,
+		// dyt-119: 该超时实为"首 token 超时"——bridge 要等模型吐出第一个
+		// token 才发 SSE 响应头。原硬编码 15s 会让推理模型（实测 Muse
+		// Spark 1.3 重负载 TTFB 26-30s）在 15s 处被判定不可达并返回 502。
+		// 注意与 Agent 路径的区别：Agent 先发头再执行，故不受此限，
+		// 这就是"Chat 失败、Agent 成功"的根因。
+		ResponseHeaderTimeout: time.Duration(val) * time.Second,
+		IdleConnTimeout:       90 * time.Second,
+		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   16,
+	}
+	return bridgeTransportShared
+}
+
 // streamAgentBridge: 通用 SSE 透传（客户端断开时取消对 bridge 的请求，避免资源泄漏；
 // bridge 后台执行不受影响，刷新后续传机制照常工作）
 func streamAgentBridge(c *gin.Context, path string, body map[string]any) {
@@ -55,17 +94,9 @@ func streamAgentBridge(c *gin.Context, path string, body map[string]any) {
 	}
 	// 注意：SSE 透传不能用总超时（bridge 侧 Agent 最长执行 5 分钟，30s 总超时会掐断长回复），
 	// 依赖 c.Request.Context() 在客户端断开时取消；
-	// 但拨号与响应头仍设超时，避免 bridge 半开/无响应时无限等待
-	transport := &http.Transport{
-		DialContext: (&net.Dialer{Timeout: 5 * time.Second}).DialContext,
-		// dyt-119: 该超时实为"首 token 超时"——bridge 要等模型吐出第一个
-		// token 才发 SSE 响应头。原硬编码 15s 会让推理模型（实测 Muse
-		// Spark 1.3 重负载 TTFB 26-30s）在 15s 处被判定不可达并返回 502。
-		// 注意与 Agent 路径的区别：Agent 先发头再执行，故不受此限，
-		// 这就是"Chat 失败、Agent 成功"的根因。
-		ResponseHeaderTimeout: time.Duration(config.BridgeHeaderTimeout) * time.Second,
-	}
-	client := &http.Client{Transport: transport, Timeout: 0}
+	// 但拨号与响应头仍设超时，避免 bridge 半开/无响应时无限等待。
+	// dyt-121: 复用包级 Transport（见 bridgeTransport），Client 只做薄包装。
+	client := &http.Client{Transport: bridgeTransport(), Timeout: 0}
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		// 用户主动断开不算错误

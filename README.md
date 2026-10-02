@@ -151,6 +151,26 @@ Fork 自 [songquanpeng/one-api](https://github.com/songquanpeng/one-api)，在�
   - 现该超时可配：**`BRIDGE_HEADER_TIMEOUT`**（默认 180s），与 bridge 支持的最长执行时间相匹配
   - 报错文案同时修正：原来无论何种原因都报「Agent 服务不可达」，会把排查方向引向 bridge 本身；现在区分「连不上」（附底层错误）与「等首 token 超时」（提示可提高 `BRIDGE_HEADER_TIMEOUT` 或降低思考等级）
 
+### pi agent 升级到 1.0.0（v121）
+
+- **pi-bridge：pi 0.74.2 → 1.0.0**。pi 从 0.75 起要求 **Node ≥ 22.19**（0.74.2 是最后一个 node20 兼容版，也是 npm 上 `legacy-node20` 这个 dist-tag 指向的版本），所以 bridge 的安装与运行阶段独立升级到 `node:22-alpine`；CRA 前端构建仍留在 node:20，不把整条构建链一起抬升。镜像最终阶段同步为 node:22
+- **SDK 迁移（pi 0.80.8 的 breaking change）**：`CreateAgentSessionOptions` 的 `authStorage` / `modelRegistry` 被 `modelRuntime` 取代，`AuthStorage` 也不再从包根导出。现改用 `ModelRuntime` + `InMemoryCredentialStore`（每个会话一份 runtime，内含该用户令牌，**绝不落盘**、不跨用户共享）；模型表用 mtime 判断是否需要 `refresh`，不再每条消息重建 runtime / 重读 `models.json`。`Type` 改从 `@earendil-works/pi-ai` 取，去掉对 npm 扁平化提升 `typebox` 的隐式依赖
+- **会话持久化此前从未成功过一次（静默失效）**：`persistSessions` 在 ESM 里调用了 `require('path')`（package.json 是 `"type":"module"`），每次都抛 `ReferenceError` 并被空 `catch` 吞掉；更糟的是 `dirtySessions.clear()` 在抛错**之前**执行，数据不会重试。结果 `/data/pi-sessions.json` 永不生成，容器重启后 `/chat/v1/resume` 全部退化为 done（README 宣传的跨重启续传实际不可用）。现改用已 import 的 `path`、**写成功后**才清脏标记、失败打日志
+- **bridge 健壮性**：`/chat/v1` 补总时长上限（原来上游挂起会让 `holder.busy` 永久为 true）；SSE 行缓冲加上限；`Promise.race` 的 5min 定时器改为 finally 清理（原每请求滞留一个最长 5 分钟的定时器）；无界 `resp.text()` 改为有界读取；三个 handler 补 `.catch`（客户端中途断开时响应不再永久悬挂）；`/health` 不再回显会话数
+
+### 数学公式渲染修复（v121）
+
+- **段落中间的行间公式 `\[ ... \]` 不渲染**：`markdown-it-texmath` 只给 `\[...\]` 注册了**块级**规则（要求 `\[` 出现在块首），而模型习惯写成「先一句提示，再换行写 `\[ ... \]`」——此时块规则不匹配，`\[ \]` 落到 markdown-it 的 escape 规则上被当成转义方括号，最终渲染成**字面方括号 + 原样 LaTeX**（线上实测：解的实根列表整段公式漏成正文，`x_1 \approx 0.397141` 原样显示）
+- 修法沿用社区通行做法（`assistant-ui` 的 `normalizeMathDelimiters` / `rewriteLatexBracketDelimiters`、`remark-mathjax-delimiters` 等都在做同一件事：把 `\[...\]` 归一化成 `$$...$$` 再解析）。这里不做字符串预处理（会误伤代码块/行内代码），而是**复用 texmath 自己的规则工厂**追加一条行内规则，代码块与行内代码天然不受影响；`$...$` / `$$...$$` / `\(...\)` 行为完全不变
+
+### 性能与可靠性（v121 审计整改）
+
+- **bridge 连接池复用**：`streamAgentBridge` 原来每个请求都新建 `http.Transport`，连接无法复用且空闲连接池随请求对象被丢弃（实测 50 请求后 fd 4→56；对不主动关空闲连接的反代会退化为 fd 泄漏）。现改为包级复用 Transport（补 `IdleConnTimeout`），配置项 `BRIDGE_HEADER_TIMEOUT` 变化时才重建；一次性钉 IP 的 `newSSRFSafeClient` 直接 `DisableKeepAlives`（池用完即弃，keep-alive 只会漏连接）
+- **固定渠道走缓存**：`Distribute()` 的固定渠道路径原来直接 `GetChannelById`（绕过 `MemoryCacheEnabled`），每次带 `channel_id` 的 Chat/中继都多一条全列 SELECT；改用同文件已在用的 `CacheGetChannelById`
+- **图片抓取补 User-Agent**：Go 默认 UA 会被不少站点/CDN 直接 403（Wikimedia 现要求非浏览器客户端提供描述性 UA），表现为图片尺寸解析对这类 URL 一律拿不到值（实测 `upload.wikimedia.org` 返回 403 `text/plain`，同一 URL 用 curl 带 UA 是 200）
+- **测试卫生**：`common/image` 的用例离线时会对 nil 解引用 panic，让 `go test ./...` 永远变红并掩盖真实回归 —— 现改为网络不可用即 skip、解码失败用 `require` 立即终止；同时移除已下架（一律 400）的 wikimedia 缩略图 fixture
+- `common/ctxkey/key.go` 的 gofmt 修正（`gofmt -l .` 归零）
+
 ### 界面与体验
 
 - **统一画布**：全部设备渲染同一 1440px 画布（iframe 隔离视口），任意端所见一致

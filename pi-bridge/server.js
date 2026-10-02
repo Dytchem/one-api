@@ -10,10 +10,14 @@ import {
   DefaultResourceLoader,
   SettingsManager,
   SessionManager,
-  ModelRegistry,
-  AuthStorage,
+  ModelRuntime,
 } from '@earendil-works/pi-coding-agent';
-import { Type } from 'typebox';
+// pi >= 0.80.8 的 SDK breaking change：CreateAgentSessionOptions 的
+// `authStorage` / `modelRegistry` 选项被 `modelRuntime` 取代，且 AuthStorage
+// 不再从包根导出（改用 ModelRuntime + 一个 CredentialStore）。
+// Type 也改为从 pi-ai 取（pi-ai 声明依赖 typebox 并再导出），
+// 避免依赖 npm 扁平化把 typebox 提升到 node_modules 根的隐式行为。
+import { InMemoryCredentialStore, Type } from '@earendil-works/pi-ai';
 
 const PORT = parseInt(process.env.PORT || '3005', 10);
 const ONEAPI_BASE = process.env.ONEAPI_BASE || 'http://127.0.0.1:3000';
@@ -55,6 +59,7 @@ const MODELS_PATH = path.join(AGENT_DIR, 'models.json');
 const AUTH_PATH = path.join(AGENT_DIR, 'auth.json');
 const AGENT_EXEC_TIMEOUT_MS = 300_000;
 const MAX_EVENTS_PER_SESSION = 2000;
+const MAX_SSE_BUFFER = 1024 * 1024; // dyt-121: SSE 单行缓冲上限（防上游不发换行导致无界增长）
 const MAX_RESULT_LENGTH = 20000;
 const MAX_SEARCH_LENGTH = 12000;
 const MAX_RESPONSE_LENGTH = 12000;
@@ -142,12 +147,49 @@ async function syncModels(token) {
   }
 }
 
+// dyt-121: 模型表 mtime —— 用于判断会话的 ModelRuntime 是否需要 refresh
+// （只有真的变了才重建 provider 列表，省掉每条消息一次读盘）
+function modelsMtime() {
+  try {
+    return fs.statSync(MODELS_PATH).mtimeMs;
+  } catch (_) {
+    return 0;
+  }
+}
+
 // dyt-99: ensureModels 优先使用调用方传入的用户令牌同步（网页端登录用户的 key），
 // 无令牌时才回退 ONEAPI_ADMIN_TOKEN（可选兜底，部署不再强制配置）
 async function ensureModels(force, token) {
   if (fs.existsSync(MODELS_PATH) && !force && Date.now() - lastSync < 60_000) return;
   const n = await syncModels(token);
   if (n > 0) console.log(`[models] synced ${n} models`);
+}
+
+// dyt-121: 有界读取响应体。原实现用 `await resp.text()` / `resp.json()`，
+// 会先把整个响应读进内存再 slice —— 一个异常大（或恶意）的上游响应就能把
+// bridge 的内存打满（bridge 与 one-api 同容器，OOM 会连带影响网关）。
+async function readTextLimited(resp, limit) {
+  const reader = resp.body && typeof resp.body.getReader === 'function' ? resp.body.getReader() : null;
+  if (!reader) {
+    const t = await resp.text();
+    return t.slice(0, limit);
+  }
+  const dec = new TextDecoder();
+  let out = '';
+  let bytes = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      bytes += value.byteLength;
+      out += dec.decode(value, { stream: true });
+      if (bytes >= limit) break;
+    }
+    out += dec.decode();
+  } finally {
+    try { await reader.cancel(); } catch (_) { /* 已读满/已断开 */ }
+  }
+  return out.slice(0, limit);
 }
 
 // ---- 网络搜索（AnySearch MCP，匿名调用）----
@@ -167,11 +209,11 @@ async function anysearchCall(toolName, args) {
     const ct = resp.headers.get('content-type') || '';
     let data = null;
     if (ct.includes('text/event-stream')) {
-      const text = await resp.text();
+      const text = await readTextLimited(resp, 256 * 1024); // dyt-121: 有界读取
       const line = text.split('\n').find((l) => l.startsWith('data:'));
       if (line) data = JSON.parse(line.slice(5));
     } else {
-      data = await resp.json();
+      data = JSON.parse(await readTextLimited(resp, 256 * 1024)); // dyt-121: 有界读取
     }
     const content = data?.result?.content || [];
     const texts = content.map((c) => (c.type === 'text' ? c.text : JSON.stringify(c))).join('\n').slice(0, 12000);
@@ -195,7 +237,7 @@ function makeTools({ getToken }) {
         },
         signal: AbortSignal.timeout(30000),
       });
-      const text = await resp.text();
+      const text = await readTextLimited(resp, 256 * 1024); // dyt-121: 有界读取
       return {
         content: [{ type: 'text', text: `HTTP ${resp.status}: ${text.slice(0, MAX_RESPONSE_LENGTH)}` }],
         details: { status: resp.status },
@@ -387,16 +429,6 @@ async function handleChat(req, res) {
   try {
     await ensureModels(false, token_key);
 
-    const authStorage = AuthStorage.inMemory();
-    if (token_key) authStorage.setRuntimeApiKey('oneapi', token_key);
-    const modelRegistry = ModelRegistry.create(authStorage, MODELS_PATH);
-    const piModel = modelRegistry.find('oneapi', model);
-    if (!piModel) {
-      writeSse(res, { type: 'error', message: `模型 ${model} 不在模型表中（one-api 模型同步失败或模型不存在）` });
-      res.end();
-      return;
-    }
-
     let holder = sessions.get(session_id);
     // 会话归属校验：session_id 绑定的用户必须与请求用户一致，防止跨用户会话窃取
     if (holder && holder.userId > 0 && Number(body.user_id) !== holder.userId) {
@@ -417,6 +449,26 @@ async function handleChat(req, res) {
     // 不使用部署级管理员令牌，避免任意用户通过 Agent 以管理员身份操作
     const tools = makeTools({ getToken: () => holder?.accessToken || '' });
     if (!holder) {
+      // dyt-121: pi 1.0.0 迁移 —— AuthStorage + ModelRegistry → ModelRuntime。
+      // runtime 只在**新建会话**时创建：它内含该用户的令牌，绝不跨用户共享；
+      // 已有会话复用自己的 holder.runtime（见 else 分支）。
+      // 凭证用 InMemoryCredentialStore：绝不落盘（原 AuthStorage.inMemory() 的语义），
+      // 避免把用户令牌写进 ~/.pi/agent/auth.json。
+      // refreshOnCreate/allowModelNetwork 关掉：模型表以本地 models.json 为准，
+      // 不在请求路径上做任何上游目录刷新（首字节延迟敏感）。
+      const runtime = await ModelRuntime.create({
+        modelsPath: MODELS_PATH,
+        credentials: new InMemoryCredentialStore(),
+        refreshOnCreate: false,
+        allowModelNetwork: false,
+      });
+      if (token_key) await runtime.setRuntimeApiKey('oneapi', token_key);
+      const piModel = runtime.getModel('oneapi', model);
+      if (!piModel) {
+        writeSse(res, { type: 'error', message: `模型 ${model} 不在模型表中（one-api 模型同步失败或模型不存在）` });
+        res.end();
+        return;
+      }
       // 占位（防并发首请求双创建）：创建完成前 resume/后续请求见 busy 状态
       const placeholder = { busy: true, events: [], subscribers: new Set(), lastActive: Date.now(), userId: body.user_id || 0, pending: true };
       sessions.set(session_id, placeholder);
@@ -433,7 +485,7 @@ async function handleChat(req, res) {
       const { session } = await createAgentSession({
         model: piModel,
         thinkingLevel: 'off',
-        modelRegistry,
+        modelRuntime: runtime,
         resourceLoader: loader,
         // 工具调用凭据：当前登录用户自己的 access_token（每次 /chat 请求更新）
         customTools: tools,
@@ -446,8 +498,8 @@ async function handleChat(req, res) {
         busy: false,
         busySince: 0,
         userId: body.user_id || 0,
-        modelRegistry,
-        authStorage,
+        runtime,
+        modelsMtime: modelsMtime(),
         tokenKey: token_key || '',
         accessToken: access_token || '',
         events: [],
@@ -536,13 +588,30 @@ async function handleChat(req, res) {
         holder.busy = false;
         holder.events = [];
       }
+      // dyt-121: 沿用会话自己的 runtime（内含该用户令牌）；只有模型表真的变了
+      // 才 refresh，避免每条消息都重建 runtime / 重读 models.json。
+      const mtime = modelsMtime();
+      if (mtime !== holder.modelsMtime) {
+        try {
+          await holder.runtime.refresh({ allowNetwork: false });
+          holder.modelsMtime = mtime;
+        } catch (e) { /* 刷新失败则沿用旧模型表，不阻断本轮对话 */ }
+      }
+      const piModel = holder.runtime.getModel('oneapi', model);
+      if (!piModel) {
+        writeSse(res, { type: 'error', message: `模型 ${model} 不在模型表中（one-api 模型同步失败或模型不存在）` });
+        writeSse(res, { type: 'done' });
+        res.end();
+        return;
+      }
       await holder.session.setModel(piModel);
       if (thinking_level) {
         try { holder.session.setThinkingLevel(thinking_level); } catch (e) { /* 非法等级忽略 */ }
       }
       if (token_key && token_key !== holder.tokenKey) {
         holder.tokenKey = token_key;
-        await holder.authStorage.setRuntimeApiKey('oneapi', token_key);
+        // dyt-121: ModelRuntime.setRuntimeApiKey 现在是 async（且会做凭证状态同步）
+        await holder.runtime.setRuntimeApiKey('oneapi', token_key);
       }
       if (access_token && access_token !== holder.accessToken) {
         holder.accessToken = access_token;
@@ -550,10 +619,10 @@ async function handleChat(req, res) {
       if (!holder.userId && body.user_id) {
         holder.userId = body.user_id;
       }
-      // 工具集可能随版本更新：运行时同步，旧会话立即获得新工具
-      try {
-        await holder.session.setTools(tools);
-      } catch (_) { /* 忽略 */ }
+      // dyt-121: 删除 `session.setTools(tools)`。该调用在 pi 0.74.2 就不存在
+      // （一直抛 TypeError 被 catch 吞掉），1.0.0 同样没有此方法。
+      // 工具集本来就是每次请求重建的（工具名/schema 固定，只有读 token 的闭包
+      // 捕获 holder，始终取最新值），所以不存在"旧会话需要换工具"的场景。
     }
 
     // dyt-93: 新消息 = 新意图：若非执行中（busy），清除停止标记，
@@ -582,17 +651,21 @@ async function handleChat(req, res) {
       res.end();
       return;
     }
+    // dyt-121: 记录句柄并在 finally 清理 —— 原实现的 5min 定时器从不 clearTimeout，
+    // 每个请求都留一个最长 5 分钟的挂起定时器（高频对话下是纯内存/事件循环负担）。
+    let execTimer = null;
     try {
       await Promise.race([
         holder.session.prompt(message),
-        new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('Agent 执行超时（5min），请重试')), AGENT_EXEC_TIMEOUT_MS)
-        ),
+        new Promise((_, reject) => {
+          execTimer = setTimeout(() => reject(new Error('Agent 执行超时（5min），请重试')), AGENT_EXEC_TIMEOUT_MS);
+        }),
       ]);
     } catch (e) {
       try { holder.session.abort(); } catch (_) { /* ignore */ }
       if (epoch === holder.epoch) writeSse(res, { type: 'error', message: '请求处理失败' });
     } finally {
+      if (execTimer) clearTimeout(execTimer);
       if (epoch === holder.epoch) {
         holder.busy = false;
         holder.lastActive = Date.now();
@@ -737,6 +810,10 @@ async function handleChatV1(req, res) {
 
   const controller = new AbortController();
   holder.controller = controller;
+  // dyt-121: /chat/v1 补总时长上限。原实现只用 controller.signal 且无任何超时，
+  // 上游挂起时 holder.busy 会永久为 true，一直持有 socket 与事件缓冲，
+  // 只有用户再发消息或 30min 清理循环（busy>1h）才回收。
+  const v1Timer = setTimeout(() => { try { controller.abort(); } catch (_) { /* ignore */ } }, AGENT_EXEC_TIMEOUT_MS);
   try {
     const upstreamBody = { model, messages, stream: true };
     if (channel_id) upstreamBody.channel_id = channel_id;
@@ -750,7 +827,8 @@ async function handleChatV1(req, res) {
     if (!resp.ok) {
       let msg = `上游错误 HTTP ${resp.status}`;
       try {
-        const j = await resp.json();
+        const t = await readTextLimited(resp, 64 * 1024); // dyt-121: 有界读取
+        const j = JSON.parse(t);
         msg = j.error?.message || j.message || msg;
       } catch (_) { /* ignore */ }
       console.log(`[chat/v1] upstream error: ${msg}`);
@@ -765,6 +843,12 @@ async function handleChatV1(req, res) {
         const { done, value } = await reader.read();
         if (done) break;
         buf += decoder.decode(value, { stream: true });
+        // dyt-121: 行缓冲上限 —— 上游若一直不发换行符，buf 会无界增长
+        if (buf.length > MAX_SSE_BUFFER) {
+          emit({ type: 'error', message: '上游 SSE 响应异常（单行超长），已中止' });
+          try { await reader.cancel(); } catch (_) { /* ignore */ }
+          break;
+        }
         const lines = buf.split('\n');
         buf = lines.pop();
         for (const line of lines) {
@@ -784,6 +868,7 @@ async function handleChatV1(req, res) {
   } catch (e) {
     if (e.name !== 'AbortError' && epoch === holder.epoch) emit({ type: 'error', message: '工具执行失败' });
   } finally {
+    clearTimeout(v1Timer);
     if (epoch === holder.epoch) {
       holder.busy = false;
       holder.controller = null;
@@ -940,20 +1025,27 @@ function markDirty(sid) {
 }
 
 // dyt-100: 异步落盘（fs.promises），写盘不再阻塞事件循环（原 writeFileSync 会卡住所有流式输出）
+// dyt-121: 修复「会话持久化从未成功过一次」——
+//   ① 原实现用了 `require('path')`，但本文件是 ESM（package.json "type":"module"），
+//      ESM 里没有 require ⇒ 每次落盘都抛 ReferenceError，被空 catch 吞掉；
+//   ② `dirtySessions.clear()` 在抛错**之前**执行 ⇒ 数据不会被重试，且日志无任何信号。
+//      结果 /data/pi-sessions.json 永不生成，容器重启后 /chat/v1/resume 全部退化为 done，
+//      README 宣传的「跨重启续传」实际不可用。
+//   现改为：用已 import 的 path；**写成功后**才清脏标记；失败打日志（可观测）。
 async function persistSessions() {
-  if (dirtySessions.size === 0) return;
+  const pending = [...dirtySessions];
+  if (pending.length === 0) return;
   try {
     const chat = {};
-    for (const sid of dirtySessions) {
+    for (const sid of pending) {
       const h = chatSessions.get(sid);
       if (h && h.events && h.events.length > 0) {
         // dyt-93: 持久化 userId，重启后会话归属校验仍生效
         chat[sid] = { events: h.events.slice(-MAX_EVENTS_PER_SESSION), userId: h.userId || 0 };
       }
     }
-    dirtySessions.clear();
     // agent 会话为一次性执行上下文，且事件含工具参数/结果等敏感内容，不落盘
-    await fs.promises.mkdir(require('path').dirname(SESSION_STORE), { recursive: true });
+    await fs.promises.mkdir(path.dirname(SESSION_STORE), { recursive: true });
     // dyt-100: 合并旧数据（只覆盖有变化的会话）+ 临时文件原子替换
     let merged = { chat: {}, agent: {} };
     try {
@@ -967,7 +1059,11 @@ async function persistSessions() {
     const tmp = SESSION_STORE + '.tmp';
     await fs.promises.writeFile(tmp, JSON.stringify(merged), { mode: 0o600 });
     await fs.promises.rename(tmp, SESSION_STORE);
-  } catch (e) { /* 忽略持久化失败 */ }
+    // 只在写成功后清脏标记：失败时保留，等下一次 scheduleSave 重试
+    for (const sid of pending) dirtySessions.delete(sid);
+  } catch (e) {
+    console.error('[sessions] 持久化失败（将在下次变更时重试）:', e && e.message ? e.message : e);
+  }
 }
 
 function scheduleSave() {
@@ -1024,29 +1120,41 @@ setInterval(() => {
   }
 }, 30 * 60 * 1000);
 
+// dyt-121: 未捕获异常兜底。原来 handleChat/handleResume/handleChatV1 是裸调用，
+// 一旦 readBody 以 ECONNRESET 拒绝（客户端中途断开）就没有任何 catch，
+// 响应永不 end（连接悬挂到超时），只能靠全局 unhandledRejection 打日志。
+function guardRequest(res, promise, label) {
+  Promise.resolve(promise).catch((e) => {
+    console.error(`[pi-bridge] ${label} 未捕获异常:`, e && e.stack ? e.stack : e);
+    try { writeSse(res, { type: 'error', message: '内部错误' }); } catch (_) { /* ignore */ }
+    try { res.end(); } catch (_) { /* ignore */ }
+  });
+}
+
 const server = http.createServer((req, res) => {
   if (req.method === 'GET' && req.url === '/health') {
+    // dyt-121: /health 不鉴权（entrypoint 就绪探测用），因此不回显会话数量
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ ok: true, sessions: sessions.size }));
+    res.end(JSON.stringify({ ok: true }));
     return;
   }
   // dyt-96: 除 /health 外一律要求共享密钥（未配置密钥 = 拒绝服务）
   if (!requireAuth(req, res)) return;
   if (req.method === 'POST' && req.url === '/chat') {
-    handleChat(req, res);
+    guardRequest(res, handleChat(req, res), '/chat');
   } else if (req.method === 'POST' && req.url === '/resume') {
-    handleResume(req, res);
+    guardRequest(res, handleResume(req, res), '/resume');
   } else if (req.method === 'POST' && req.url === '/chat/v1') {
-    handleChatV1(req, res);
+    guardRequest(res, handleChatV1(req, res), '/chat/v1');
   } else if (req.method === 'POST' && req.url === '/chat/v1/resume') {
-    handleChatResume(req, res);
+    guardRequest(res, handleChatResume(req, res), '/chat/v1/resume');
   } else if (req.method === 'POST' && req.url === '/stop') {
-    handleStop(req, res);
+    guardRequest(res, handleStop(req, res), '/stop');
   } else if (req.method === 'POST' && req.url === '/sync-models') {
-    syncModels().then((n) => {
+    guardRequest(res, syncModels().then((n) => {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true, models: n }));
-    });
+    }), '/sync-models');
   } else {
     res.writeHead(404, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'not found' }));

@@ -20,6 +20,15 @@ COPY ./web .
 # dyt-55: 预建产物目录（.dockerignore 不再携带 web/build，mv 目标父目录需存在）
 RUN set -e && mkdir -p /web/build && DISABLE_ESLINT_PLUGIN='true' REACT_APP_VERSION=$(cat ./VERSION) INLINE_RUNTIME_CHUNK='false' npm run build --prefix /web/default
 
+# pi-bridge 依赖层单独放在 node:22 阶段。
+# dyt-121: pi >= 0.75 起要求 Node >= 22.19（0.74.2 是最后一个 node20 兼容版，
+# 也是 npm 上 legacy-node20 这个 dist-tag 的版本）。因此 bridge 的安装与运行
+# 必须用 node:22；而上面的 CRA 前端构建继续留在 node:20，避免把整个镜像
+# 的构建链一起升级带来的额外风险。
+FROM node:22-alpine AS bridge-builder
+
+ENV npm_config_registry=https://registry.npmmirror.com
+
 # pi-bridge（内置 agent/chat 后台会话服务）：仅依赖文件变化时重装
 COPY ./pi-bridge/package.json ./pi-bridge/package-lock.json /pi-bridge/
 RUN set -e && npm ci --prefix /pi-bridge --no-audit --no-fund --omit=dev
@@ -48,12 +57,12 @@ COPY --from=builder /web/build ./web/build
 
 RUN go build -trimpath -ldflags "-s -w -X 'github.com/songquanpeng/one-api/common.Version=$(cat VERSION)' -linkmode external -extldflags '-static'" -o one-api
 
-FROM node:20-alpine
+FROM node:22-alpine
 
 RUN apk add --no-cache ca-certificates tzdata
 
 # pi-bridge：agent / 聊天后台会话服务（与 one-api 同容器，由 entrypoint 一并拉起）
-COPY --from=builder /pi-bridge /pi-bridge
+COPY --from=bridge-builder /pi-bridge /pi-bridge
 COPY ./pi-bridge/server.js /pi-bridge/server.js
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

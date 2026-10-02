@@ -34,7 +34,10 @@ func Distribute() func(c *gin.Context) {
 				abortWithMessage(c, http.StatusBadRequest, "无效的渠道 Id")
 				return
 			}
-			channel, err = model.GetChannelById(id, true)
+			// dyt-121: 走缓存版（原实现直接 GetChannelById，绕过 MemoryCacheEnabled，
+			// 固定渠道的每次 Chat/中继都要对 users 之外再多一条全列 SELECT；
+			// 同文件下面的健康选路已经在用 CacheGetChannelById）。
+			channel, err = model.CacheGetChannelById(id, true)
 			if err != nil {
 				abortWithMessage(c, http.StatusBadRequest, "无效的渠道 Id")
 				return

@@ -10,13 +10,34 @@ import katex from 'katex';
 import DOMPurify from 'dompurify';
 import 'katex/dist/katex.min.css';
 
+const katexOptions = { throwOnError: false, strict: false };
+
 const md = new MarkdownIt({ breaks: true, html: true });
 
 md.use(texmath, {
   engine: katex,
   delimiters: ['dollars', 'brackets'],
-  katexOptions: { throwOnError: false, strict: false },
+  katexOptions,
 });
+
+// ---- 修复：段落中间的行间公式 \[...\] 不渲染 ----
+// markdown-it-texmath 只给 \[...\] 注册了**块级**规则，它要求 \[ 出现在块首；
+// 而模型（以及大多数人）习惯写成「先一句提示，再换行写 \[ ... \]」，此时块规则
+// 不匹配，\[ \] 就落到 markdown-it 的 escape 规则上被当成转义方括号，最终渲染成
+// 字面方括号 + 原样 LaTeX（线上实测：实根列表整段公式漏成正文）。
+//
+// 社区通行解法就是把 \[...\] 归一化成 $$...$$ 再解析（assistant-ui 的
+// normalizeMathDelimiters / rewriteLatexBracketDelimiters、remark-mathjax-delimiters
+// 等都在做同一件事）。这里不做字符串预处理——那会误伤代码块和行内代码——
+// 而是复用 texmath 自己的规则工厂追加一条**行内**规则：行内规则天然进不了
+// 代码块/行内代码，也不会和块首公式重复渲染。除 \[...\] 外的行为全部不变。
+const bracketDisplayRule = {
+  ...texmath.rules.brackets.block.find((rule) => rule.name === 'math_block'),
+  name: 'math_inline_brackets_display',
+};
+md.inline.ruler.before('escape', bracketDisplayRule.name, texmath.inline(bracketDisplayRule));
+md.renderer.rules[bracketDisplayRule.name] = (tokens, idx) =>
+  bracketDisplayRule.tmpl.replace(/\$1/, texmath.render(tokens[idx].content, true, katexOptions));
 
 // KaTeX 渲染依赖内联 style 定位（上标/分数/间距），必须保留；
 // 其余节点一律移除 style 属性，防止 UI 劫持类样式注入

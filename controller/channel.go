@@ -745,6 +745,10 @@ func newSSRFSafeClient(pinnedIPs []net.IP) *http.Client {
 			},
 			Proxy:               proxyURL,
 			TLSHandshakeTimeout: 10 * time.Second,
+			// dyt-121: 这是一次性 client（调用方用完即弃，Transport 连池一起被 GC），
+			// keep-alive 没有任何复用收益，只会把空闲连接留到对端关闭为止
+			// （实测一次 fetch-models 最多漏 3 个连接，对常见上游是永久泄漏）。
+			DisableKeepAlives: true,
 		},
 	}
 }
